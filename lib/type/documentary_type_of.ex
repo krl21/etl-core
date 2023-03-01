@@ -1,5 +1,5 @@
 
-defprotocol Type.Documentary do
+defprotocol Type.DocumentaryTypeOf do
     @moduledoc"""
     Module for the work of documentaries in NodeService
 
@@ -17,6 +17,6 @@ defprotocol Type.Documentary do
         - String
 
     """
-    def type_documentary(business)
+    def documentary_type_of(business)
 
 end
