@@ -45,7 +45,7 @@ defimpl Type.TypeOf, for: Binary do
 end
 
 defimpl Type.TypeOf, for: BitString do
-    def type_of(_data), do: :bitstring
+    def type_of(_data), do: :binary
 end
 
 defimpl Type.TypeOf, for: List do

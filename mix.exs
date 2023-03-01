@@ -22,7 +22,8 @@ defmodule EtlCore.MixProject do
   defp deps do
     [
       {:timex, "~> 3.7.8"},
-
+      {:poison, "~> 5.0"},
+      {:httpoison, "~> 1.8.2", override: true},
 
     ]
   end
