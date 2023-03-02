@@ -7,6 +7,8 @@ defmodule Connection.NodeService do
     alias Connection.Ticket
     alias Connection.Http
 
+    #todo: obtener los detalles usando llamados a los genservers de node_service
+
     @doc"""
     Returns details of a node
 
