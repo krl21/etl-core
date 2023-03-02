@@ -14,7 +14,7 @@ defmodule Connection.Http do
 
         - url: String.
 
-        - headers: List of String.
+        - headers: List of tuple.
 
         - recv_timeout: Integer.
 
@@ -43,7 +43,7 @@ defmodule Connection.Http do
 
         - url: String.
 
-        - headers: List os String.
+        - headers: List of tuple.
 
         - timeout: Integer.
 
