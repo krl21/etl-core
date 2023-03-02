@@ -15,8 +15,10 @@ defprotocol Genserver.Utils.AutomaticClean do
 
         - pid: Process. Process connecting Elixir and ODBC.
 
+        - other_data: Tuple. Other data of interest.
+
     """
-    def run(business, pid)
+    def run(business, pid, other_data)
 
 
 end
