@@ -173,6 +173,32 @@ defmodule Time.WorkingTime do
         end
     end
 
+    #
+    # Returns the closest business day after the defined date
+    #
+    # ### Parameters:
+    #
+    #     - date: Timex.DateTime. Date.
+    #
+    #     - business: Atom. Business.
+    #
+    # ### Return:
+    #
+    #     - Timex.DateTime
+    #
+    defp next_working_day(date, business) do
+        tomorrow = Timex.shift(date, days: 1)
+        if is_working_day?(tomorrow, business) do
+            tomorrow
+        else
+            next_working_day(tomorrow, business)
+        end
+    end
+
+
+
+
+
 
 
 

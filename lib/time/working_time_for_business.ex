@@ -52,21 +52,6 @@ defprotocol Time.WorkingTimeForBusiness do
     """
     def working_hours(date, business)
 
-    @doc"""
-    Returns the closest business day after the defined date
-
-    ### Parameters:
-
-        - date: Timex.DateTime. Date.
-
-        - business: Atom. Business.
-
-    ### Return:
-
-        - Timex.DateTime
-
-    """
-    def next_working_day(date, business)
 
 
 end
