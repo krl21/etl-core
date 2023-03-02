@@ -195,7 +195,23 @@ defmodule Time.WorkingTime do
         end
     end
 
-
+    #
+    # Check if the defined date is a working hours
+    #
+    # ### Parameter:
+    #
+    #     - date: Timex.DateTime. Date.
+    #
+    #     - business: Atom. Business.
+    #
+    #  ### Return:
+    #
+    #     - Boolean.
+    #
+    defp is_working_hours?(%{hour: hour, minute: minute, second: second} = date, business) do
+        {start_time, end_time} = working_hours(date, business)
+        start_time <= {hour, minute, second} and {hour, minute, second} <= end_time
+    end
 
 
 

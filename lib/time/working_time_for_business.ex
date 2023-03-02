@@ -21,22 +21,6 @@ defprotocol Time.WorkingTimeForBusiness do
     def is_working_day?(date, business)
 
     @doc"""
-    Check if the defined date is a working hours
-
-    ### Parameters:
-
-        - date: Timex.DateTime. Date.
-
-        - business: Atom. Business.
-
-     ### Return:
-
-        - Boolean.
-
-    """
-    def is_working_hours?(date, business)
-
-    @doc"""
     Returns the working hours of a day, given the business
 
     ### Parameters:
