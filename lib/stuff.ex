@@ -68,7 +68,6 @@ defmodule Stuff do
         recursive_list_subtraction(l1, l2, [])
     end
 
-
     defp recursive_list_subtraction([], _, acc) do
         acc
     end
@@ -161,6 +160,7 @@ defmodule Stuff do
         symbol_count = Enum.count(symbols)
         for _ <- 1..len, into: "", do: <<Enum.at(symbols, :crypto.rand_uniform(0, symbol_count))>>
     end
+
 
 
 

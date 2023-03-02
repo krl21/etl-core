@@ -6,6 +6,7 @@ defmodule Common.Payload do
 
     import Type.Type, only: [convert: 2]
 
+
     @doc"""
     Extract the `value` of the key defined in the map
 
@@ -75,6 +76,54 @@ defmodule Common.Payload do
                     end)
         |> Enum.filter(fn {_, value} -> not (is_nil(value) and eliminate_null_value) end)
     end
+
+    @doc"""
+    Group the maps with equal value in a certain field
+
+    ### Parameters:
+
+        - list: List of map. Data.
+
+        - fields: Set of fields to set the identifier of each set. The identifier is the concatenation of each one, and the character '_'.
+
+    ### Return:
+
+        - {A, B} where
+
+            A Map where values is a list of values of `list` such that they share the same value in the defined field
+
+            B List of t() coincides with A.key()
+
+    """
+    def reduce_by(list, fields) do
+        {map, keys} =
+            list
+            |> Enum.reduce({%{}, MapSet.new([])}, fn payload, {map_acc, key_acc} ->
+                unique_id =
+                    fields
+                    |> Enum.map_join("__", fn field ->
+                        payload
+                        |> extract_data(
+                            field.id_payload,
+                            field.keys_to_search
+                        )
+                        |> convert(:string)
+                    end)
+
+                    {
+                        Map.update(
+                            map_acc,
+                            unique_id,
+                            [payload],
+                            &(&1 ++ [payload])
+                        ),
+                        MapSet.put(key_acc, unique_id)
+                    }
+            end)
+        {map, MapSet.to_list(keys)}
+    end
+
+
 
 
 
