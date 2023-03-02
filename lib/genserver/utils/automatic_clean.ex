@@ -8,11 +8,7 @@ defprotocol Genserver.Utils.AutomaticClean do
 
     ### Parameters:
 
-        - business: Atom. Define the business. Possible values:
-
-            new_vehicles__record. Table to work: Tables.Bigquery.NewVehicles.Service.table_id()
-
-            new_vehicles__task. Table to work: Tables.Bigquery.NewVehicles.Task.table_id()
+        - business: Atom. Define the business.
 
         - pid: Process. Process connecting Elixir and ODBC.
 
