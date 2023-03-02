@@ -66,9 +66,7 @@ defmodule Time.WorkingTime do
             elapsed_time(start_date, end_date, business, change_timezone)
     end
 
-    def elapsed_time(start_date, end_date, business, change_timezone)
-        when business in [:new_vehicles, :credit_course] do
-
+    def elapsed_time(start_date, end_date, business, change_timezone) do
             if not Timex.is_valid?(start_date) do
                 {:error, "Not valid init date #{inspect start_date}"}
 
@@ -142,7 +140,7 @@ defmodule Time.WorkingTime do
     #
     defp convert_to_business_hours(date, business, true) do
         date
-        |> Timex.Timezone.convert(Application.get_env(:data_pipeline_bigquery, :timezone))
+        |> Timex.Timezone.convert("America/Santiago")
         |> convert_to_business_hours(business, false)
     end
 
