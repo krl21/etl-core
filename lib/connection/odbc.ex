@@ -63,10 +63,7 @@ alias Connection.Odbc
 
     ### Parameter:
 
-        - data_source: Atom. Data source name. The possible values are:
-
-            - :new_vehicles      New vehicles data warehouse
-            - :credit_course    Credit course data warehouse
+        - data_source: List. Data source information.
 
     ### Return:
 
