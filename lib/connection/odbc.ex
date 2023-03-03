@@ -3,7 +3,6 @@ defmodule Connection.Odbc do
     @moduledoc"""
     Module for working with the ODBC library. It frees you from having to know how Erlang's :odbc library works.
     """
-alias Connection.Odbc
 
     require Logger
     import Type.Type, only: [convert: 2]
