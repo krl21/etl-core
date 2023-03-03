@@ -39,8 +39,6 @@ defmodule Connection.Http do
 
     ### Parameters:
 
-        - body: Map.
-
         - url: String.
 
         - headers: List of tuple.
