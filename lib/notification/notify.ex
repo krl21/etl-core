@@ -15,7 +15,7 @@ defmodule Notification.Notify do
 
         - env: String.
 
-        - error: Exception.
+        - info: String.
 
     """
     def notify_slack(url, headers, env, info)
