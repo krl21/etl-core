@@ -17,12 +17,12 @@ defmodule Genserver.RabbitConsumerByBatch do
     end
 
     def init({%{business: business, config: %{queue: queue} = queue_info}, configuration_amqp, batch_size, data_source, seconds_timeout}) do
-        Logger.info("#{inspect __MODULE__}. Initializing. Associated queue: ---#{queue}---. Batch size: #{batch_size}")
+        Logger.info("#{to_string(__MODULE__)}. Initializing. Associated queue: ---#{to_string(queue)}---. Batch size: #{to_string(batch_size)}")
 
         {:ok, connection} = configuration_amqp |> AMQP.Connection.open()
         {:ok, channel} = AMQP.Channel.open(connection)
 
-        Logger.info("#{inspect __MODULE__}. Created the process to communicate with ODBC-BigQuery")
+        Logger.info("#{to_string(__MODULE__)}. Created the process to communicate with ODBC-BigQuery")
         pid_odbc = data_source |> connect()
 
         setup_queue(channel, queue_info)
@@ -54,12 +54,12 @@ defmodule Genserver.RabbitConsumerByBatch do
     #     - queue: Map. Queue definition.
     #
     defp setup_queue(channel, %{queue: queue, exchange: exchange, queue_error: queue_error, queue_arguments: queue_arguments, listen: listen}) do
-        Logger.info("#{inspect __MODULE__}. Configuring the queue ---#{inspect queue}---")
+        Logger.info("#{to_string(__MODULE__)}. Configuring the queue ---#{to_string(queue)}---")
 
         {:ok, _} = AMQP.Queue.declare(channel, queue_error, durable: true)
         {:ok, info} = AMQP.Queue.declare(channel, queue, durable: true, arguments: queue_arguments)
 
-        Logger.debug("#{inspect __MODULE__}. State: #{inspect info}")
+        Logger.debug("#{to_string(__MODULE__)}. State: #{to_string(info)}")
 
         :ok = AMQP.Exchange.fanout(channel, exchange, durable: true)
         :ok = AMQP.Queue.bind(channel, queue, exchange)
@@ -90,8 +90,6 @@ defmodule Genserver.RabbitConsumerByBatch do
             else
                 seconds_timeout * 1_000
             end
-
-        # Logger.info("#{inspect __MODULE__}. Delay to execute: #{Tools.Stuff.convert_seconds_to_humans(milliseconds |> Kernel./(1_000) |> Type.convert(:integer))}")
 
         :erlang.send_after(milliseconds, self(), :update)
     end

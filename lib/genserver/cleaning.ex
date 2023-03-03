@@ -14,9 +14,9 @@ defmodule Genserver.Cleaning do
     end
 
     def init({business, data_source, seconds_timeout}) do
-        Logger.info("#{inspect __MODULE__}. Initializing. Business: ---#{business}---")
+        Logger.info("#{to_string(__MODULE__)}. Initializing. Business: ---#{to_string(business)}---")
 
-        Logger.info("#{inspect __MODULE__}. Created the process to communicate with ODBC-BigQuery")
+        Logger.info("#{to_string(__MODULE__)}. Created the process to communicate with ODBC-BigQuery")
         pid_odbc = data_source |> connect()
 
         variable_wait(:start, seconds_timeout)
@@ -25,7 +25,7 @@ defmodule Genserver.Cleaning do
     end
 
     def handle_info(:update, {business, pid_odbc, seconds_timeout}) do
-        Logger.debug("#{__MODULE__}. Applying duplicate/stale row cleanup in ---#{business}---")
+        Logger.debug("#{to_string(__MODULE__)}. Applying duplicate/stale row cleanup in ---#{to_string(business)}---")
 
         run(business, pid_odbc, {})
 

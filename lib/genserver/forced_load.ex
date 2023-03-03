@@ -13,13 +13,13 @@ defmodule Genserver.ForcedLoad do
     end
 
     def init(business) do
-        Logger.info("#{inspect __MODULE__}. Initializing. Business: ---#{business}---")
+        Logger.info("#{to_string(__MODULE__)}. Initializing. Business: ---#{to_string(business)}---")
         :erlang.send_after(10_000, self(), :update)
         {:ok, {business}}
     end
 
     def handle_info(:update, {business}) do
-        Logger.debug("#{__MODULE__}. Applying duplicate/stale row cleanup in ---#{business}---")
+        Logger.debug("#{to_string(__MODULE__)}. Applying duplicate/stale row cleanup in ---#{business}---")
 
         run(business)
 
