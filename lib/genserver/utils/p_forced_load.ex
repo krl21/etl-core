@@ -1,5 +1,5 @@
 
-defprotocol Genserver.Utils.ForcedLoad do
+defprotocol Genserver.Utils.PForcedLoad do
     @moduledoc"""
     Definition of the function for forced or manual data loading
     """

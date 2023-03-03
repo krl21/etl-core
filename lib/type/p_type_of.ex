@@ -1,5 +1,5 @@
 
-defprotocol Type.TypeOf do
+defprotocol Type.PTypeOf do
     @moduledoc"""
     Module oriented to determine the data type of an object
     """
@@ -32,52 +32,52 @@ defprotocol Type.TypeOf do
 
 end
 
-defimpl Type.TypeOf, for: Function do
+defimpl Type.PTypeOf, for: Function do
     def type_of(_data), do: :function
 end
 
-defimpl Type.TypeOf, for: Integer do
+defimpl Type.PTypeOf, for: Integer do
     def type_of(_data), do: :integer
 end
 
-defimpl Type.TypeOf, for: Binary do
+defimpl Type.PTypeOf, for: Binary do
     def type_of(_data), do: :binary
 end
 
-defimpl Type.TypeOf, for: BitString do
+defimpl Type.PTypeOf, for: BitString do
     def type_of(_data), do: :binary
 end
 
-defimpl Type.TypeOf, for: List do
+defimpl Type.PTypeOf, for: List do
     def type_of(_data), do: :list
 end
 
-defimpl Type.TypeOf, for: Map do
+defimpl Type.PTypeOf, for: Map do
     def type_of(_data), do: :map
 end
 
-defimpl Type.TypeOf, for: Float do
+defimpl Type.PTypeOf, for: Float do
     def type_of(_data), do: :float
 end
 
-defimpl Type.TypeOf, for: Atom do
+defimpl Type.PTypeOf, for: Atom do
     def type_of(nil), do: :nil
     def type_of(_data), do: :atom
 end
 
-defimpl Type.TypeOf, for: Tuple do
+defimpl Type.PTypeOf, for: Tuple do
     def type_of(_data), do: :tuple
 end
 
-defimpl Type.TypeOf, for: Pid do
+defimpl Type.PTypeOf, for: Pid do
     def type_of(_data), do: :pid
 end
 
-defimpl Type.TypeOf, for: Port do
+defimpl Type.PTypeOf, for: Port do
     def type_of(_data), do: :port
 end
 
-defimpl Type.TypeOf, for: Reference do
+defimpl Type.PTypeOf, for: Reference do
     @spec type_of(reference) :: :reference
     def type_of(_data), do: :reference
 end

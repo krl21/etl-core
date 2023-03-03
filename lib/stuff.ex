@@ -4,7 +4,7 @@ defmodule Stuff do
     Useful functions
     """
 
-    import Type.TypeOf
+    import Type.PTypeOf
 
     @doc"""
     Converts a number to a string, with the particularity that if the number is one digit, it adds the zero before it

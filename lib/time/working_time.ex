@@ -5,17 +5,17 @@ defmodule Time.WorkingTime do
     """
 
     alias Type.Type
-    import Time.WorkingTimeForBusiness
+    import Time.PWorkingTimeForBusiness
 
     @doc"""
     Calculates the working time elapsed between two dates. Depending on the business, hours vary.
 
     To add a new business and its particular hours, you must:
         1. Define a module with the name of the business.
-        2. Implement the Time.WorkingTimeForBusiness protocol, to define particular hours. Use the following template:
+        2. Implement the Time.PWorkingTimeForBusiness protocol, to define particular hours. Use the following template:
 
         ```
-        define Time.WorkingTimeForBusiness, for: Atom do
+        define Time.PWorkingTimeForBusiness, for: Atom do
             def function_name(date, <business_name>) do
                 ...
             end

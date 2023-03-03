@@ -4,7 +4,7 @@ defmodule Type.Type do
     Module for working with data types
     """
 
-    import Type.TypeOf
+    import Type.PTypeOf
 
     @doc"""
     Converts a data to its equivalent of a defined type

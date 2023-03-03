@@ -1,5 +1,5 @@
 
-defprotocol Type.DocumentaryTypeOf do
+defprotocol Type.PDocumentaryTypeOf do
     @moduledoc"""
     Module for the work of documentaries in NodeService
 

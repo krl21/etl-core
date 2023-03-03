@@ -1,5 +1,5 @@
 
-defprotocol Time.WorkingTimeForBusiness do
+defprotocol Time.PWorkingTimeForBusiness do
     @moduledoc"""
     Module oriented to the specification of each business with its schedules
     """
