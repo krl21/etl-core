@@ -37,8 +37,8 @@ defmodule EtlCore.MixProject do
       {:poison, "~> 5.0"},
       {:httpoison, "~> 1.8.2"},
       {:decorator, "~> 1.2"},
-      {:ex_doc, ">= 0.0.0", only: :dev, runtime: false}
-
+      {:ex_doc, ">= 0.0.0", only: :dev, runtime: false},
+      {:amqp, "~> 2.0.0-rc.1"},
 
     ]
   end
