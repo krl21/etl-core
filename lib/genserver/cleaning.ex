@@ -14,7 +14,7 @@ defmodule Genserver.Cleaning do
     end
 
     def init({business, data_source, seconds_timeout}) do
-        Logger.info("#{inspect __MODULE__}. Initializing Cleaning. Business: ---#{business}---")
+        Logger.info("#{inspect __MODULE__}. Initializing. Business: ---#{business}---")
 
         Logger.info("#{inspect __MODULE__}. Created the process to communicate with ODBC-BigQuery")
         pid_odbc = data_source |> connect()
