@@ -4,7 +4,7 @@ defmodule EtlCore.MixProject do
   def project do
     [
       app: :etl_core,
-      version: "0.1.1",
+      version: "0.1.2",
       elixir: "~> 1.14.0-rc.0",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
@@ -38,7 +38,7 @@ defmodule EtlCore.MixProject do
       {:httpoison, "~> 1.8.2"},
       {:decorator, "~> 1.2"},
       {:ex_doc, ">= 0.0.0", only: :dev, runtime: false},
-      {:amqp, "~> 2.0.0-rc.1"},
+      {:amqp, "~> 3.2"},
 
     ]
   end
