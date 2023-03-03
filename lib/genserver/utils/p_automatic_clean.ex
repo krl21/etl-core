@@ -4,6 +4,7 @@ defprotocol Genserver.Utils.PAutomaticClean do
     Definition of the method to be used for the automatic deletion of the repeated tuples, in the tables
     """
 
+
     @doc"""
     Removes from a certain table, the repeated rows
 
@@ -18,6 +19,7 @@ defprotocol Genserver.Utils.PAutomaticClean do
         - other_data: Tuple. Other data of interest.
 
     """
+    @spec run(atom, pid, tuple) :: any
     def run(business, pid, other_data)
 
 
