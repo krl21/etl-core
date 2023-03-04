@@ -32,12 +32,22 @@ defmodule Genserver.RabbitConsumerByBatch do
     end
 
     def handle_info(:update, {channel, queue, pid_odbc, batch_size, milliseconds_timeout, business}) do
-        get_messages(channel, queue, batch_size)
-        |> perform(
-            random_string_generate(15),
-            pid_odbc,
-            business
-        )
+        IO.puts("estoy aqui")
+        IO.inspect(channel, label: "channel")
+        IO.inspect(queue, label: "queue")
+        IO.inspect(pid_odbc, label: "pid_odbc")
+        IO.inspect(batch_size, label: "batch_size")
+        IO.inspect(milliseconds_timeout, label: "milliseconds_timeout")
+        IO.inspect(business, label: "business")
+
+
+
+        # get_messages(channel, queue, batch_size)
+        # |> perform(
+        #     random_string_generate(15),
+        #     pid_odbc,
+        #     business
+        # )
 
         variable_wait(channel, queue, milliseconds_timeout)
 
@@ -59,7 +69,7 @@ defmodule Genserver.RabbitConsumerByBatch do
         {:ok, _} = AMQP.Queue.declare(channel, queue_error, durable: true)
         {:ok, info} = AMQP.Queue.declare(channel, queue, durable: true, arguments: queue_arguments)
 
-        Logger.debug("#{to_string(__MODULE__)}. State: #{to_string(info)}")
+        Logger.debug("#{to_string(__MODULE__)}. State: #{inspect(info)}")
 
         :ok = AMQP.Exchange.fanout(channel, exchange, durable: true)
         :ok = AMQP.Queue.bind(channel, queue, exchange)
