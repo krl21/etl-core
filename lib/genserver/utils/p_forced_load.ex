@@ -9,11 +9,11 @@ defprotocol Genserver.Utils.PForcedLoad do
 
     ### Parameter:
 
-    - business: Atom. Business to which the data points.
+        - business: Atom. Business to which the data points.
 
     """
-    @spec run(pid) :: any
-    def run(pid)
+    @spec run(atom) :: any
+    def run(business)
 
 
 

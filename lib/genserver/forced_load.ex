@@ -8,8 +8,8 @@ defmodule Genserver.ForcedLoad do
     require Logger
     import Genserver.Utils.PForcedLoad
 
-    def start_link({business, _data_source} = info) do
-        GenServer.start_link(__MODULE__, info, name: :"#{__MODULE__}.#{business}")
+    def start_link(business) do
+        GenServer.start_link(__MODULE__, business, name: :"#{__MODULE__}.#{business}")
     end
 
     def init(business) do
