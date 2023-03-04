@@ -32,12 +32,12 @@ defmodule Genserver.RabbitConsumerByBatch do
     end
 
     def handle_info(:update, {channel, queue, pid_odbc, batch_size, milliseconds_timeout, business}) do
-        # get_messages(channel, queue, batch_size)
-        # |> perform(
-        #     random_string_generate(15),
-        #     pid_odbc,
-        #     business
-        # )
+        get_messages(channel, queue, batch_size)
+        |> perform(
+            random_string_generate(15),
+            pid_odbc,
+            business
+        )
 
         variable_wait(channel, queue, milliseconds_timeout)
 
