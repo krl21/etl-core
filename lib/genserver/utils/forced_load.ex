@@ -229,8 +229,8 @@ defmodule Genserver.Utils.ForcedLoad do
                 headers_elastic,
                 type_documentary,
                 mode(),
-                start_date,
-                end_date,
+                start_date |> Poison.encode!() |> Poison.decode!(),
+                end_date |> Poison.encode!() |> Poison.decode!(),
                 "inserted_at",
                 "unique_id"
             )
