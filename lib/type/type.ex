@@ -70,29 +70,30 @@ defmodule Type.Type do
     end
 
     defp convert(x, :binary, :integer) do
-        x |> String.to_integer()
+        x
+        |> Integer.parse()
+        |> case do
+            {v, ""} -> v
+            _ -> nil
+        end
     end
 
     defp convert(x, :binary, :float) do
         x
-        |> String.contains?(".")
-        |> if do
-            x
-            |> String.split(".")
-            |> Kernel.length()
-            |> Kernel.==(2)
-            |> if do
-                x |> String.to_float()
-            else
+        |> Float.parse()
+        |> case do
+            :error -> nil
+            {v, ""} -> v
+            _ ->
                 x
-                |> String.replace(".", "")
-                |> convert(:integer)
-                |> convert(:float)
-            end
-        else
-            x
-            |> convert(:integer)
-            |> convert(:float)
+                |> String.contains?(".")
+                |> if do
+                    x
+                    |> String.replace(".", "")
+                    |> convert(:float)
+                else
+                    nil
+                end
         end
     end
 
