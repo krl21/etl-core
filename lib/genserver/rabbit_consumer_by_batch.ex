@@ -32,16 +32,6 @@ defmodule Genserver.RabbitConsumerByBatch do
     end
 
     def handle_info(:update, {channel, queue, pid_odbc, batch_size, milliseconds_timeout, business}) do
-        IO.puts("estoy aqui")
-        IO.inspect(channel, label: "channel")
-        IO.inspect(queue, label: "queue")
-        IO.inspect(pid_odbc, label: "pid_odbc")
-        IO.inspect(batch_size, label: "batch_size")
-        IO.inspect(milliseconds_timeout, label: "milliseconds_timeout")
-        IO.inspect(business, label: "business")
-
-
-
         # get_messages(channel, queue, batch_size)
         # |> perform(
         #     random_string_generate(15),
@@ -51,7 +41,7 @@ defmodule Genserver.RabbitConsumerByBatch do
 
         variable_wait(channel, queue, milliseconds_timeout)
 
-        {:noreply, {channel, queue, pid_odbc, batch_size, milliseconds_timeout}}
+        {:noreply, {channel, queue, pid_odbc, batch_size, milliseconds_timeout, business}}
     end
 
     #
