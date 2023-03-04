@@ -17,6 +17,7 @@ defprotocol Type.PDocumentaryTypeOf do
         - String
 
     """
+    @spec documentary_type_of(atom) :: binary
     def documentary_type_of(business)
 
 end
