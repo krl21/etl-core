@@ -13,7 +13,7 @@ defprotocol Genserver.Utils.PForcedLoad do
 
     """
     @spec run(pid) :: any
-    def run(business)
+    def run(pid)
 
 
 
