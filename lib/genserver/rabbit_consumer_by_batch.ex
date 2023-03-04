@@ -12,11 +12,11 @@ defmodule Genserver.RabbitConsumerByBatch do
     import Connection.Odbc, only: [connect: 1]
 
 
-    def start_link({%{config: %{queue: queue}} = _queue_info, _configuration_amqp, _batch_size, _data_source, _seconds_timeout} = info) do
+    def start_link({%{config: %{queue: queue}} = _queue_info, _configuration_amqp, _batch_size, _data_source, _milliseconds_timeout} = info) do
         GenServer.start_link(__MODULE__, info, name: :"#{__MODULE__}.#{queue}")
     end
 
-    def init({%{business: business, config: %{queue: queue} = queue_info}, configuration_amqp, batch_size, data_source, seconds_timeout}) do
+    def init({%{business: business, config: %{queue: queue} = queue_info}, configuration_amqp, batch_size, data_source, milliseconds_timeout}) do
         Logger.info("#{to_string(__MODULE__)}. Initializing. Associated queue: ---#{to_string(queue)}---. Batch size: #{to_string(batch_size)}")
 
         {:ok, connection} = configuration_amqp |> AMQP.Connection.open()
@@ -26,12 +26,12 @@ defmodule Genserver.RabbitConsumerByBatch do
         pid_odbc = data_source |> connect()
 
         setup_queue(channel, queue_info)
-        variable_wait(channel, queue, seconds_timeout)
+        variable_wait(channel, queue, milliseconds_timeout)
 
-        {:ok, {channel, queue, pid_odbc, batch_size, seconds_timeout, business}}
+        {:ok, {channel, queue, pid_odbc, batch_size, milliseconds_timeout, business}}
     end
 
-    def handle_info(:update, {channel, queue, pid_odbc, batch_size, seconds_timeout, business}) do
+    def handle_info(:update, {channel, queue, pid_odbc, batch_size, milliseconds_timeout, business}) do
         get_messages(channel, queue, batch_size)
         |> perform(
             random_string_generate(15),
@@ -39,9 +39,9 @@ defmodule Genserver.RabbitConsumerByBatch do
             business
         )
 
-        variable_wait(channel, queue, seconds_timeout)
+        variable_wait(channel, queue, milliseconds_timeout)
 
-        {:noreply, {channel, queue, pid_odbc, batch_size, seconds_timeout}}
+        {:noreply, {channel, queue, pid_odbc, batch_size, milliseconds_timeout}}
     end
 
     #
@@ -79,16 +79,16 @@ defmodule Genserver.RabbitConsumerByBatch do
     #
     #     - channel: AMQP.Channel. Channel.
     #
-    #     - seconds_timeout: Integer. total seconds to reactivate the genserver.
+    #     - milliseconds_timeout: Integer. Total milliseconds to reactivate the genserver.
     #
-    defp variable_wait(channel, queue, seconds_timeout) do
+    defp variable_wait(channel, queue, milliseconds_timeout) do
         milliseconds =
             AMQP.Queue.message_count(channel, queue)
             |> Kernel.>(0)
             |> if do
                 0
             else
-                seconds_timeout * 1_000
+                milliseconds_timeout
             end
 
         :erlang.send_after(milliseconds, self(), :update)
