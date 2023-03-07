@@ -77,5 +77,39 @@ defmodule File.FileManager do
         File.write(path, lines)
     end
 
+    @doc"""
+    Store in file, a text
+
+    ### Parameters:
+
+        - text: String: Text to put in the document.
+
+        - path: String. File path.
+
+    """
+    def save(text, path)
+        when is_binary(text) and is_binary(path) do
+            File.write(path, text)
+    end
+
+    @doc"""
+    Returns text stored in a file
+
+    ### Parameters:
+
+        - path: String. File path.
+
+    ### Return:
+
+        - String
+
+    """
+    def load(path)
+        when is_binary(path) do
+            {:ok, text} = File.read(path)
+            text
+    end
+
+
 
 end
