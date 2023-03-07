@@ -45,8 +45,13 @@ defmodule Connection.Ticket do
             #             |> Map.get("ticket")
             #         {:ok, ticket}
             # end
-            Path.join(folder, :erlang.phash2(username <> password) |> to_string())
-            |> load()
+            try do
+                refresh(url, headers, username, password, folder)
+            rescue
+                _ ->
+                Path.join(folder, :erlang.phash2(username <> password) |> to_string())
+                |> load()
+            end
     end
 
     @doc"""
@@ -87,10 +92,10 @@ defmodule Connection.Ticket do
                     |> Poison.decode!()
                     |> Map.get("ticket")
 
-
                 File.mkdir_p(folder)
                 folder = Path.join(folder, :erlang.phash2(username <> password) |> to_string())
                 save(ticket, folder)
+                {:ok, ticket}
         end
     end
 

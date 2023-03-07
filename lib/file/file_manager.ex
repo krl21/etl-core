@@ -106,8 +106,7 @@ defmodule File.FileManager do
     """
     def load(path)
         when is_binary(path) do
-            {:ok, text} = File.read(path)
-            text
+            File.read(path)
     end
 
 
