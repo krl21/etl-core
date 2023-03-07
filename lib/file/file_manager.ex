@@ -47,13 +47,13 @@ defmodule File.FileManager do
     end
 
     @doc"""
-    Almacena los datos en un fichero JSON, formato compatible para la carga por lotes en BigQuery. El nombre del fichero coincide la hora de emitido en formato UNIX
+    Stores the data in a JSON file, a format supported for batch loading in BigQuery. The file name matches the time it was issued in UNIX format.
 
     Parameters:
 
-        - path: String. Local path to store the file.
-
         - data: List of map. Data.
+
+        - path: String. Local path to store the file.
 
     ### Return:
 
