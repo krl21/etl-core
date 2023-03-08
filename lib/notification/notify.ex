@@ -44,7 +44,7 @@ defmodule Notification.Notify do
 
         - env: String.
 
-        - msg: String.
+        - msg: Map.
 
         - error: Exception.
 
@@ -80,14 +80,14 @@ defmodule Notification.Notify do
                 headers
             )
 
-            %{"text" =>
-                "Message: #{inspect(msg, limit: :infinity)} \n"
-            }
-            |> Poison.encode!()
-            |> Connection.Http.post(
-                url,
-                headers
-            )
+            # %{"text" =>
+            #     "Message: #{inspect(msg, limit: :infinity)} \n"
+            # }
+            # |> Poison.encode!()
+            # |> Connection.Http.post(
+            #     url,
+            #     headers
+            # )
     end
 
 
