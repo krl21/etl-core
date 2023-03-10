@@ -22,9 +22,11 @@ defmodule Connection.NodeService do
 
         - headers
 
-        - username: String. Username required to generate a ticket.
+        - ticket: Posibles valores:
 
-        - password: String. Password required to generate a ticket.
+            {String, String, String, String}. Corresponde a informacion necesaria para obtener el ticket. El orden es: url, headers, username, password.
+
+            String: Ticket.
 
     ### Return:
 
@@ -71,6 +73,32 @@ defmodule Connection.NodeService do
         end
     end
 
+    def get_details(node, url, headers, ticket)
+        when is_binary(node) and is_binary(url) and
+            is_list(headers) and is_binary(ticket) do
+
+            url
+            |> String.replace("<unique_id>", node)
+            |> String.replace("<ticket>", ticket)
+            |> Http.get(headers)
+            |> case do
+                {:error, error} ->
+                    {:error, error}
+
+                {:ok, %HTTPoison.Response{status_code: status_code, body: body}} ->
+                    Poison.decode(body)
+                    |> case do
+                        {:error, error} ->
+                            {:error, error}
+
+                        {:ok, body} when status_code == 200 ->
+                            {:ok, body}
+
+                        {:ok, body} ->
+                            {:error, body}
+                    end
+            end
+    end
 
 
 end
