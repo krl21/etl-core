@@ -22,11 +22,11 @@ defmodule Connection.NodeService do
 
         - headers
 
-        - ticket: Posibles valores:
+        - ticket: Possible values:
 
-            {String, String, String, String}. Corresponde a informacion necesaria para obtener el ticket. El orden es: url, headers, username, password.
+            - {String, String, String, String}. Corresponds to information necessary to obtain the ticket. The order is: url, headers, username, password.
 
-            String: Ticket.
+            - String: Ticket.
 
     ### Return:
 
