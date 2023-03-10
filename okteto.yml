@@ -1,5 +1,5 @@
 name: etl-core-carlos
-image: gcr.io/ttlchk-cloud/bigqueryodbc:0.0.1 
+image: gcr.io/ttlchk-cloud/googlebigqueryodbc:1.0.0-prod  
 workdir: /app/tmp
 command: ["bash"]
 autocreate: true
