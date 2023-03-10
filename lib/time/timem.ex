@@ -273,6 +273,50 @@ defmodule Time.Timem do
         "#{hour}:#{minute}:#{second}"
     end
 
+    @doc"""
+    Given a date range, construct consecutive non-overlapping intervals
+
+    ### Parameters:
+
+        - start_date: Timex.DateTime. Interval start date.
+
+        - end_date: Timex.DateTime. End date of the interval.
+
+        -step: Integer. Number of days covered by a subinterval.
+
+    ### Returns:
+
+        - {:error, Atom (reason)} | {:ok, [{Timex.DateTime, Timex.DateTime}, ...]}
+
+    """
+    def by_intervals(start_date, end_date, step)
+        when is_integer(step) and step > 0 do
+
+            Timex.is_valid?(start_date) and Timex.is_valid?(end_date)
+            |> Kernel.not()
+            |> if do
+                {:error, :invalid_date}
+            else
+                {:ok, by_intervals(start_date, end_date, step, [])}
+            end
+    end
+
+    defp by_intervals(end_date, end_date, _step, acc) do
+        acc
+    end
+
+    defp by_intervals(start_date, end_date, step, acc) do
+        partial_end_date = Timex.shift(start_date, days: step)
+        partial_end_date =
+            if Timex.diff(partial_end_date, end_date, :second) <= 0 do
+                partial_end_date
+            else
+                end_date
+            end
+
+        by_intervals(partial_end_date, end_date, step, acc ++ [{start_date, partial_end_date}])
+    end
+
 
 
 
