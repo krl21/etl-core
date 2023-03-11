@@ -8,7 +8,6 @@ defmodule Genserver.PostgresConsumer do
 
     require Logger
     import Genserver.Utils.PPostgresDb
-    import Stuff, only: [random_string_generate: 1]
     import Connection.Odbc, only: [connect: 1]
 
 
@@ -29,7 +28,9 @@ defmodule Genserver.PostgresConsumer do
 
     def handle_info(:update, {business, pid_odbc, milliseconds_timeout}) do
 
-        load(business)
+        business
+        |> get_data()
+        |> load(pid_odbc, business)
 
         variable_wait(:later, milliseconds_timeout)
 
