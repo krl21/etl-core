@@ -49,7 +49,9 @@ defmodule Time.WorkingTime do
     end
 
     def elapsed_time(start_date, end_date, business, change_timezone)
-        when is_binary(start_date) or is_binary(end_date)
+        when
+            (is_binary(start_date) and start_date != "") or
+            (is_binary(end_date) and end_date != "")
         do
             start_date = if is_binary(start_date) do
                 Type.convert(start_date, :DateTime)
