@@ -28,9 +28,7 @@ defmodule Genserver.PostgresConsumer do
 
     def handle_info(:update, {business, pid_odbc, milliseconds_timeout}) do
 
-        business
-        |> get_data()
-        |> load(pid_odbc, business)
+        perform(business, pid_odbc)
 
         variable_wait(:later, milliseconds_timeout)
 

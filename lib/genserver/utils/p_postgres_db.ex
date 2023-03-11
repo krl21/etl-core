@@ -5,30 +5,17 @@ defprotocol Genserver.Utils.PPostgresDb do
     """
 
     @doc"""
-    Extracts the new rows from a certain table
+    Extracts the new information from a certain table and stores it in Bigquery
 
     ### Parameter:
 
         - business: Atom. Business to which the data points.
-
-    """
-    @spec get_data(atom) :: any
-    def get_data(business)
-
-    @doc"""
-    Extracts the new rows from a certain table
-
-    ### Parameter:
-
-        - batch: List of map. Payloads.
 
         - conn_odbc_pid: Process. Process connecting Elixir and ODBC.
 
-        - business: Atom. Business to which the data points.
-
     """
-    @spec load(list, pid, atom) :: any
-    def load(batch, conn_odbc_pid, business)
+    @spec perform(atom, pid) :: any
+    def perform(business, conn_odbc_pid)
 
 
 end
