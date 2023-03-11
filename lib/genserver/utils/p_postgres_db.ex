@@ -11,10 +11,8 @@ defprotocol Genserver.Utils.PPostgresDb do
 
         - business: Atom. Business to which the data points.
 
-        - params: List. Other parameters of interest, if needed.
-
     """
-    @spec load(atom, list) :: any
-    def load(business, params)
+    @spec load(atom) :: any
+    def load(business)
 
 end
