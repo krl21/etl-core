@@ -24,9 +24,11 @@ defprotocol Genserver.Utils.PPostgresDb do
 
         - conn_odbc_pid: Process. Process connecting Elixir and ODBC.
 
+        - business: Atom. Business to which the data points.
+
     """
     @spec load(list, pid) :: any
-    def load(batch, conn_odbc_pid)
+    def load(batch, conn_odbc_pid, business)
 
 
 end
