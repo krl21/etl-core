@@ -27,7 +27,7 @@ defprotocol Genserver.Utils.PPostgresDb do
         - business: Atom. Business to which the data points.
 
     """
-    @spec load(list, pid) :: any
+    @spec load(list, pid, atom) :: any
     def load(batch, conn_odbc_pid, business)
 
 
