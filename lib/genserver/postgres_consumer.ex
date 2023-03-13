@@ -9,6 +9,7 @@ defmodule Genserver.PostgresConsumer do
     require Logger
     import Genserver.Utils.PPostgresDb
     import Connection.Odbc, only: [connect: 1]
+    import Stuff, only: [random_string_generate: 1]
 
 
     def start_link(data) do
@@ -28,7 +29,11 @@ defmodule Genserver.PostgresConsumer do
 
     def handle_info(:update, {business, pid_odbc, milliseconds_timeout}) do
 
-        perform(business, pid_odbc)
+        perform(
+            business,
+            pid_odbc,
+            random_string_generate(15)
+        )
 
         variable_wait(:later, milliseconds_timeout)
 

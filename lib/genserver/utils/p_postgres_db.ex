@@ -13,9 +13,11 @@ defprotocol Genserver.Utils.PPostgresDb do
 
         - conn_odbc_pid: Process. Process connecting Elixir and ODBC.
 
+        - batch_id: String. Batch identifier.
+
     """
-    @spec perform(atom, pid) :: any
-    def perform(business, conn_odbc_pid)
+    @spec perform(atom, pid, binary) :: any
+    def perform(business, conn_odbc_pid, batch_id)
 
 
 end
