@@ -182,15 +182,15 @@ defmodule Type.Type do
     end
 
     defp convert(x, :map, :string) do
-        if Timex.is_valid?(x) do
-            x
-            |> Poison.encode!()
-            |> Poison.decode!()
-        else
-            x
-            |> Map.to_list()
-            |> convert(:string)
-        end
+        x
+        |> Map.to_list()
+        |> convert(:string)
+    end
+
+    defp convert(x, :DateTime, :string) do
+        x
+        |> Poison.encode!()
+        |> Poison.decode!()
     end
 
     @doc"""
