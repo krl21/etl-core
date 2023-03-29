@@ -20,38 +20,39 @@ defmodule Connection.Ticket do
 
         - password: String. Password.
 
-        - folder: String. Folder path to store the ticket.
+        # - folder: String. Folder path to store the ticket.
 
     ### Return:
 
         - {Atom, String} | Exception . The atom can take the values: ok or error. The string will be the ticket or the error message.
 
     """
-    def get(url, headers, username, password, folder \\ "./tmp")
+    # def get(url, headers, username, password, folder \\ "./tmp")
+    def get(url, headers, username, password)
         when is_binary(url) and is_list(headers) and
             is_binary(username) and is_binary(password) do
-            # url
-            # |> String.replace("<username>", username)
-            # |> String.replace("<password>", password)
-            # |> get(headers)
-            # |> case do
-            #     {:error, error} ->
-            #         {:error, error}
+            url
+            |> String.replace("<username>", username)
+            |> String.replace("<password>", password)
+            |> get(headers)
+            |> case do
+                {:error, error} ->
+                    {:error, error}
 
-            #     {:ok, %HTTPoison.Response{body: body}} ->
-            #         ticket =
-            #             body
-            #             |> Poison.decode!()
-            #             |> Map.get("ticket")
-            #         {:ok, ticket}
-            # end
-            try do
-                refresh(url, headers, username, password, folder)
-            rescue
-                _ ->
-                Path.join(folder, :erlang.phash2(username <> password) |> to_string())
-                |> load()
+                {:ok, %HTTPoison.Response{body: body}} ->
+                    ticket =
+                        body
+                        |> Poison.decode!()
+                        |> Map.get("ticket")
+                    {:ok, ticket}
             end
+            # try do
+            #     refresh(url, headers, username, password, folder)
+            # rescue
+            #     _ ->
+            #     Path.join(folder, :erlang.phash2(username <> password) |> to_string())
+            #     |> load()
+            # end
     end
 
     @doc"""
