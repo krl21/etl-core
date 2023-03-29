@@ -23,8 +23,7 @@ defmodule Genserver.ForcedLoad do
 
         run(business, params)
 
-        :erlang.send_after(2_937_600_000, self(), :update)
-        {:noreply, {business, params}}
+        {:stop, :normal, {business, params}}
     end
 
 
