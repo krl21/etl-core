@@ -191,7 +191,24 @@ defmodule Time.WorkingTime do
     #     - Timex.DateTime
     #
     defp next_working_day(date, business) do
-        tomorrow = Timex.shift(date, days: 1)
+        # try do para el caso de que existe un desplazamiento de una fecha, sobre un cambio de uso de horario
+        tomorrow =
+            try do
+                tmp =
+                    date
+                    |> Timex.shift(days: 1)
+                    |> Map.get(:after) # si no da error es por temp es del tipo AmbiguosDateTime
+
+                # si es true es xq el día anterior fue del tipo AmbiguosDateTime, pero el actual es de tipo DateTime, por lo que tiene que calcularse con normalidad
+                if is_nil(tmp) do
+                    raise("")
+                else
+                    tmp
+                end
+            rescue
+                _ -> Timex.shift(date, days: 1)
+            end
+
         if is_working_day?(tomorrow, business) do
             tomorrow
         else
