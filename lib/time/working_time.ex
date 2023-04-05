@@ -54,13 +54,21 @@ defmodule Time.WorkingTime do
             (is_binary(end_date) and end_date != "")
         do
             start_date = if is_binary(start_date) do
-                Type.convert(start_date, :DateTime)
+                try do
+                    Type.convert(start_date, :DateTime)
+                rescue
+                    _ -> start_date
+                end
             else
                 start_date
             end
 
             end_date = if is_binary(end_date) do
-                Type.convert(end_date, :DateTime)
+                try do
+                    Type.convert(end_date, :DateTime)
+                rescue
+                    _ -> end_date
+                end
             else
                 end_date
             end
