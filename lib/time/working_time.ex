@@ -53,46 +53,42 @@ defmodule Time.WorkingTime do
             (is_binary(start_date) and start_date != "") or
             (is_binary(end_date) and end_date != "")
         do
-            start_date = if is_binary(start_date) do
-                try do
+            start_date = try do
                     Type.convert(start_date, :DateTime)
                 rescue
                     _ -> start_date
                 end
-            else
-                start_date
-            end
 
-            end_date = if is_binary(end_date) do
-                try do
+            end_date = try do
                     Type.convert(end_date, :DateTime)
                 rescue
                     _ -> end_date
                 end
-            else
-                end_date
-            end
 
-            elapsed_time(start_date, end_date, business, change_timezone)
+            elapsed_timep(start_date, end_date, business, change_timezone)
     end
 
     def elapsed_time(start_date, end_date, business, change_timezone) do
-            if not Timex.is_valid?(start_date) do
-                {:error, "Not valid init date #{inspect start_date}"}
+        elapsed_timep(start_date, end_date, business, change_timezone)
+    end
 
-            else if not Timex.is_valid?(end_date) do
-                {:error, "Not valid end date #{inspect end_date}"}
+    defp elapsed_timep(start_date, end_date, business, change_timezone) do
+        if not Timex.is_valid?(start_date) do
+            {:error, "Not valid init date #{inspect start_date}"}
 
-            else if Timex.diff(end_date, start_date, :seconds) < 0 do
-                {:error, "Start date #{inspect start_date} is later than end date #{inspect end_date}"}
+        else if not Timex.is_valid?(end_date) do
+            {:error, "Not valid end date #{inspect end_date}"}
 
-            else
-                start_date = convert_to_business_hours(start_date, business, change_timezone)
-                end_date = convert_to_business_hours(end_date, business, change_timezone)
+        else if Timex.diff(end_date, start_date, :seconds) < 0 do
+            {:error, "Start date #{inspect start_date} is later than end date #{inspect end_date}"}
 
-                result = Timex.diff(end_date, start_date, :seconds) - get_non_working_time(start_date, end_date, business)
-                {:ok, result}
-            end end end
+        else
+            start_date = convert_to_business_hours(start_date, business, change_timezone)
+            end_date = convert_to_business_hours(end_date, business, change_timezone)
+
+            result = Timex.diff(end_date, start_date, :seconds) - get_non_working_time(start_date, end_date, business)
+            {:ok, result}
+        end end end
     end
 
     #
