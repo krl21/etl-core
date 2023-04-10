@@ -88,6 +88,7 @@ defmodule Statement.Sql do
 
         - function_name: Atom. Name of SQL function to use. The possible values are:
             :timestamp  Function returns a datetime value based on a date or datetime value string
+            :datetime Function that converts a date in string, to a date understandable
 
     ### Return:
 
@@ -95,6 +96,8 @@ defmodule Statement.Sql do
 
     """
     def get_function(:timestamp), do: "TIMESTAMP"
+
+    def get_function(:datetime), do: "DATETIME"
 
 
     ################
@@ -358,6 +361,12 @@ defmodule Statement.Sql do
 
     defp concatenates_to_string([{column, value, relation}], _, _) do
         Type.convert_for_bigquery(column) <>
+        get_operator(relation) <>
+        Type.convert_for_bigquery(value)
+    end
+
+    defp concatenates_to_string([{column, value, relation, :datetime = function}], _, _) do
+        get_function(function) <> "(" <> Type.convert_for_bigquery(column) <> ")" <>
         get_operator(relation) <>
         Type.convert_for_bigquery(value)
     end
