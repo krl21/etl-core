@@ -268,7 +268,11 @@ defmodule Type.Type do
     end
 
     def convert_for_bigquery(x) do
-        convert(x, :string)
+        if Timex.is_valid?(x) do
+            "DATETIME('#{x}')"
+        else
+            convert(x, :string)
+        end
     end
 
 
