@@ -244,23 +244,27 @@ defmodule Type.Type do
     end
 
     def convert_for_bigquery(x) when is_map(x) do
-        x = x
-            |> Poison.encode()
-            |> elem(1)
-            |> String.replace("'", "_")
-            |> String.replace("ñ", "%n")
-            |> String.replace("Ñ", "%N")
-            |> String.replace("á", "%a")
-            |> String.replace("Á", "%A")
-            |> String.replace("é", "%e")
-            |> String.replace("É", "%E")
-            |> String.replace("í", "%i")
-            |> String.replace("Í", "%i")
-            |> String.replace("ó", "%o")
-            |> String.replace("Ó", "%O")
-            |> String.replace("ú", "%u")
-            |> String.replace("Ú", "%U")
-        "JSON '#{x}'"
+        if Timex.is_valid?(x) do
+            "TIMESTAMP('#{x |> to_string}')"
+        else
+            x = x
+                |> Poison.encode()
+                |> elem(1)
+                |> String.replace("'", "_")
+                |> String.replace("ñ", "%n")
+                |> String.replace("Ñ", "%N")
+                |> String.replace("á", "%a")
+                |> String.replace("Á", "%A")
+                |> String.replace("é", "%e")
+                |> String.replace("É", "%E")
+                |> String.replace("í", "%i")
+                |> String.replace("Í", "%i")
+                |> String.replace("ó", "%o")
+                |> String.replace("Ó", "%O")
+                |> String.replace("ú", "%u")
+                |> String.replace("Ú", "%U")
+            "JSON '#{x}'"
+        end
     end
 
     def convert_for_bigquery(x) when is_nil(x) do
@@ -268,11 +272,7 @@ defmodule Type.Type do
     end
 
     def convert_for_bigquery(x) do
-        if Timex.is_valid?(x) do
-            "DATETIME('#{x}')"
-        else
-            convert(x, :string)
-        end
+        convert(x, :string)
     end
 
 
