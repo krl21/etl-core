@@ -97,26 +97,16 @@ defmodule Type.Type do
         end
     end
 
-    defp convert(x, :binary, :DateTime) do
-        x
-        |> Timex.Parse.DateTime.Parser.parse("{ISO:Extended:Z}")
-        |> case do
-            {:ok, value} ->
-                value
-            {:error, error} ->
-                raise("Error: Convert `#{x}` to `#{inspect :DateTime}`. Information: #{error}")
-        end
-    end
-
-    defp convert(x, :binary, :datetime) do
-        x
-        |> Timex.Parse.DateTime.Parser.parse("{ISO:Extended:Z}")
-        |> case do
-            {:ok, value} ->
-                value
-            {:error, error} ->
-                raise("Error: Convert `#{x}` to `#{inspect :datetime}`. Information: #{error}")
-        end
+    defp convert(x, :binary, datetime)
+        when datetime in [:datetime, :DateTime, :timestamp] do
+            x
+            |> Timex.Parse.DateTime.Parser.parse("{ISO:Extended:Z}")
+            |> case do
+                {:ok, value} ->
+                    value
+                {:error, error} ->
+                    raise("Error: Convert `#{x}` to `#{inspect datetime}`. Information: #{error}")
+            end
     end
 
     defp convert(x, :binary, :boolean) do
@@ -198,16 +188,11 @@ defmodule Type.Type do
         |> convert(:string)
     end
 
-    defp convert(x, :DateTime, :string) do
-        x
-        |> Poison.encode!()
-        |> Poison.decode!()
-    end
-
-    defp convert(x, :datetime, :string) do
-        x
-        |> Poison.encode!()
-        |> Poison.decode!()
+    defp convert(x, datetime, :string)
+        when datetime in [:datetime, :DateTime, :timestamp] do
+            x
+            |> Poison.encode!()
+            |> Poison.decode!()
     end
 
     @doc"""
