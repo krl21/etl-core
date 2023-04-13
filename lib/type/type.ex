@@ -195,6 +195,12 @@ defmodule Type.Type do
             |> Poison.decode!()
     end
 
+    defp convert({{_, _, _}, {_, _, _}} = x, :tuple, :string) do
+        x
+        |> Timex.to_datetime()
+        |> convert(:string)
+    end
+
     @doc"""
     Converts the data into a format understandable by BigQuery
 
