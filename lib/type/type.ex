@@ -198,7 +198,8 @@ defmodule Type.Type do
     defp convert({{_, _, _}, {_, _, _}} = x, :tuple, :string) do
         x
         |> Timex.to_datetime()
-        |> convert(:string)
+        |> Poison.encode!()
+        |> Poison.decode!()
     end
 
     @doc"""
