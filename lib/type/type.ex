@@ -236,10 +236,15 @@ defmodule Type.Type do
     end
 
     def convert_for_bigquery(x) when is_map(x) do
-        if Timex.is_valid?(x) do
-            "TIMESTAMP('#{x |> to_string}')"
-        else
-            x = x
+        try do
+            if Timex.is_valid?(x) do
+                "TIMESTAMP('#{x |> to_string}')"
+            else
+                raise("")
+            end
+        rescue
+            _ ->
+                x = x
                 |> Poison.encode()
                 |> elem(1)
                 |> String.replace("'", "_")
