@@ -64,6 +64,10 @@ defmodule Type.Type do
         x
     end
 
+    defp convert(x, :nil, _any) do
+        x
+    end
+
     defp convert(x, :binary, t)
         when t == :string  or t == :string_datetime do
             x
@@ -157,10 +161,6 @@ defmodule Type.Type do
 
     defp convert(x, :float, :string) do
         x |> Float.to_string()
-    end
-
-    defp convert(x, :nil, _any) do
-        x
     end
 
     defp convert(x, :atom, :boolean) do
