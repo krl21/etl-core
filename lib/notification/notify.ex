@@ -71,7 +71,7 @@ defmodule Notification.Notify do
             %{"text" =>
                 "<!here|here> \n" <>
                 "Environment: #{inspect env} \n" <>
-                "Error: #{inspect error} \n" <>
+                "Error: #{inspect(error, limit: :infinity)} \n" <>
                 "Records current: #{inspect(records_current, limit: :infinity)} \n"
             }
             |> Poison.encode!()
