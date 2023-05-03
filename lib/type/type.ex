@@ -155,6 +155,17 @@ defmodule Type.Type do
         end
     end
 
+    defp convert(x, :integer, :timestamp) do
+        x
+        |> DateTime.from_unix(:millisecond)
+        |> case do
+            {:ok, date} ->
+                date
+            {:error, error} ->
+                raise("Error: Convert `#{x}` to `#{inspect :timestamp}`. Information: #{error}")
+        end
+    end
+
     defp convert(x, :float, :integer) do
         trunc(x)
     end
