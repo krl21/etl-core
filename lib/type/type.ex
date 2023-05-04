@@ -4,14 +4,15 @@ defmodule Type.Type do
     Module for working with data types
     """
 
-    import Type.PTypeOf
+    import Type.PConvertTo
+
 
     @doc"""
     Converts a data to its equivalent of a defined type
 
     ### Parameters:
 
-        -x. Data to convert.
+        - x. Data to convert.
 
         - to: Data type that `x` will be converted to.
 
@@ -54,163 +55,7 @@ defmodule Type.Type do
 
     """
     def convert(x, to) do
-        convert(x, type_of(x), to)
-    end
-
-    #
-    # Same documentation as convert/2. The difference lies in the second parameter: data type of `x`, to allow matching
-    #
-    defp convert(x, t, t) do
-        x
-    end
-
-    defp convert(x, :nil, _any) do
-        x
-    end
-
-    defp convert(x, :binary, t)
-        when t == :string  or t == :string_datetime do
-            x
-    end
-
-    defp convert(x, :binary, :integer) do
-        x
-        |> Integer.parse()
-        |> case do
-            {v, ""} -> v
-            _ -> nil
-        end
-    end
-
-    defp convert(x, :binary, :float) do
-        x
-        |> Float.parse()
-        |> case do
-            :error -> nil
-            {v, ""} -> v
-            _ ->
-                x
-                |> String.contains?(".")
-                |> if do
-                    x
-                    |> String.replace(".", "")
-                    |> convert(:float)
-                else
-                    nil
-                end
-        end
-    end
-
-    defp convert(x, :binary, datetime)
-        when datetime in [:datetime, :DateTime, :timestamp] do
-            x
-            |> Timex.Parse.DateTime.Parser.parse("{ISO:Extended:Z}")
-            |> case do
-                {:ok, value} ->
-                    value
-                {:error, error} ->
-                    raise("Error: Convert `#{x}` to `#{inspect datetime}`. Information: #{error}")
-            end
-    end
-
-    defp convert(x, :binary, :boolean) do
-        x
-        |> String.to_atom()
-        |> convert(:boolean)
-    end
-
-    defp convert(x, :binary, :atom) do
-        x |> String.to_atom()
-    end
-
-    defp convert(x, :binary, :map) do
-        x
-        |> Poison.decode()
-        |> case do
-            {:ok, map} ->
-                map
-            {:error, error} ->
-                raise("Error: Convert `#{x}` to `#{inspect :map}`. Information: #{error}")
-        end
-    end
-
-    defp convert(x, :integer, :float) do
-        x / 1
-    end
-
-    defp convert(x, :integer, :string) do
-        x |> Integer.to_string()
-    end
-
-    defp convert(x, :integer, :string_datetime) do
-        x
-        |> DateTime.from_unix(:millisecond)
-        |> case do
-            {:ok, date} ->
-                date
-                |> Poison.encode!()
-                |> Poison.decode!()
-            {:error, error} ->
-                raise("Error: Convert `#{x}` to `#{inspect :string_datetime}`. Information: #{error}")
-        end
-    end
-
-    defp convert(x, :integer, :timestamp) do
-        x
-        |> DateTime.from_unix(:millisecond)
-        |> case do
-            {:ok, date} ->
-                date
-            {:error, error} ->
-                raise("Error: Convert `#{x}` to `#{inspect :timestamp}`. Information: #{error}")
-        end
-    end
-
-    defp convert(x, :float, :integer) do
-        trunc(x)
-    end
-
-    defp convert(x, :float, :string) do
-        x |> Float.to_string()
-    end
-
-    defp convert(x, :atom, :boolean) do
-        case x do
-            :true ->
-                true
-            :false ->
-                false
-            _ ->
-                raise("Error: Convert `#{x}`(Boolean BigQuery) to `#{inspect :boolean}`")
-        end
-    end
-
-    defp convert(x, :atom, :string) do
-        x |> Atom.to_string()
-    end
-
-    defp convert(x, :list, :string) do
-        x |> List.to_string()
-    end
-
-    defp convert(x, :map, :string) do
-        x
-        |> Map.to_list()
-        |> convert(:string)
-    end
-
-    defp convert(x, datetime, :string)
-        when datetime in [:datetime, :DateTime, :timestamp] do
-            x
-            |> Poison.encode!()
-            |> Poison.decode!()
-    end
-
-    defp convert({{_, _, _}, {_, _, _}} = x, :tuple, :string) do
-        x
-        |> Timex.to_datetime()
-        |> Poison.encode!()
-        |> Poison.decode!()
+        convert_to(x, to)
     end
 
     @doc"""
