@@ -1,7 +1,7 @@
 
 defprotocol Type.PTypeOf do
     @moduledoc"""
-    Module oriented to determine the data type of an object
+    Protocol oriented to determine the data type of an object
     """
 
     @doc"""
