@@ -230,7 +230,7 @@ defimpl Type.PConvertTo, for: List do
 
     def convert_to(x, :string) do
         x
-        |> Poison.encode!()
+        |> List.to_string()
     end
 end
 
