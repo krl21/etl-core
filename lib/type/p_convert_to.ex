@@ -102,6 +102,7 @@ defimpl Type.PConvertTo, for: BitString do
 
     def convert_to(x, :integer) do
         x
+        |> String.replace(".", "")
         |> Integer.parse()
         |> case do
             {y, ""} ->
@@ -176,6 +177,7 @@ defimpl Type.PConvertTo, for: Binary do
 
     def convert_to(x, :integer) do
         x
+        |> String.replace(".", "")
         |> Integer.parse()
         |> case do
             {y, ""} ->
