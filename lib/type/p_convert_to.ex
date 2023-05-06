@@ -113,6 +113,16 @@ defimpl Type.PConvertTo, for: BitString do
 
     def convert_to(x, :float) do
         x
+        |> String.split(".")
+        |> List.last()
+        |> Kernel.==("0")
+        |> if do
+            x
+            |> String.slice(0..-2)
+        else
+            x
+        end
+        |> String.replace(".", "")
         |> Float.parse()
         |> case do
             {v, ""} ->
@@ -173,6 +183,16 @@ defimpl Type.PConvertTo, for: Binary do
 
     def convert_to(x, :float) do
         x
+        |> String.split(".")
+        |> List.last()
+        |> Kernel.==("0")
+        |> if do
+            x
+            |> String.slice(0..-2)
+        else
+            x
+        end
+        |> String.replace(".", "")
         |> Float.parse()
         |> case do
             {v, ""} ->
