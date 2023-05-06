@@ -106,6 +106,8 @@ defimpl Type.PConvertTo, for: BitString do
         |> case do
             {y, ""} ->
                 y
+            :error ->
+                nil
             _ ->
                 raise("Error: Convert `#{x}` to `#{inspect :integer}`.")
         end
@@ -127,6 +129,8 @@ defimpl Type.PConvertTo, for: BitString do
         |> case do
             {v, ""} ->
                 v
+            :error ->
+                nil
             _ ->
                 raise("Error: Convert `#{x}` to `#{inspect :float}`.")
         end
@@ -176,6 +180,8 @@ defimpl Type.PConvertTo, for: Binary do
         |> case do
             {y, ""} ->
                 y
+            :error ->
+                nil
             _ ->
                 raise("Error: Convert `#{x}` to `#{inspect :integer}`.")
         end
@@ -197,6 +203,8 @@ defimpl Type.PConvertTo, for: Binary do
         |> case do
             {v, ""} ->
                 v
+            :error ->
+                nil
             _ ->
                 raise("Error: Convert `#{x}` to `#{inspect :float}`.")
         end
