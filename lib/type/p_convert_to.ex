@@ -126,6 +126,7 @@ defimpl Type.PConvertTo, for: BitString do
             x
         end
         |> String.replace(".", "")
+        |> String.replace(",", ".")
         |> Float.parse()
         |> case do
             {v, ""} ->
@@ -201,6 +202,7 @@ defimpl Type.PConvertTo, for: Binary do
             x
         end
         |> String.replace(".", "")
+        |> String.replace(",", ".")
         |> Float.parse()
         |> case do
             {v, ""} ->
