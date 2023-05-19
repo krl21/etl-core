@@ -64,6 +64,11 @@ defimpl Type.PConvertTo, for: Integer do
         |> Integer.to_string()
     end
 
+    def convert_to(-1, datetime)
+        when datetime in [:datetime, :timestamp] do
+            nil
+    end
+
     def convert_to(x, datetime)
         when datetime in [:datetime, :timestamp] do
             x
@@ -136,6 +141,11 @@ defimpl Type.PConvertTo, for: BitString do
             _ ->
                 raise("Error: Convert `#{x}` to `#{inspect :float}`.")
         end
+    end
+
+    def convert_to("", datetime)
+        when datetime in [:datetime, :DateTime, :timestamp] do
+            nil
     end
 
     def convert_to(x, datetime)
@@ -212,6 +222,11 @@ defimpl Type.PConvertTo, for: Binary do
             _ ->
                 raise("Error: Convert `#{x}` to `#{inspect :float}`.")
         end
+    end
+
+    def convert_to("", datetime)
+        when datetime in [:datetime, :DateTime, :timestamp] do
+            nil
     end
 
     def convert_to(x, datetime)
