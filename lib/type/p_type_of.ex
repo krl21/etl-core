@@ -81,3 +81,13 @@ defimpl Type.PTypeOf, for: Reference do
     @spec type_of(reference) :: :reference
     def type_of(_data), do: :reference
 end
+
+defimpl Type.PTypeOf, for: DateTime do
+    @spec type_of(reference) :: :timestamp
+    def type_of(_data), do: :timestamp
+end
+
+defimpl Type.PTypeOf, for: NaiveDateTime do
+    @spec type_of(reference) :: :timestamp
+    def type_of(_data), do: :timestamp
+end
