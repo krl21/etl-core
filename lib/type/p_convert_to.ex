@@ -151,7 +151,6 @@ defimpl Type.PConvertTo, for: BitString do
     def convert_to(x, datetime)
         when datetime in [:datetime, :DateTime, :timestamp] do
             x
-            |> String.replace("/", "-")
             |> Timex.Parse.DateTime.Parser.parse("{ISO:Extended:Z}")
             |> case do
                 {:ok, value} ->
@@ -233,7 +232,6 @@ defimpl Type.PConvertTo, for: Binary do
     def convert_to(x, datetime)
         when datetime in [:datetime, :DateTime, :timestamp] do
             x
-            |> String.replace("/", "-")
             |> Timex.Parse.DateTime.Parser.parse("{ISO:Extended:Z}")
             |> case do
                 {:ok, value} ->
