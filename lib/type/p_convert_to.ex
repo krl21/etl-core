@@ -107,6 +107,7 @@ defimpl Type.PConvertTo, for: BitString do
 
     def convert_to(x, :integer) do
         x
+        |> String.replace(" ", "")
         |> String.replace(".", "")
         |> Integer.parse()
         |> case do
@@ -121,6 +122,7 @@ defimpl Type.PConvertTo, for: BitString do
 
     def convert_to(x, :float) do
         x
+        |> String.replace(" ", "")
         |> String.split(".")
         |> List.last()
         |> Kernel.==("0")
@@ -143,8 +145,8 @@ defimpl Type.PConvertTo, for: BitString do
         end
     end
 
-    def convert_to("", datetime)
-        when datetime in [:datetime, :DateTime, :timestamp] do
+    def convert_to(x, datetime)
+        when x in ["", "'"] and datetime in [:datetime, :DateTime, :timestamp] do
             nil
     end
 
@@ -189,6 +191,7 @@ defimpl Type.PConvertTo, for: Binary do
 
     def convert_to(x, :integer) do
         x
+        |> String.replace(" ", "")
         |> String.replace(".", "")
         |> Integer.parse()
         |> case do
@@ -203,6 +206,7 @@ defimpl Type.PConvertTo, for: Binary do
 
     def convert_to(x, :float) do
         x
+        |> String.replace(" ", "")
         |> String.split(".")
         |> List.last()
         |> Kernel.==("0")
@@ -225,8 +229,8 @@ defimpl Type.PConvertTo, for: Binary do
         end
     end
 
-    def convert_to("", datetime)
-        when datetime in [:datetime, :DateTime, :timestamp] do
+    def convert_to(x, datetime)
+        when x in ["", "'"] and datetime in [:datetime, :DateTime, :timestamp] do
             nil
     end
 
