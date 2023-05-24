@@ -175,6 +175,11 @@ defimpl Type.PConvertTo, for: BitString do
         |> String.to_atom()
     end
 
+    def convert_to("", type)
+        when type in [:list, :map] do
+        nil
+    end
+
     def convert_to(x, type)
         when type in [:list, :map] do
         x
@@ -269,6 +274,11 @@ defimpl Type.PConvertTo, for: Binary do
             {:error, error} ->
                 raise("Error: Convert `#{x}` to `#{inspect :map}`. Information: #{error}")
         end
+    end
+
+    def convert_to("", type)
+        when type in [:list, :map] do
+        nil
     end
 
     def convert_to(x, type)
