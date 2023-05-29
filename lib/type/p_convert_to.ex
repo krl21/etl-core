@@ -147,7 +147,7 @@ defimpl Type.PConvertTo, for: BitString do
     end
 
     def convert_to(x, datetime)
-        when x in ["", "'"] and datetime in [:datetime, :DateTime, :timestamp] do
+        when x in ["", "'", "0"] and datetime in [:datetime, :DateTime, :timestamp] do
             nil
     end
 
@@ -237,7 +237,7 @@ defimpl Type.PConvertTo, for: Binary do
     end
 
     def convert_to(x, datetime)
-        when x in ["", "'"] and datetime in [:datetime, :DateTime, :timestamp] do
+        when x in ["", "'", "0"] and datetime in [:datetime, :DateTime, :timestamp] do
             nil
     end
 
