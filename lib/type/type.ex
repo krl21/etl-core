@@ -73,6 +73,7 @@ defmodule Type.Type do
     def convert_for_bigquery(x) when is_binary(x) do
         x = x
             |> String.replace("\n", " ")
+            |> String.replace("\t", "")
             |> String.replace("'", "_")
             |> String.replace("'", "_")
             |> String.replace("ñ", "%n")
@@ -101,8 +102,8 @@ defmodule Type.Type do
         rescue
             _ ->
                 x = x
-                |> Poison.encode()
-                |> elem(1)
+                |> Poison.encode!()
+                |> String.replace("\\t", "")
                 |> String.replace("'", "_")
                 |> String.replace("ñ", "%n")
                 |> String.replace("Ñ", "%N")
