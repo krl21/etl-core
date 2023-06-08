@@ -19,6 +19,9 @@ defmodule Genserver.RabbitConsumerByBatch do
     def init({%{business: business, config: %{queue: queue} = queue_info}, configuration_amqp, batch_size, data_source, milliseconds_timeout}) do
         Logger.info("#{to_string(__MODULE__)}. Initializing. Associated queue: ---#{to_string(queue)}---. Batch size: #{to_string(batch_size)}")
 
+        Logger.info("-+-+-+- configuration_amqp: #{inspect(configuration_amqp)}")
+        Logger.info("-+-+-+- AMQP.Connection.open(configuration_amqp): #{inspect(AMQP.Connection.open(configuration_amqp), limit: :infinity)}")
+
         {:ok, connection} = configuration_amqp |> AMQP.Connection.open()
         {:ok, channel} = AMQP.Channel.open(connection)
 
