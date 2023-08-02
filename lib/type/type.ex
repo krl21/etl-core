@@ -75,7 +75,6 @@ defmodule Type.Type do
             |> String.replace("\n", " ")
             |> String.replace("\t", "")
             |> String.replace("'", "_")
-            |> String.replace("'", "_")
             |> String.replace("ñ", "%n")
             |> String.replace("Ñ", "%N")
             |> String.replace("á", "%a")
@@ -127,6 +126,35 @@ defmodule Type.Type do
 
     def convert_for_bigquery(x) do
         convert(x, :string)
+    end
+
+    @doc"""
+    Convert bigquery text to understandable format
+
+    ### Parameter:
+
+        - x: t(). Value.
+
+    ### Return:
+
+        - String
+
+    """
+    def convert_from_bigquery(x) when is_binary(x) do
+        x
+        |> String.replace("_", "'")
+        |> String.replace("%n", "ñ")
+        |> String.replace("%N", "Ñ")
+        |> String.replace("%a", "á")
+        |> String.replace("%A", "Á")
+        |> String.replace("%e", "é")
+        |> String.replace("%E", "É")
+        |> String.replace("%i", "í")
+        |> String.replace("%i", "Í")
+        |> String.replace("%o", "ó")
+        |> String.replace("%O", "Ó")
+        |> String.replace("%u", "ú")
+        |> String.replace("%U", "Ú")
     end
 
 
