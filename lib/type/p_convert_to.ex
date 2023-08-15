@@ -120,6 +120,10 @@ defimpl Type.PConvertTo, for: BitString do
         end
     end
 
+    def convert_to("0", :float) do
+        convert_to("0.0", :float)
+    end
+
     def convert_to(x, :float) do
         x
         |> String.replace(" ", "")
@@ -208,6 +212,10 @@ defimpl Type.PConvertTo, for: Binary do
             _ ->
                 raise("Error: Convert `#{x}` to `#{inspect :integer}`.")
         end
+    end
+
+    def convert_to("0", :float) do
+        convert_to("0.0", :float)
     end
 
     def convert_to(x, :float) do
