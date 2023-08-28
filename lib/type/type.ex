@@ -87,6 +87,7 @@ defmodule Type.Type do
             |> String.replace("Ó", "%O")
             |> String.replace("ú", "%u")
             |> String.replace("Ú", "%U")
+            |> String.replace("–", "-")
 
         "'#{x}'"
     end
