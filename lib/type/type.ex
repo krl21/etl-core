@@ -76,6 +76,7 @@ defmodule Type.Type do
             |> String.replace("\t", "")
             |> String.replace("'", "_")
             |> String.replace("ñ", "%n")
+            |> String.replace("Ň", "Ñ")
             |> String.replace("Ñ", "%N")
             |> String.replace("á", "%a")
             |> String.replace("Á", "%A")
