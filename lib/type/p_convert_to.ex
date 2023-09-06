@@ -125,20 +125,29 @@ defimpl Type.PConvertTo, for: BitString do
     end
 
     def convert_to(x, :float) do
+        x =
+            x
+            |> String.replace(" ", "")
+            |> String.split(".")
+            |> List.last()
+            |> Kernel.==("0")
+            |> if do
+                x
+                |> String.slice(0..-2)
+            else
+                x
+            end
+
         x
-        |> String.replace(" ", "")
-        |> String.split(".")
-        |> List.last()
-        |> Kernel.==("0")
+        |> String.contains?("e")
         |> if do
             x
-            |> String.slice(0..-2)
         else
             x
+            |> String.replace(" ", "")
+            |> String.replace(".", "")
+            |> String.replace(",", ".")
         end
-        |> String.replace(" ", "")
-        |> String.replace(".", "")
-        |> String.replace(",", ".")
         |> Float.parse()
         |> case do
             {v, ""} ->
@@ -219,20 +228,29 @@ defimpl Type.PConvertTo, for: Binary do
     end
 
     def convert_to(x, :float) do
+        x =
+            x
+            |> String.replace(" ", "")
+            |> String.split(".")
+            |> List.last()
+            |> Kernel.==("0")
+            |> if do
+                x
+                |> String.slice(0..-2)
+            else
+                x
+            end
+
         x
-        |> String.replace(" ", "")
-        |> String.split(".")
-        |> List.last()
-        |> Kernel.==("0")
+        |> String.contains?("e")
         |> if do
             x
-            |> String.slice(0..-2)
         else
             x
+            |> String.replace(" ", "")
+            |> String.replace(".", "")
+            |> String.replace(",", ".")
         end
-        |> String.replace(" ", "")
-        |> String.replace(".", "")
-        |> String.replace(",", ".")
         |> Float.parse()
         |> case do
             {v, ""} ->
