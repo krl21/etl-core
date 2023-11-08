@@ -12,6 +12,8 @@ defmodule Time.Timem do
     #     2021 => "https://www.chile.gob.cl/buenos-aires/feriados-2021",
     #     2022 => "https://www.feriados.cl/index.php",
     #     2023 => "https://www.feriados.cl/2023.htm",
+    #     2024 => "https://www.feriados.cl/2024.htm"
+    #     2024 => "https://www.feriados.cl/2025.htm"
     #
     @holidays %{
         2021 => %{
@@ -55,6 +57,34 @@ defmodule Time.Timem do
             october:    [9, 27],
             november:   [1],
             december:   [8, 25]
+        },
+        2024 => %{
+            january:    [1],
+            february:   [],
+            march:      [29, 30],
+            april:      [],
+            may:        [1, 21],
+            june:       [9, 20, 29],
+            july:       [16],
+            august:     [15],
+            september:  [18, 19, 20],
+            october:    [12, 27, 31],
+            november:   [1, 24],
+            december:   [8, 25]
+        },
+        2025 => %{
+            january:    [1],
+            february:   [],
+            march:      [],
+            april:      [18, 19],
+            may:        [1, 21],
+            june:       [20, 29],
+            july:       [16],
+            august:     [15],
+            september:  [18, 19],
+            october:    [12, 31],
+            november:   [1, 16],
+            december:   [8, 14, 25]
         },
 
     }
