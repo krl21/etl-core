@@ -37,7 +37,7 @@ defmodule Time.WorkingTime do
 
     ### Return:
 
-        - {:ok, integer} | {:error, string}
+        - {:ok, Integer (seconds)} | {:error, String}
 
     """
     def elapsed_time(start_date, end_date, business, change_timezone \\ true)
