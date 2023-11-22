@@ -87,8 +87,10 @@ defmodule Statement.Sql do
     ### Parameter:
 
         - function_name: Atom. Name of SQL function to use. The possible values are:
-            :timestamp  Function returns a datetime value based on a date or datetime value string
-            :datetime Function that converts a date in string, to a date understandable
+            :timestamp  Function returns a datetime value based on a date or datetime value string, contains a time zone.
+            :datetime   Function returns a datetime value based on a date or datetime value string
+            :time       Function returns a time value based on a date or time value string
+            :date       Function returns a time value based on a date or date value string
 
     ### Return:
 
@@ -99,6 +101,9 @@ defmodule Statement.Sql do
 
     def get_function(:datetime), do: "DATETIME"
 
+    def get_function(:date), do: "DATE"
+
+    def get_function(:time), do: "TIME"
 
     ################
     ### Statement
