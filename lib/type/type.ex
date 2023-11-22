@@ -95,10 +95,23 @@ defmodule Type.Type do
 
     def convert_for_bigquery(x) when is_map(x) do
         try do
-            if Timex.is_valid?(x) do
-                "TIMESTAMP('#{x |> to_string}')"
-            else
-                raise("")
+
+
+            x
+            |> Map.get(:__struct__)
+            |> case do
+                DateTime ->
+                    "TIMESTAMP('#{x |> to_string}')"
+
+                Date ->
+                    "DATE('#{x |> to_string}')"
+
+                Time ->
+                    {h, m, s} = x |> Time.to_erl()
+                    "TIME(#{h}, #{m}, #{s})"
+
+                _map ->
+                    raise("")
             end
         rescue
             _ ->
