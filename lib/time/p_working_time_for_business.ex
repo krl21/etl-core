@@ -13,12 +13,14 @@ defprotocol Time.PWorkingTimeForBusiness do
 
         - business: Atom. Business.
 
+        - params: t. Auxiliary parameters.
+
     ### Return:
 
         - Boolean.
 
     """
-    def is_working_day?(date, business)
+    def is_working_day?(date, business, params)
 
     @doc"""
     Returns the working hours of a day, given the business
@@ -29,12 +31,14 @@ defprotocol Time.PWorkingTimeForBusiness do
 
         - business: Atom. Business.
 
+        - params: t. Auxiliary parameters.
+
     ### Return:
 
         - {start_time, end_time}, where each element is {hour, minute, second}
 
     """
-    def working_hours(date, business)
+    def working_hours(date, business, params)
 
 
 

@@ -33,6 +33,8 @@ defmodule Time.WorkingTime do
 
         - business: Atom. Business.
 
+        - params: t. Auxiliary parameters.
+
         - change_timezone: Boolean. Indicate if you have to change the dates to the time use defined in the configuration.
 
     ### Return:
@@ -40,15 +42,15 @@ defmodule Time.WorkingTime do
         - {:ok, Integer (seconds)} | {:error, String}
 
     """
-    def elapsed_time(start_date, end_date, business, change_timezone \\ true)
+    def elapsed_time(start_date, end_date, business, params, change_timezone \\ true)
 
-    def elapsed_time(start_date, end_date, _business, _change_timezone)
+    def elapsed_time(start_date, end_date, _business, _params, _change_timezone)
         when is_nil(start_date) or is_nil(end_date)
         do
             {:error, "One of the dates has null value. Start date: #{start_date}. End date: #{end_date}."}
     end
 
-    def elapsed_time(start_date, end_date, business, change_timezone)
+    def elapsed_time(start_date, end_date, business, params, change_timezone)
         when
             (is_binary(start_date) and start_date != "") or
             (is_binary(end_date) and end_date != "")
@@ -65,14 +67,14 @@ defmodule Time.WorkingTime do
                     _ -> end_date
                 end
 
-            elapsed_timep(start_date, end_date, business, change_timezone)
+            elapsed_timep(start_date, end_date, business, params, change_timezone)
     end
 
-    def elapsed_time(start_date, end_date, business, change_timezone) do
-        elapsed_timep(start_date, end_date, business, change_timezone)
+    def elapsed_time(start_date, end_date, business, params, change_timezone) do
+        elapsed_timep(start_date, end_date, business, params, change_timezone)
     end
 
-    defp elapsed_timep(start_date, end_date, business, change_timezone) do
+    defp elapsed_timep(start_date, end_date, business, params, change_timezone) do
         if not Timex.is_valid?(start_date) do
             {:error, "Not valid init date #{inspect start_date}"}
 
@@ -83,10 +85,10 @@ defmodule Time.WorkingTime do
             {:error, "Start date #{inspect start_date} is later than end date #{inspect end_date}"}
 
         else
-            start_date = convert_to_business_hours(start_date, business, change_timezone)
-            end_date = convert_to_business_hours(end_date, business, change_timezone)
+            start_date = convert_to_business_hours(start_date, business, params, change_timezone)
+            end_date = convert_to_business_hours(end_date, business, params, change_timezone)
 
-            result = Timex.diff(end_date, start_date, :seconds) - get_non_working_time(start_date, end_date, business)
+            result = Timex.diff(end_date, start_date, :seconds) - get_non_working_time(start_date, end_date, business, params)
             {:ok, result}
         end end end
     end
@@ -102,20 +104,22 @@ defmodule Time.WorkingTime do
     #
     #     - business: Atom. Business.
     #
+    #     - params: t. Auxiliary parameters.
+    #
     # ### Returns:
     #
     #     - Integer
     #
-    defp get_non_working_time(%{year: year, month: month, day: day}, %{year: year, month: month, day: day}, _business) do
+    defp get_non_working_time(%{year: year, month: month, day: day}, %{year: year, month: month, day: day}, _business, _params) do
         0
     end
 
-    defp get_non_working_time(start_date, end_date, business) do
+    defp get_non_working_time(start_date, end_date, business, params) do
         tomorrow = Timex.shift(start_date, days: 1)
-        {{start_hour, start_minute, start_second}, {end_hour, end_minute, end_second}} = working_hours(start_date, business)
+        {{start_hour, start_minute, start_second}, {end_hour, end_minute, end_second}} = working_hours(start_date, business, params)
 
         # It is assumed that the start time is the same for all work days
-        if not is_working_day?(tomorrow, business) do
+        if not is_working_day?(tomorrow, business, params) do
             # time in seconds from the starting time, until the same time of next day
             24 * 3_600
         else
@@ -126,7 +130,7 @@ defmodule Time.WorkingTime do
             # time in seconds of the racing of the final hour, which was assumed it is less
             start_minute * 60 + start_second
         end
-        |> Kernel.+(get_non_working_time(tomorrow, end_date, business))
+        |> Kernel.+(get_non_working_time(tomorrow, end_date, business, params))
     end
 
     #
@@ -138,28 +142,30 @@ defmodule Time.WorkingTime do
     #
     #     - business: Atom. Business.
     #
+    #     - params: t. Auxiliary parameters.
+    #
     #     - change_timezone: Boolean. Indicate if you have to change the dates to the time use defined in the configuration.
     #
     # ### Return:
     #
     #     - DateTime
     #
-    defp convert_to_business_hours(date, business, true) do
+    defp convert_to_business_hours(date, business, params, true) do
         date
         |> Timex.Timezone.convert("America/Santiago")
-        |> convert_to_business_hours(business, false)
+        |> convert_to_business_hours(business, params, false)
     end
 
-    defp convert_to_business_hours(%{hour: hour, minute: minute, second: seconds} = date, business, false) do
-        is_working_hours = is_working_hours?(date, business)
-        is_working_day = is_working_day?(date, business)
+    defp convert_to_business_hours(%{hour: hour, minute: minute, second: seconds} = date, business, params, false) do
+        is_working_hours = is_working_hours?(date, business, params)
+        is_working_day = is_working_day?(date, business, params)
 
-        {{start_hour, start_minute, start_second} = start_time, _} = working_hours(date, business)
+        {{start_hour, start_minute, start_second} = start_time, _} = working_hours(date, business, params)
 
         case {is_working_day, is_working_hours} do
             {false, _} ->
                 date
-                |> next_working_day(business)
+                |> next_working_day(business, params)
                 |> Timex.set([hour: start_hour, minute: start_minute, second: start_second, microsecond: 0])
 
             {true, false} ->
@@ -168,7 +174,7 @@ defmodule Time.WorkingTime do
 
                 else
                     date
-                    |> next_working_day(business)
+                    |> next_working_day(business, params)
                 end
                 |> Timex.set([hour: start_hour, minute: start_minute, second: start_second, microsecond: 0])
 
@@ -186,11 +192,13 @@ defmodule Time.WorkingTime do
     #
     #     - business: Atom. Business.
     #
+    #     - params: t. Auxiliary parameters.
+    #
     # ### Return:
     #
     #     - Timex.DateTime
     #
-    defp next_working_day(date, business) do
+    defp next_working_day(date, business, params) do
         # try do para el caso de que existe un desplazamiento de una fecha, sobre un cambio de uso de horario
         tomorrow =
             try do
@@ -209,10 +217,10 @@ defmodule Time.WorkingTime do
                 _ -> Timex.shift(date, days: 1)
             end
 
-        if is_working_day?(tomorrow, business) do
+        if is_working_day?(tomorrow, business, params) do
             tomorrow
         else
-            next_working_day(tomorrow, business)
+            next_working_day(tomorrow, business, params)
         end
     end
 
@@ -225,12 +233,14 @@ defmodule Time.WorkingTime do
     #
     #     - business: Atom. Business.
     #
+    #     - params: t. Auxiliary parameters.
+    #
     #  ### Return:
     #
     #     - Boolean.
     #
-    defp is_working_hours?(%{hour: hour, minute: minute, second: second} = date, business) do
-        {start_time, end_time} = working_hours(date, business)
+    defp is_working_hours?(%{hour: hour, minute: minute, second: second} = date, business, params) do
+        {start_time, end_time} = working_hours(date, business, params)
         start_time <= {hour, minute, second} and {hour, minute, second} <= end_time
     end
 
@@ -241,19 +251,3 @@ defmodule Time.WorkingTime do
 
 
 end
-
-"""
-Possible values:
-
-:new_vehicles
-    - Aimed at the New Vehicles business
-    - Business days: Monday to Friday, not holidays
-    - Business hours: 9:00 - 18:00
-
-:credit_course
-    - Aimed at the Credit Course business
-    - Working days (usual): from Monday to Friday, not holidays
-    - Business hours (usual): 8:15 to 18:00
-    - The last 2 days of the month are worked from 8:15 to 21:00; if it falls on a Sunday or a holiday, then the hours are 8:15 to 16:00
-
-"""
