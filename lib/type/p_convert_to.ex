@@ -177,6 +177,30 @@ defimpl Type.PConvertTo, for: BitString do
             end
     end
 
+    def convert_to(x, :date) do
+        x
+        |> Date.from_iso8601()
+        |> case do
+            {:ok, value} ->
+                value
+
+            {:error, error} ->
+                raise("Error: Convert `#{x}` to `#{inspect :date}`. Information: #{error}")
+        end
+    end
+
+    def convert_to(x, :time) do
+        x
+        |> Time.from_iso8601()
+        |> case do
+            {:ok, value} ->
+                value
+
+            {:error, error} ->
+                raise("Error: Convert `#{x}` to `#{inspect :time}`. Information: #{error}")
+        end
+    end
+
     def convert_to(x, :boolean) do
         x
         |> String.to_atom()
@@ -278,6 +302,30 @@ defimpl Type.PConvertTo, for: Binary do
                 {:error, error} ->
                     raise("Error: Convert `#{x}` to `#{inspect datetime}`. Information: #{error}")
             end
+    end
+
+    def convert_to(x, :date) do
+        x
+        |> Date.from_iso8601()
+        |> case do
+            {:ok, value} ->
+                value
+
+            {:error, error} ->
+                raise("Error: Convert `#{x}` to `#{inspect :date}`. Information: #{error}")
+        end
+    end
+
+    def convert_to(x, :time) do
+        x
+        |> Time.from_iso8601()
+        |> case do
+            {:ok, value} ->
+                value
+
+            {:error, error} ->
+                raise("Error: Convert `#{x}` to `#{inspect :time}`. Information: #{error}")
+        end
     end
 
     def convert_to(x, :boolean) do
