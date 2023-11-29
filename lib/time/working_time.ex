@@ -85,8 +85,8 @@ defmodule Time.WorkingTime do
             {:error, "Start date #{inspect start_date} is later than end date #{inspect end_date}"}
 
         else
-            start_date = convert_to_business_hours(start_date, business, params, change_timezone)
-            end_date = convert_to_business_hours(end_date, business, params, change_timezone)
+            start_date = convert_to_business_datetime(start_date, business, params, change_timezone)
+            end_date = convert_to_business_datetime(end_date, business, params, change_timezone)
 
             result = Timex.diff(end_date, start_date, :seconds) - get_non_working_time(start_date, end_date, business, params)
             {:ok, result}
@@ -133,30 +133,30 @@ defmodule Time.WorkingTime do
         |> Kernel.+(get_non_working_time(tomorrow, end_date, business, params))
     end
 
-    #
-    # Given a date, it returns the next date such that it is skilled in the defined working hours. Can return the same date.
-    #
-    # ### Parameter:
-    #
-    #     - date: DateTime. Date.
-    #
-    #     - business: Atom. Business.
-    #
-    #     - params: t. Auxiliary parameters.
-    #
-    #     - change_timezone: Boolean. Indicate if you have to change the dates to the time use defined in the configuration.
-    #
-    # ### Return:
-    #
-    #     - DateTime
-    #
-    defp convert_to_business_hours(date, business, params, true) do
+    @doc """
+    Given a date, it returns the next date such that it is skilled in the defined working hours. Can return the same date.
+
+    ### Parameter:
+
+        - date: DateTime. Date.
+
+        - business: Atom. Business.
+
+        - params: t. Auxiliary parameters.
+
+        - change_timezone: Boolean. Indicate if you have to change the dates to the time use defined in the configuration.
+
+    ### Return:
+
+        - DateTime
+    """
+    def convert_to_business_datetime(date, business, params, true) do
         date
         |> Timex.Timezone.convert("America/Santiago")
-        |> convert_to_business_hours(business, params, false)
+        |> convert_to_business_datetime(business, params, false)
     end
 
-    defp convert_to_business_hours(%{hour: hour, minute: minute, second: seconds} = date, business, params, false) do
+    def convert_to_business_datetime(%{hour: hour, minute: minute, second: seconds} = date, business, params, false) do
         is_working_hours = is_working_hours?(date, business, params)
         is_working_day = is_working_day?(date, business, params)
 
