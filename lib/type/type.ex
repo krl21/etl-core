@@ -96,11 +96,10 @@ defmodule Type.Type do
     def convert_for_bigquery(x) when is_map(x) do
         try do
 
-
             x
             |> Map.get(:__struct__)
             |> case do
-                x when x in [DateTime, NaiveDateTime] ->
+                struct when struct in [DateTime, NaiveDateTime] ->
                     "TIMESTAMP('#{x |> to_string}')"
 
                 Date ->
