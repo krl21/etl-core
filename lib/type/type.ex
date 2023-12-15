@@ -100,7 +100,7 @@ defmodule Type.Type do
             x
             |> Map.get(:__struct__)
             |> case do
-                DateTime ->
+                x when x in [DateTime, NaiveDateTime] ->
                     "TIMESTAMP('#{x |> to_string}')"
 
                 Date ->
