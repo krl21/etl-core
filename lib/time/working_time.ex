@@ -160,34 +160,37 @@ defmodule Time.WorkingTime do
         is_working_hours = is_working_hours?(date, business, params)
         is_working_day = is_working_day?(date, business, params)
 
-        {{start_hour, start_minute, start_second} = start_time, _} =
-            if is_working_day do
-                date
-            else
-                date
-                |> next_working_day(business, params)
+        {start_time, _} = date |> working_hours(business, params)
+
+        new_date =
+            case {is_working_day, is_working_hours} do
+                {false, _} ->
+                    date |>
+                    next_working_day(business, params)
+
+                {true, false} ->
+                    if {0, 0, 0} <= {hour, minute, seconds} and {hour, minute, seconds} <= start_time do
+                        date
+
+                    else
+                        date
+                        |> next_working_day(business, params)
+                    end
+
+                {true, true} ->
+                    date
             end
-            |> working_hours(business, params)
 
-        case {is_working_day, is_working_hours} do
-            {false, _} ->
-                date
-                |> next_working_day(business, params)
-                |> Timex.set([hour: start_hour, minute: start_minute, second: start_second, microsecond: 0])
+        if not(is_working_day and is_working_hours) do
+            {{start_hour, start_minute, start_second}, _} =
+                new_date
+                |> working_hours(business, params)
 
-            {true, false} ->
-                if {0, 0, 0} <= {hour, minute, seconds} and {hour, minute, seconds} <= start_time do
-                    date
-
-                else
-                    date
-                    |> next_working_day(business, params)
-                end
-                |> Timex.set([hour: start_hour, minute: start_minute, second: start_second, microsecond: 0])
-
-            {true, true} ->
-                date
+            new_date
+            |> Timex.set([hour: start_hour, minute: start_minute, second: start_second, microsecond: 0])
         end
+
+        new_date
     end
 
     #
