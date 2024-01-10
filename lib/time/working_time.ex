@@ -165,8 +165,8 @@ defmodule Time.WorkingTime do
         new_date =
             case {is_working_day, is_working_hours} do
                 {false, _} ->
-                    date |>
-                    next_working_day(business, params)
+                    date
+                    |> next_working_day(business, params)
 
                 {true, false} ->
                     if {0, 0, 0} <= {hour, minute, seconds} and {hour, minute, seconds} <= start_time do
@@ -188,9 +188,10 @@ defmodule Time.WorkingTime do
 
             new_date
             |> Timex.set([hour: start_hour, minute: start_minute, second: start_second, microsecond: 0])
-        end
 
-        new_date
+        else
+            new_date
+        end
     end
 
     #
