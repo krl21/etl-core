@@ -160,7 +160,14 @@ defmodule Time.WorkingTime do
         is_working_hours = is_working_hours?(date, business, params)
         is_working_day = is_working_day?(date, business, params)
 
-        {{start_hour, start_minute, start_second} = start_time, _} = working_hours(date, business, params)
+        {{start_hour, start_minute, start_second} = start_time, _} =
+            if is_working_day do
+                date
+            else
+                date
+                |> next_working_day(business, params)
+            end
+            |> working_hours(business, params)
 
         case {is_working_day, is_working_hours} do
             {false, _} ->
