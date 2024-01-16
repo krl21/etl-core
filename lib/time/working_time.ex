@@ -114,9 +114,18 @@ defmodule Time.WorkingTime do
         0
     end
 
+    defp get_non_working_time(%{year: year, month: month, day: day}, %{year: year, month: month, day: day}, _business, _params, %{year: year, month: month, day: day}) do
+        0
+    end
+
     defp get_non_working_time(start_date, end_date, business, params) do
+        get_non_working_time(start_date, end_date, business, params, start_date)
+    end
+
+    defp get_non_working_time(start_date, end_date, business, params, last_working_start_date) do
         tomorrow = Timex.shift(start_date, days: 1)
-        {{start_hour, start_minute, start_second}, {end_hour, end_minute, end_second}} = working_hours(start_date, business, params)
+        {_, {end_hour, end_minute, end_second}} = working_hours(last_working_start_date, business, params)
+        {{start_hour, start_minute, start_second}, _} = working_hours(end_date, business, params)
 
         # It is assumed that the start time is the same for all work days
         if not is_working_day?(tomorrow, business, params) do
@@ -130,7 +139,18 @@ defmodule Time.WorkingTime do
             # time in seconds of the racing of the final hour, which was assumed it is less
             start_minute * 60 + start_second
         end
-        |> Kernel.+(get_non_working_time(tomorrow, end_date, business, params))
+        |> Kernel.+(get_non_working_time(
+            tomorrow,
+            end_date,
+            business,
+            params,
+            if is_working_day?(tomorrow, business, params) do
+                tomorrow
+            else
+                last_working_start_date
+            end
+            )
+        )
     end
 
     @doc """
