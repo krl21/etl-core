@@ -10,6 +10,7 @@ defmodule Genserver.RabbitConsumerByBatch do
     import Genserver.Utils.PWorker
     import Stuff, only: [random_string_generate: 1]
     import Connection.Odbc, only: [connect: 1]
+    alias Genserver.Monitor
 
 
     def start_link({%{config: %{queue: queue}} = _queue_info, _configuration_amqp, _batch_size, _data_source, _milliseconds_timeout} = info) do
@@ -17,6 +18,8 @@ defmodule Genserver.RabbitConsumerByBatch do
     end
 
     def init({%{business: business, config: %{queue: queue} = queue_info}, configuration_amqp, batch_size, data_source, milliseconds_timeout}) do
+        Monitor.register(self(), to_string(__MODULE__) <> "." <> to_string(business) <> "." <> to_string(queue))
+
         Logger.info("#{to_string(__MODULE__)}. Initializing. Associated queue: ---#{to_string(queue)}---. Batch size: #{to_string(batch_size)}")
 
         {:ok, connection} = configuration_amqp |> AMQP.Connection.open()
