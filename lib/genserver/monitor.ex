@@ -41,9 +41,9 @@ defmodule Genserver.Monitor do
 
     # Send daily status notifications at 8 AM
     def handle_info(:heartbeat, %{servers: servers, webhook_url: webhook_url, environment: env} = state) do
-        check_servers(servers, webhook_url, env)
+        updated_servers = check_servers(servers, webhook_url, env)
         schedule_heartbeat()
-        {:noreply, state}
+        {:noreply, %{state | servers: updated_servers}}
     end
 
     # Handle crashed processes and notify
@@ -64,25 +64,26 @@ defmodule Genserver.Monitor do
     end
 
     #
-    # Checks the status of registered GenServers and sends notifications accordingly.
+    # Checks the status of registered GenServers and updates the server list.
     #
     # ### Parameters:
+    #   - servers (Map): A map where keys are GenServer names and values are their PIDs.
+    #   - webhook_url (String): The URL to send notifications.
+    #   - env (String): The environment in which the application is running.
     #
-    #     - servers: Map. A map where keys are GenServer names and values are their PIDs.
-    #
-    #     - webhook_url: String. The URL to send the notification.
-    #
-    #     - env: String. The environment in which the application is running.
+    # ## Returns:
+    #     - Map:  An updated map with only active GenServers.
     #
     def check_servers(servers, webhook_url, env) do
-        Enum.each(servers, fn {name, pid} ->
-
+        servers
+        |> Enum.reduce(%{}, fn {name, pid}, acc ->
             if Process.alive?(pid) do
                 Notify.notify_slack(webhook_url, [{"Content-type", "application/json"}], env, "GenServer *#{name}* is alive.")
-
+                Map.put(acc, name, pid)
             else
                 Logger.error("GenServer *#{name}* is not alive!")
                 Notify.notify_slack(webhook_url, [{"Content-type", "application/json"}], env, "GenServer *#{name}* is not responding")
+                acc  # Do not include the dead GenServer in the new map
             end
         end)
     end
