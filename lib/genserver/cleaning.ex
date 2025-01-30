@@ -7,7 +7,7 @@ defmodule Genserver.Cleaning do
     use GenServer
     require Logger
     import Connection.Odbc, only: [connect: 1]
-    import Genserver.Utils.PAutomaticClean
+    import Genserver.Protocols.PAutomaticClean
     alias Genserver.Monitor
 
 

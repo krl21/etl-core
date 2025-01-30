@@ -7,7 +7,7 @@ defmodule Genserver.RabbitConsumerByBatch do
     """
 
     require Logger
-    import Genserver.Utils.PWorker
+    import Genserver.Protocols.PWorker
     import Stuff, only: [random_string_generate: 1]
     import Connection.Odbc, only: [connect: 1]
     alias Genserver.Monitor

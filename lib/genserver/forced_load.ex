@@ -6,7 +6,7 @@ defmodule Genserver.ForcedLoad do
 
     use GenServer
     require Logger
-    import Genserver.Utils.PForcedLoad
+    import Genserver.Protocols.PForcedLoad
     alias Genserver.Monitor
 
 

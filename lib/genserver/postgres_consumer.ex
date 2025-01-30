@@ -3,11 +3,11 @@ defmodule Genserver.PostgresConsumer do
     @moduledoc"""
     Genserver oriented to consume from a table in a database in Postgres
 
-    For the correct operation, you must implement the Genserver.Utils.PPostgresDb protocol
+    For the correct operation, you must implement the Genserver.Protocols.PPostgresDb protocol
     """
 
     require Logger
-    import Genserver.Utils.PPostgresDb
+    import Genserver.Protocols.PPostgresDb
     import Connection.Odbc, only: [connect: 1]
     import Stuff, only: [random_string_generate: 1]
     alias Genserver.Monitor
