@@ -90,7 +90,7 @@ defmodule Genserver.MonitorTest do
         Monitor.register(pid5, :gen_server_5)
 
         # Ejecutar la función de verificación de estado
-        Monitor.check_servers(%{:gen_server_4 => pid4, :gen_server_5 => pid5}, @webhook_url, "test")
+        Monitor.monitor_system(%{:gen_server_4 => pid4, :gen_server_5 => pid5}, @webhook_url, "test")
 
         # Esperar para verificar que las notificaciones de estado fueron enviadas
         :timer.sleep(1000)

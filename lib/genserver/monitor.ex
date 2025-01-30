@@ -7,6 +7,7 @@ defmodule Genserver.Monitor do
     use GenServer
     require Logger
     alias Notification.Notify
+    alias Tools.SystemStats
 
     # Public API to start the monitor with webhook URL and environment
     def start_link({webhook_url, environment}) do
@@ -41,7 +42,7 @@ defmodule Genserver.Monitor do
 
     # Send daily status notifications at 8 AM
     def handle_info(:heartbeat, %{servers: servers, webhook_url: webhook_url, environment: env} = state) do
-        updated_servers = check_servers(servers, webhook_url, env)
+        updated_servers = monitor_system(servers, webhook_url, env)
         schedule_heartbeat()
         {:noreply, %{state | servers: updated_servers}}
     end
@@ -64,6 +65,47 @@ defmodule Genserver.Monitor do
     end
 
     #
+    # Monitors the system by sending project status and checking active servers.
+    #
+    # ### Parameters:
+    #   - servers (Map): A map where keys are GenServer names and values are their PIDs.
+    #   - webhook_url (String): The URL to send notifications.
+    #   - env (String): The environment in which the application is running.
+    #
+    # ### Returns:
+    #     - Map: An updated map with only active GenServers.
+    #
+    def monitor_system(servers, webhook_url, env) do
+        send_project_status(webhook_url, env)
+        check_servers(servers, webhook_url, env)
+    end
+
+    #
+    # Sends the system's memory and disk usage status to the webhook.
+    #
+    # ### Parameters:
+    #   - webhook_url (String): The URL to send notifications.
+    #   - env (String): The environment in which the application is running.
+    #
+    # ### Returns:
+    #   - None. Sends a JSON message with the system status.
+    #
+    defp send_project_status(webhook_url, env) do
+        memory_info = SystemStats.get_memory_info()
+        disk_info = SystemStats.get_disk_info()
+
+        message = """
+        *Project Status*
+        \tRAM Used: #{memory_info[:used]}
+        \tRAM Free: #{memory_info[:free]}
+        \tDisk Used: #{disk_info[:used]}
+        \tDisk Free: #{disk_info[:free]}
+        """
+
+        Notify.notify_slack(webhook_url, [{"Content-type", "application/json"}], env, message)
+    end
+
+    #
     # Checks the status of registered GenServers and updates the server list.
     #
     # ### Parameters:
@@ -71,15 +113,17 @@ defmodule Genserver.Monitor do
     #   - webhook_url (String): The URL to send notifications.
     #   - env (String): The environment in which the application is running.
     #
-    # ## Returns:
-    #     - Map:  An updated map with only active GenServers.
+    # ### Returns:
+    #     - Map: An updated map with only active GenServers.
     #
-    def check_servers(servers, webhook_url, env) do
+    defp check_servers(servers, webhook_url, env) do
         servers
         |> Enum.reduce(%{}, fn {name, pid}, acc ->
+
             if Process.alive?(pid) do
                 Notify.notify_slack(webhook_url, [{"Content-type", "application/json"}], env, "GenServer *#{name}* is alive.")
                 Map.put(acc, name, pid)
+
             else
                 Logger.error("GenServer *#{name}* is not alive!")
                 Notify.notify_slack(webhook_url, [{"Content-type", "application/json"}], env, "GenServer *#{name}* is not responding")
