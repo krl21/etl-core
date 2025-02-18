@@ -15,6 +15,8 @@ defmodule Genserver.Monitor do
     end
 
     def init(state) do
+        Logger.info("#{to_string(__MODULE__)}. Initializing.")
+
         schedule_heartbeat()
         {:ok, state}
     end
