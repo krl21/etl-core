@@ -134,72 +134,117 @@ defmodule Genserver.Monitor do
         end)
     end
 
+
     #
-    # Schedules the next heartbeat message to be sent at 8:00 AM, 1:00 PM and 6:00 PM.
+    # Schedules the next heartbeat message to be sent at a randomly generated time.
     #
     # ### Return:
+    #    - None. Sends a delayed message to self to trigger the heartbeat.
     #
-    #     - None. Sends a delayed message to self to trigger the heartbeat.
-    #
-    # defp schedule_heartbeat() do
-    #     now = Timex.now()
-
-    #     next_run = Timex.set(now, [hour: 8, minute: 0, second: 0])
-    #     next_run = if Timex.after?(now, next_run) do
-    #         Timex.shift(next_run, days: 1)
-    #     else
-    #         next_run
-    #     end
-
-    #     delay = Timex.diff(next_run, now, :milliseconds)
-    #     :erlang.send_after(max(delay, 1), self(), :heartbeat)
-    # end
     defp schedule_heartbeat() do
         now = Timex.now()
+        random_hour = generate_random_hour()
 
-        # List of times at which the heartbeat should be triggered
-        times = [
-            {8, 0},  # 8:00 AM
-            {13, 0}, # 1:00 PM
-            {18, 0}  # 6:00 PM
-        ]
+        next_run = find_next_run_time(now, random_hour)
 
-        # Find the next scheduled time for the heartbeat
-        next_run = find_next_run_time(now, times)
-
-        # Calculate the delay and schedule the next heartbeat message
         delay = Timex.diff(next_run, now, :milliseconds)
         :erlang.send_after(delay, self(), :heartbeat)
     end
 
     #
-    # Finds the next valid scheduled time for the heartbeat based on the current time
-    # and the list of predefined times.
-    #
-    # ### Parameters:
-    #   - now (DateTime): The current time.
-    #   - times (List): A list of tuples with hour and minute of the scheduled times.
+    # Generates a random hour and minute within a specified range.
     #
     # ### Returns:
-    #   - DateTime: The next valid scheduled time.
+    #     - A tuple `{hour, minute}` representing a random time between 8:00 AM and 6:00 PM.
     #
-    defp find_next_run_time(now, times) do
-
-        # Find the first future time that hasn't passed yet
-        Enum.find(times, fn {hour, minute} ->
-            next_run = Timex.set(now, [hour: hour, minute: minute, second: 0])
-            Timex.after?(now, next_run) == false
-        end)
-        |> case do
-            nil ->
-                # If all times have passed for today, shift to the next day and use the first time in `times`
-                {hour, minute} = hd(times)  # Get the first time from the list
-                Timex.set(Timex.shift(now, days: 1), [hour: hour, minute: minute, second: 0])  # Set it for the next day
-
-            {hour, minute} ->
-                # If a future time is found, set the next run to that time
-                Timex.set(now, [hour: hour, minute: minute, second: 0])
-        end
+    defp generate_random_hour() do
+        hour = Enum.random(8..18)
+        minute = Enum.random(0..59)
+        {hour, minute}
     end
+
+    #
+    # Finds the next valid scheduled time for the heartbeat based on the current time and a randomly generated time.
+
+    # ### Parameters:
+    #     - now (DateTime): The current time.
+    #     - time (tuple): A tuple `{hour, minute}` representing the randomly generated time.
+    #
+    # ### Returns:
+    #     - DateTime: The next valid scheduled time.
+    #
+    defp find_next_run_time(now, {hour, minute}) do
+        now
+        |> Timex.set([hour: hour, minute: minute, second: 0])
+        |> Timex.shift(days: 1)
+    end
+
+    # #
+    # # Schedules the next heartbeat message to be sent at 8:00 AM, 1:00 PM and 6:00 PM.
+    # #
+    # # ### Return:
+    # #
+    # #     - None. Sends a delayed message to self to trigger the heartbeat.
+    # #
+    # # defp schedule_heartbeat() do
+    # #     now = Timex.now()
+
+    # #     next_run = Timex.set(now, [hour: 8, minute: 0, second: 0])
+    # #     next_run = if Timex.after?(now, next_run) do
+    # #         Timex.shift(next_run, days: 1)
+    # #     else
+    # #         next_run
+    # #     end
+
+    # #     delay = Timex.diff(next_run, now, :milliseconds)
+    # #     :erlang.send_after(max(delay, 1), self(), :heartbeat)
+    # # end
+    # defp schedule_heartbeat() do
+    #     now = Timex.now()
+
+    #     # List of times at which the heartbeat should be triggered
+    #     times = [
+    #         {8, 0},  # 8:00 AM
+    #         {13, 0}, # 1:00 PM
+    #         {18, 0}  # 6:00 PM
+    #     ]
+
+    #     # Find the next scheduled time for the heartbeat
+    #     next_run = find_next_run_time(now, times)
+
+    #     # Calculate the delay and schedule the next heartbeat message
+    #     delay = Timex.diff(next_run, now, :milliseconds)
+    #     :erlang.send_after(delay, self(), :heartbeat)
+    # end
+
+    # #
+    # # Finds the next valid scheduled time for the heartbeat based on the current time
+    # # and the list of predefined times.
+    # #
+    # # ### Parameters:
+    # #   - now (DateTime): The current time.
+    # #   - times (List): A list of tuples with hour and minute of the scheduled times.
+    # #
+    # # ### Returns:
+    # #   - DateTime: The next valid scheduled time.
+    # #
+    # defp find_next_run_time(now, times) do
+
+    #     # Find the first future time that hasn't passed yet
+    #     Enum.find(times, fn {hour, minute} ->
+    #         next_run = Timex.set(now, [hour: hour, minute: minute, second: 0])
+    #         Timex.after?(now, next_run) == false
+    #     end)
+    #     |> case do
+    #         nil ->
+    #             # If all times have passed for today, shift to the next day and use the first time in `times`
+    #             {hour, minute} = hd(times)  # Get the first time from the list
+    #             Timex.set(Timex.shift(now, days: 1), [hour: hour, minute: minute, second: 0])  # Set it for the next day
+
+    #         {hour, minute} ->
+    #             # If a future time is found, set the next run to that time
+    #             Timex.set(now, [hour: hour, minute: minute, second: 0])
+    #     end
+    # end
 
 end
