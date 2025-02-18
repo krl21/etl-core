@@ -66,7 +66,7 @@ defmodule Type.Type do
         try do
             x
             |> Map.get(:__struct__)
-            case do
+            |> case do
                 struct when struct in [DateTime, NaiveDateTime] ->
                     "TIMESTAMP('#{to_string(x)}')"
                 Date ->
@@ -171,7 +171,7 @@ defmodule Type.Type do
         |> String.replace("%O", "Ó")
         |> String.replace("%u", "ú")
         |> String.replace("%U", "Ú")
-        end
+    end
 
     defp time_to_bigquery({h, m, s}), do:
         "TIME(#{h}, #{m}, #{s})"
