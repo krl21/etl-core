@@ -25,7 +25,7 @@ defmodule EtlCore.MixProject do
       files: ["lib", "mix.exs", "README.md"],
       maintainers: ["Carlos Leon"],
       licenses: ["Apache License 2.0"],
-      links: %{"Bitbucket" => "https://bitbucket.org/teamdox/etl-core/src/master/"},
+      links: %{"Bitbucket" => "https://bitbucket.org/teamdox/etl-core"},
       description: "Base functions for ETL process"
     ]
   end
