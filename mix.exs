@@ -4,7 +4,7 @@ defmodule EtlCore.MixProject do
   def project do
     [
       app: :etl_core,
-      version: "0.1.54",
+      version: "1.1.0",
       elixir: "~> 1.14.0-rc.0",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
@@ -25,7 +25,7 @@ defmodule EtlCore.MixProject do
       files: ["lib", "mix.exs", "README.md"],
       maintainers: ["Carlos Leon"],
       licenses: ["Apache License 2.0"],
-      links: %{"Bitbucket" => "https://bitbucket.org/teamdox/etl-core/src/master/"},
+      links: %{"Bitbucket" => "https://bitbucket.org/teamdox/etl-core"},
       description: "Base functions for ETL process"
     ]
   end
