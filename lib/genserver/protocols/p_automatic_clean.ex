@@ -1,5 +1,5 @@
 
-defprotocol Genserver.Utils.PAutomaticClean do
+defprotocol Genserver.Protocols.PAutomaticClean do
     @moduledoc"""
     Definition of the method to be used for the automatic deletion of the repeated tuples, in the tables
     """

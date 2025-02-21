@@ -1,5 +1,5 @@
 
-defprotocol Genserver.Utils.PWorker do
+defprotocol Genserver.Protocols.PWorker do
     @moduledoc"""
     Protocol oriented to the definition of the function that the message lot will take, processed it if necessary and sent it to the corresponding module, for processing
     """
