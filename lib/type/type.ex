@@ -44,7 +44,12 @@ defmodule Type.Type do
             - string_datetime: Equivalent to converting from an integer to a binary, in DateTime format.
 
     """
-    def convert(x, to), do: convert_to(x, to)
+    def convert(x, to) do
+        cond do
+            to == :string -> convert_to(x, to) |> normalize_unicode_chars()
+            true -> convert_to(x, to)
+        end
+    end
 
     @doc"""
     Converts the data into a format understandable by BigQuery
@@ -90,24 +95,25 @@ defmodule Type.Type do
         str
         |> String.replace("\n", " ")
         |> String.replace("\t", "")
-        |> String.replace("'", "_")
-        |> String.replace("ñ", "%n")
-        |> String.replace("Ñ", "%N")
-        |> String.replace("á", "%a")
-        |> String.replace("Á", "%A")
-        |> String.replace("é", "%e")
-        |> String.replace("É", "%E")
-        |> String.replace("í", "%i")
-        |> String.replace("Í", "%I")
-        |> String.replace("ó", "%o")
-        |> String.replace("Ó", "%O")
-        |> String.replace("ú", "%u")
-        |> String.replace("Ú", "%U")
+        |> String.replace("'", "%r_%")
+        |> String.replace("ñ", "%nn%")
+        |> String.replace("Ñ", "%nN%")
+        |> String.replace("á", "%aa%")
+        |> String.replace("Á", "%aA%")
+        |> String.replace("é", "%ee%")
+        |> String.replace("É", "%eE%")
+        |> String.replace("í", "%ii%")
+        |> String.replace("Í", "%iI%")
+        |> String.replace("ó", "%oo%")
+        |> String.replace("Ó", "%oO%")
+        |> String.replace("ú", "%uu%")
+        |> String.replace("Ú", "%uU%")
         |> normalize_unicode_chars()
     end
 
-    defp normalize_unicode_chars(str) do
+    def normalize_unicode_chars(str) do
         str
+        |> String.replace("’", "'")
         |> String.replace("\u{2010}", "-")
         |> String.replace("\u{2011}", "-")
         |> String.replace("\u{2012}", "-")
@@ -158,19 +164,19 @@ defmodule Type.Type do
 
     defp unescape_bigquery_string(x) do
         x
-        |> String.replace("_", "'")
-        |> String.replace("%n", "ñ")
-        |> String.replace("%N", "Ñ")
-        |> String.replace("%a", "á")
-        |> String.replace("%A", "Á")
-        |> String.replace("%e", "é")
-        |> String.replace("%E", "É")
-        |> String.replace("%i", "í")
-        |> String.replace("%I", "Í")
-        |> String.replace("%o", "ó")
-        |> String.replace("%O", "Ó")
-        |> String.replace("%u", "ú")
-        |> String.replace("%U", "Ú")
+        |> String.replace("%r_%", "'")
+        |> String.replace("%nn%", "ñ")
+        |> String.replace("%nN%", "Ñ")
+        |> String.replace("%aa%", "á")
+        |> String.replace("%aA%", "Á")
+        |> String.replace("%ee%", "é")
+        |> String.replace("%eE%", "É")
+        |> String.replace("%ii%", "í")
+        |> String.replace("%iI%", "Í")
+        |> String.replace("%oo%", "ó")
+        |> String.replace("%oO%", "Ó")
+        |> String.replace("%uu%", "ú")
+        |> String.replace("%uU%", "Ú")
     end
 
     defp time_to_bigquery({h, m, s}), do:
