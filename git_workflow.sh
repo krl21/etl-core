@@ -7,14 +7,28 @@ run_command() {
     echo " "
 }
 
+# Función para manejar conflictos durante el merge
+merge_with_conflict_handling() {
+    echo "Ejecutando: git merge development"
+    git merge development
+
+    # Verificar si hay conflictos
+    if [[ $(git diff --name-only --diff-filter=U) ]]; then
+        echo "¡Hay conflictos que resolver!"
+        echo "Por favor, resuelve los conflictos manualmente y luego marca los archivos como resueltos con 'git add'."
+        echo "Cuando hayas terminado, presiona Enter para continuar..."
+        read  # Espera a que el usuario presione Enter
+    fi
+}
+
 # Hacer push a la rama actual
 run_command "git push"
 
 # Cambiar a la rama master
 run_command "git checkout master"
 
-# Fusionar la rama development en master
-run_command "git merge development"
+# Fusionar la rama development en master con manejo de conflictos
+merge_with_conflict_handling
 
 # Hacer push a master
 run_command "git push"
