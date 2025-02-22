@@ -111,6 +111,7 @@ defmodule Type.Type do
         |> normalize_unicode_chars()
     end
 
+    def normalize_unicode_chars(nil), do: nil
     def normalize_unicode_chars(str) do
         str
         |> String.replace("’", "'")
