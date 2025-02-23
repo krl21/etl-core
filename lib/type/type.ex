@@ -45,10 +45,11 @@ defmodule Type.Type do
 
     """
     def convert(x, to) do
-        cond do
-            to == :string -> convert_to(x, to) |> normalize_unicode_chars()
-            true -> convert_to(x, to)
-        end
+        convert_to(x, to)
+        # cond do
+        #     to == :string -> convert_to(x, to) |> normalize_unicode_chars()
+        #     true -> convert_to(x, to)
+        # end
     end
 
     @doc"""
