@@ -115,23 +115,23 @@ defmodule Type.Type do
     def normalize_unicode_chars(nil), do: nil
     def normalize_unicode_chars(str) do
         str
-        |> String.replace("’", "'")
+        |> String.replace("’", "%r_%")
         |> String.replace("\u{2010}", "-")
         |> String.replace("\u{2011}", "-")
         |> String.replace("\u{2012}", "-")
         |> String.replace("\u{2013}", "-")
         |> String.replace("\u{2014}", "-")
         |> String.replace("\u{2015}", "-")
-        |> String.replace("\u{2018}", "\'")
-        |> String.replace("\u{2019}", "\'")
-        |> String.replace("\u{2032}", "\'")
+        |> String.replace("\u{2018}", "%r_%") # '
+        |> String.replace("\u{2019}", "%r_%") # '
+        |> String.replace("\u{2032}", "%r_%") # '
         |> String.replace("\u{201C}", "\"")
         |> String.replace("\u{201D}", "\"")
         |> String.replace("\u{2033}", "\"")
         |> String.replace("\u{00AB}", "\"")
         |> String.replace("\u{00BB}", "\"")
-        |> String.replace("\u{2039}", "'")
-        |> String.replace("\u{203A}", "'")
+        |> String.replace("\u{2039}", "%r_%") # '
+        |> String.replace("\u{203A}", "%r_%") # '
         |> String.replace("\u{2026}", "...")
         |> String.replace("\u{00A0}", " ")
         |> String.replace("\u{2002}", " ")
