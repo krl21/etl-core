@@ -58,22 +58,30 @@ defmodule Common.Payload do
     """
     def extract_with_format(payload, attr_list, eliminate_null_value \\ true) do
         attr_list
-        |> Enum.map(fn attr -> {
-                            attr,
-                            Map.get(attr, :id),
-                            extract_data(
-                                payload,
-                                Map.get(attr, :id_payload),
-                                Map.get(attr, :keys_to_search),
-                                Map.get(attr, :default_value)
-                                )
-                            }
-                        end)
-        |> Enum.map(fn {attr, field, value} -> {
-                            field,
-                            convert(value, Map.get(attr, :type))
-                        }
-                    end)
+        |> Enum.map(fn attr ->
+            {
+                attr,
+                Map.get(attr, :id),
+                extract_data(
+                    payload,
+                    Map.get(attr, :id_payload),
+                    Map.get(attr, :keys_to_search),
+                    Map.get(attr, :default_value)
+                    )
+            }
+        end)
+        |> Enum.map(fn {attr, field, value} ->
+            try do
+                {
+                    field,
+                    convert(value, Map.get(attr, :type))
+                }
+            rescue
+                error ->
+                    new_error = "#{Exception.message(error)}. Field: `#{field}`. Attribute: #{attr}"
+                raise new_error
+            end
+        end)
         |> Enum.filter(fn {_, value} -> not (is_nil(value) and eliminate_null_value) end)
     end
 

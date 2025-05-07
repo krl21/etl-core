@@ -1,7 +1,9 @@
-name: etl-core-carlos
-image: gcr.io/ttlchk-cloud/googlebigqueryodbc:1.0.0-prod  
-workdir: /app/tmp
-command: ["bash"]
-autocreate: true
-forward:
-    - 8081:8080
+dev:
+  app:
+    name: etl-core-carlos
+    image: gcr.io/ttlchk-cloud/googlebigqueryodbc:1.0.0-prod  
+    workdir: /app/tmp
+    command: ["bash"]
+    autocreate: true
+    forward:
+        - 8097:8096
