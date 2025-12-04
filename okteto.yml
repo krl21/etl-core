@@ -1,7 +1,7 @@
 dev:
   app:
     name: etl-core-carlos
-    image: gcr.io/ttlchk-cloud/googlebigqueryodbc:1.0.0-prod  
+    image: us-east1-docker.pkg.dev/alberto-qa/big-query/googlebigqueryodbc:3.0.0-prod   
     workdir: /app/tmp
     command: ["bash"]
     autocreate: true
