@@ -1,3 +1,4 @@
+
 defmodule Entity.AttributeProviderMacro do
     @moduledoc """
     Macros for defining attribute lists in sub-entities and generates getter functions for each defined attribute.

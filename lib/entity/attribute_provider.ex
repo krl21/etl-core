@@ -1,3 +1,4 @@
+
 defmodule Entity.AttributeProvider do
     @moduledoc """
     Macros and utilities for defining sub-entities that provide attributes.
