@@ -210,7 +210,7 @@ defmodule Entity.RecordBase.Macro do
 
                 {compressed_by_key, keys} =
                     filtered_batch
-                    |> Payload.reduce_by([unique_id_attr])
+                    |> Common.Payload.reduce_by([unique_id_attr])
 
                 keys
                     |> Enum.map(fn key ->
@@ -260,7 +260,7 @@ defmodule Entity.RecordBase.Macro do
                 payload = List.last(payloads)
 
                 payload
-                |> Payload.extract_with_format(attr_list(), false)
+                |> Common.Payload.extract_with_format(attr_list(), false)
                 |> reprocess_data(payload)
             end
 
