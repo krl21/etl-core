@@ -1,11 +1,11 @@
 
-defmodule Entity.Behaviour do
+defmodule DataModel.Behaviour do
     @moduledoc """
     Behaviours for defining entity and sub-entity contracts.
 
     This module defines the behaviours that must be implemented by:
-    - `Entity.AttributeProvider`: For sub-entities that define attributes (InfoAttr)
-    - `Entity.RecordBase`: For main entities (Records) that process data
+    - `DataModel.AttributeProvider`: For sub-entities that define attributes (InfoAttr)
+    - `DataModel.RecordBase`: For main entities (Records) that process data
     """
 
     @doc """

@@ -1,12 +1,12 @@
 
-defmodule Entity.AttributeProvider do
+defmodule DataModel.AttributeProvider do
     @moduledoc """
     Macros and utilities for defining sub-entities that provide attributes.
 
     ## Usage example:
 
-        defmodule Entity.Record.Buyer do
-            use Entity.AttributeProvider
+        defmodule DataModel.Record.Buyer do
+            use DataModel.AttributeProvider
 
             @name %Struct.InfoAttr{
                 id: :nombre_comprador,
@@ -36,14 +36,14 @@ defmodule Entity.AttributeProvider do
     """
 
     @doc """
-    Callback invoked when `use Entity.AttributeProvider` is called.
+    Callback invoked when `use DataModel.AttributeProvider` is called.
 
     Imports the necessary macros and sets up the behaviour.
     """
     defmacro __using__(_opts) do
         quote do
-        @behaviour Entity.Behaviour
-        import Entity.AttributeProviderMacro
+        @behaviour DataModel.Behaviour
+        import DataModel.AttributeProviderMacro
         end
     end
 

@@ -1,5 +1,5 @@
 
-defmodule Entity.AttributeProviderMacro do
+defmodule DataModel.AttributeProviderMacro do
     @moduledoc """
     Macros for defining attribute lists in sub-entities and generates getter functions for each defined attribute.
     """
@@ -32,9 +32,7 @@ defmodule Entity.AttributeProviderMacro do
             Returns the list of attributes/columns
 
             ### Return:
-
                 - List of Tools.Struct.InfoAttr
-
             """
             def attr_list(), do: @attr_list
 

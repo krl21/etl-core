@@ -1,7 +1,7 @@
 
-defmodule Entity.RecordBase.Macro do
+defmodule DataModel.RecordBase.Macro do
     @moduledoc """
-    Macros for configuring and using Entity.RecordBase.
+    Macros for configuring and using DataModel.RecordBase.
     """
 
     @doc """
@@ -16,8 +16,8 @@ defmodule Entity.RecordBase.Macro do
         - `timestamp`: InfoAttr. Timestamp attribute (optional)
 
     ### Important Note:
-    The `table_id/0` function is NOT automatically generated. It must be implemented
-    manually in each module, as it is required by `Entity.Behaviour`.
+        The `table_id/0` function is NOT automatically generated. It must be implemented
+        manually in each module, as it is required by `DataModel.Behaviour`.
     """
     defmacro entity_config(opts) do
         quote bind_quoted: [opts: Macro.escape(opts, unquote: true)] do
@@ -85,8 +85,8 @@ defmodule Entity.RecordBase.Macro do
             """
             defp batch_size() do
                 Application.get_env(
-                @entity_config[:app],
-                @entity_config[:batch_size_key]
+                    @entity_config[:app],
+                    @entity_config[:batch_size_key]
                 )
             end
         end
@@ -122,13 +122,13 @@ defmodule Entity.RecordBase.Macro do
     Macro to define the list of sub-entities.
 
     ### Parameters:
-        - `entities`: List of modules that implement `Entity.AttributeProvider`
+        - `entities`: List of modules that implement `DataModel.AttributeProvider`
 
     ### Example:
         subentities [
-            Entity.Record.Buyer,
-            Entity.Record.Vehicle,
-            Entity.Record.Service
+            DataModel.Record.Buyer,
+            DataModel.Record.Vehicle,
+            DataModel.Record.Service
         ]
     """
     defmacro subentities(entities) do
@@ -145,8 +145,8 @@ defmodule Entity.RecordBase.Macro do
 
     ### Example:
         special_post_processing [
-            Entity.Record.Buyer,
-            Entity.Record.Client
+            DataModel.Record.Buyer,
+            DataModel.Record.Client
         ]
     """
     defmacro special_post_processing(entities) do
