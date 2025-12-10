@@ -360,7 +360,7 @@ defmodule DataModel.RecordBase.Macro do
                         Timex.now() |> Timex.to_unix()
                     )
 
-                {:ok, {unique_id, Sql.insert(table_id(), record)}}
+                {:ok, {unique_id, Statement.Sql.insert(table_id(), record)}}
             end
             defoverridable prepare_insert_query: 4
 
@@ -388,7 +388,7 @@ defmodule DataModel.RecordBase.Macro do
                         end
                     )
 
-                {keys, Sql.merge_inserts(queries)}
+                {keys, Statement.Sql.merge_inserts(queries)}
             end
             defoverridable build_insert_tuples: 1
 
