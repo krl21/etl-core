@@ -410,9 +410,9 @@ defmodule DataModel.RecordBase.Macro do
                         try do
                             pid =
                                 Application.get_env(application_name(), :bigquery)[:configuration]
-                                |> Odbc.connect()
+                                |> Connection.Odbc.connect()
 
-                            Odbc.insert(pid, query)
+                            Connection.Odbc.insert(pid, query)
                             Process.exit(pid, :kill)
                             :ok
                         rescue
