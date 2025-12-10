@@ -394,41 +394,90 @@ defmodule DataModel.RecordBase.Macro do
 
             @doc """
             Executes the insert operation in the database.
-            Override to implement custom insertion logic.
 
             ### Parameters:
                 - `data`: List of tuples `{keys, query}` to insert
+
+            ### Returns:
+                - List of tuples `{:ok, ids}` | `{:error, {ids, error}}`
+            """
+            def execute_insert(data) do
+                Enum.map(data, fn {ids, query} ->
+                    try do
+                        pid =
+                            Application.get_env(application_name(), :bigquery)[:configuration]
+                            |> Connection.Odbc.connect()
+
+                        Connection.Odbc.insert(pid, query)
+                        Process.exit(pid, :kill)
+                        {:ok, ids}
+                    rescue
+                        error ->
+                            {:error, {ids, error}}
+                    end
+                end)
+            end
+            defoverridable execute_insert: 1
+
+            @doc """
+            Executes insertion with divide-and-conquer retry strategy. If an error occurs, splits the data in half and retries each part. Continues until individual failing records are isolated.
+
+            ### Parameters:
+                - `data`: List of tuples `{unique_id, query}` to insert
                 - `batch_id`: Batch identifier for error logging
 
             ### Returns:
                 - List of results (`:ok` | `:error`)
             """
-            def execute_insert(data, batch_id) do
-                data
-                |> Task.async_stream(
-                    fn {ids, query} ->
-                        try do
-                            pid =
-                                Application.get_env(application_name(), :bigquery)[:configuration]
-                                |> Connection.Odbc.connect()
+            def execute_insert_with_retry([], _batch_id), do: []
 
-                            Connection.Odbc.insert(pid, query)
-                            Process.exit(pid, :kill)
-                            :ok
-                        rescue
-                            error ->
+            def execute_insert_with_retry(data, batch_id) do
+                # Build insert tuples (batch and merge)
+                insert_tuples =
+                    data
+                    |> Enum.chunk_every(batch_size())
+                    |> Enum.map(&build_insert_tuples/1)
+                    |> Enum.reject(&(&1 == []))
+
+                # Execute insertion
+                results = execute_insert(insert_tuples)
+
+                # Check for errors
+                has_errors? = Enum.any?(results, fn
+                    {:error, _} -> true
+                    _ -> false
+                end)
+
+                case {has_errors?, length(data)} do
+                    {false, _} ->
+                        Enum.map(results, fn {:ok, _ids} -> :ok end)
+
+                    {true, 1} ->
+                        Enum.map(results, fn
+                            {:ok, _ids} -> :ok
+                            {:error, {ids, error}} ->
                                 handle_processing_error(batch_id, ids, error, %{
-                                    function: :execute_insert,
+                                    function: :execute_insert_with_retry,
                                     module: __MODULE__
                                 })
                                 :error
-                        end
-                    end,
-                    timeout: :infinity
-                )
-                |> Enum.to_list()
+                        end)
+
+                    {true, _} ->
+                        require Logger
+                        Logger.info("Insert batch failed, splitting data in half and retrying...")
+
+                        mid = div(length(data), 2)
+                        {first_half, second_half} = Enum.split(data, mid)
+
+                        # Retry each half recursively
+                        first_results = execute_insert_with_retry(first_half, batch_id)
+                        second_results = execute_insert_with_retry(second_half, batch_id)
+
+                        first_results ++ second_results
+                end
             end
-            defoverridable execute_insert: 2
+            defoverridable execute_insert_with_retry: 2
 
             @doc """
             Handles errors during record processing.
