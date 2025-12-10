@@ -66,7 +66,8 @@ defmodule DataModel.RecordBase.Macro do
         - `timestamp`: InfoAttr. Timestamp attribute (optional)
     """
     defmacro entity_config(opts) do
-        quote bind_quoted: [opts: Macro.escape(opts, unquote: true)] do
+        quote do
+            opts = unquote(opts)
 
             unless Keyword.has_key?(opts, :app) do
                 raise "entity_config requires :app option"
