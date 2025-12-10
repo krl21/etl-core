@@ -2,7 +2,57 @@
 defmodule DataModel.RecordBase.Macro do
     @moduledoc """
     Macros for configuring and using DataModel.RecordBase.
+
+    ## Philosophy
+
+    This module provides **building blocks**, not a rigid pipeline.
+    Each implementing module decides how to compose its own `insert_by_lote/2` or `/3`.
+
+    ## Available Macros
+
+    ### Configuration Macros
+    - `entity_config/1` - Configure the entity (app, table_key, batch_size_key, unique_id)
+    - `own_attributes/1` - Define the list of own attributes
+    - `subentities/1` - Define the list of sub-entities
+    - `special_post_processing/1` - Define entities for post-processing
+
+    ### Generation Macros
+    - `generate_helper_functions/0` - Generate helper functions (building blocks)
+
+    ## Usage
+
+    ```elixir
+    defmodule MyApp.Record do
+        use DataModel.RecordBase
+
+        entity_config(...)
+        own_attributes [...]
+        subentities [...]
+        special_post_processing [...]
+
+        def table_id(), do: ...
+
+        generate_helper_functions()
+
+        # Implement your own insert_by_lote using the helpers
+        def insert_by_lote(batch, batch_id) do
+            # Your custom pipeline using:
+            # - filter_batch/1
+            # - group_by_unique_id/1
+            # - fetch_stored_data/2
+            # - build_data/3
+            # - apply_post_processing/3
+            # - build_insert_tuples/1
+            # - execute_insert/2
+            # - handle_processing_error/4
+        end
+    end
+    ```
     """
+
+    # ============================================
+    # CONFIGURATION MACROS
+    # ============================================
 
     @doc """
     Macro to configure the Record entity.
@@ -10,19 +60,14 @@ defmodule DataModel.RecordBase.Macro do
     ### Parameters:
     - `opts`: Keyword list with:
         - `app`: Atom. Application name (for config)
-        - `table_key`: Atom. Key to obtain the table name (for reference only, does not automatically generate table_id)
+        - `table_key`: Atom. Key to obtain the table name
         - `batch_size_key`: Atom. Key to obtain the batch size
         - `unique_id`: InfoAttr. Attribute that uniquely identifies the record
         - `timestamp`: InfoAttr. Timestamp attribute (optional)
-
-    ### Important Note:
-        The `table_id/0` function is NOT automatically generated. It must be implemented
-        manually in each module, as it is required by `DataModel.Behaviour`.
     """
     defmacro entity_config(opts) do
         quote bind_quoted: [opts: Macro.escape(opts, unquote: true)] do
 
-            # Validate minimum configuration
             unless Keyword.has_key?(opts, :app) do
                 raise "entity_config requires :app option"
             end
@@ -41,25 +86,22 @@ defmodule DataModel.RecordBase.Macro do
 
             @entity_config opts
 
-            # Important: table_id() is NOT automatically generated, must be implemented manually and defined explicitly in each module
-
             @doc """
             Returns the attribute that uniquely identifies the record.
 
             ### Returns:
-                - `Struct.InfoAttr`. The attribute defined as `unique_id` in `entity_config/1`
+                - `Struct.InfoAttr`
             """
-            def unique_id_attr() do
-                @entity_config[:unique_id]
-            end
+            @spec unique_id_attr() :: Struct.InfoAttr.t()
+            def unique_id_attr(), do: @entity_config[:unique_id] || %Struct.InfoAttr{id: :unique_id}
 
             @doc """
             Returns the attribute used for timestamp.
 
             ### Returns:
-                - `Struct.InfoAttr`. The attribute defined as `timestamp` in `entity_config/1`,
-                or a default attribute with `id: :timestamp` if not specified
+                - `Struct.InfoAttr`
             """
+            @spec timestamp_attr() :: Struct.InfoAttr.t()
             def timestamp_attr() do
                 @entity_config[:timestamp] || %Struct.InfoAttr{id: :timestamp}
             end
@@ -68,22 +110,30 @@ defmodule DataModel.RecordBase.Macro do
             Returns the application name configured in `entity_config/1`.
 
             ### Returns:
-                - Atom. The application name used to obtain configuration
+                - Atom. The application name used for configuration lookup.
+
+            ### Example:
+                MyApp.Record.application_name()
+                # => :my_app
             """
-            defp application_name() do
-                @entity_config[:app]
-            end
+            @spec application_name() :: atom()
+            def application_name(), do: @entity_config[:app]
 
             @doc """
-            Returns the batch size configured for this entity.
+            Returns the batch size for chunking insert operations.
 
             Gets the value from `Application.get_env/2` using the application name
             and batch size key defined in `entity_config/1`.
 
             ### Returns:
-                - Integer or nil. The configured batch size
+                - Integer. The configured batch size.
+
+            ### Example:
+                MyApp.Record.batch_size()
+                # => 100
             """
-            defp batch_size() do
+            @spec batch_size() :: integer()
+            def batch_size() do
                 Application.get_env(
                     @entity_config[:app],
                     @entity_config[:batch_size_key]
@@ -94,9 +144,7 @@ defmodule DataModel.RecordBase.Macro do
 
     @doc """
     Macro to define the list of own attributes of the Record.
-
-    ### Parameters:
-        - `attributes`: List of module attributes (e.g., `[@unique_id, @timestamp]`)
+    Automatically generates getter functions for each attribute.
 
     ### Example:
         own_attributes [
@@ -104,11 +152,6 @@ defmodule DataModel.RecordBase.Macro do
             @timestamp,
             @is_deleted
         ]
-
-    This will automatically generate the functions:
-        - `unique_id/0` - Returns `@unique_id`
-        - `timestamp/0` - Returns `@timestamp`
-        - `is_deleted/0` - Returns `@is_deleted`
     """
     defmacro own_attributes(attributes) when is_list(attributes) do
         getter_functions = generate_getter_functions(attributes)
@@ -121,27 +164,20 @@ defmodule DataModel.RecordBase.Macro do
     @doc """
     Macro to define the list of sub-entities.
 
-    ### Parameters:
-        - `entities`: List of modules that implement `DataModel.AttributeProvider`
-
     ### Example:
         subentities [
             DataModel.Record.Buyer,
-            DataModel.Record.Vehicle,
-            DataModel.Record.Service
+            DataModel.Record.Vehicle
         ]
     """
     defmacro subentities(entities) do
         quote do
-        @subentities unquote(entities)
+            @subentities unquote(entities)
         end
     end
 
     @doc """
     Macro to define sub-entities that need special post-processing.
-
-    ### Parameters:
-        - `entities`: List of modules that implement `special_post_processing`
 
     ### Example:
         special_post_processing [
@@ -151,31 +187,45 @@ defmodule DataModel.RecordBase.Macro do
     """
     defmacro special_post_processing(entities) do
         quote do
-        @special_post_processing unquote(entities)
+            @special_post_processing unquote(entities)
         end
     end
 
+    # ============================================
+    # GENERATION MACROS
+    # ============================================
+
     @doc """
-    Macro that generates all common functions for the Record.
+    Macro that generates helper functions (building blocks).
 
-    This macro must be called after defining `own_attributes`, `subentities`, `entity_config`, etc.
-    Generates the following functions:
+    These are tools you can use to build your own `insert_by_lote`.
+    Each function is overridable.
 
-    ### Public functions generated:
-        - `attr_list/0` - Returns the complete list of attributes (own + sub-entities)
-        - `insert_by_lote/3` - Inserts records from a batch
+    ## Generated Functions
 
-    ### Private functions generated (can be overridden):
-        - `filter_batch/1` - Filters the batch before processing
-        - `build_data/1` - Builds data from payloads
-        - `reprocess_data/2` - Applies special post-processing
-        - `prepare_and_build_insert_query/4` - Prepares and builds the insert query
-        - `build_insert_tuples/1` - Builds insertion tuples
-        - `insert/3` - Inserts into the database
-        - `handle_error/4` - Handles errors during processing
+    ### Required (by Behaviour)
+    - `attr_list/0` - Returns complete list of attributes
+
+    ### Helper Functions (Building Blocks)
+    - `filter_batch/1` - Filter batch before processing
+    - `group_by_unique_id/1` - Group payloads by unique_id
+    - `fetch_stored_data/2` - Fetch existing data from storage
+    - `build_data/3` - Build record data from payloads
+    - `apply_post_processing/3` - Apply special post-processing
+    - `prepare_insert_query/4` - Prepare a single insert query
+    - `build_insert_tuples/1` - Build insertion tuples from list
+    - `execute_insert/2` - Execute insert in database
+    - `handle_processing_error/4` - Handle errors
+
+    ## Note
+    `insert_by_lote/2` or `/3` is NOT generated. You must implement it yourself using these building blocks according to your business logic.
     """
-    defmacro generate_record_functions do
+    defmacro generate_helper_functions do
         quote do
+
+            # ============================================
+            # REQUIRED FUNCTIONS
+            # ============================================
 
             @doc """
             Returns the complete list of attributes (own + subentities)
@@ -190,168 +240,145 @@ defmodule DataModel.RecordBase.Macro do
                 end)
             end
 
+            # ============================================
+            # HELPER FUNCTIONS (Building Blocks)
+            # ============================================
+
             @doc """
-            Insert the records from a batch. It iterates over them with the same identifier and keeps the updated data.
+            Filters the batch before processing.
+            Override to implement custom filtering logic.
 
             ### Parameters:
-                - batch: List of map. Payloads.
-                - batch_id: String. Batch identifier.
-                - additional_info: List. Additional information needed for processing.
+                - `batch`: List of maps (payloads)
+
+            ### Returns:
+                - Filtered list of maps
             """
-            def insert_by_lote([], _batch_id, _additional_info), do: :ok
+            def filter_batch(batch), do: batch
+            defoverridable filter_batch: 1
 
-            def insert_by_lote(batch, batch_id, additional_info)
-                when is_list(batch) and is_binary(batch_id) and is_list(additional_info) do
+            @doc """
+            Groups payloads by unique_id attribute.
 
-                unique_id_attr = unique_id_attr()
+            ### Parameters:
+                - `batch`: List of maps (payloads)
 
-                # Apply custom filter if exists
-                filtered_batch = filter_batch(batch)
-
-                {compressed_by_key, keys} =
-                    filtered_batch
-                    |> Common.Payload.reduce_by([unique_id_attr])
-
-                keys
-                    |> Enum.map(fn key ->
-                        prepare_and_build_insert_query(
-                            batch_id,
-                            key,
-                            Map.get(compressed_by_key, key),
-                            additional_info
-                        )
-                    end)
-                    |> Enum.reduce(
-                        [],
-                        fn
-                            {:ok, info}, acc -> acc ++ [info]
-                            {:error, _info}, acc -> acc
-                        end
-                    )
-                    |> Enum.chunk_every(batch_size())
-                    |> Enum.map(fn chunk ->
-                        build_insert_tuples(chunk)
-                    end)
-                    |> insert(batch_id, additional_info)
+            ### Returns:
+                - `{map_grouped_by_key, list_of_keys}`
+            """
+            def group_by_unique_id(batch) do
+                Common.Payload.reduce_by(batch, [unique_id_attr()])
             end
+            defoverridable group_by_unique_id: 1
 
             @doc """
-            Filters the batch before processing it. Can be overriden.
+            Fetches existing data from storage for the given keys.
+            Override to implement storage lookup (e.g., BigQuery).
 
             ### Parameters:
-                - `batch`: List of maps with the payloads
+                - `keys`: List of unique identifiers
+                - `additional_info`: Additional context
 
             ### Returns:
-                - List of filtered maps
+                - `{:ok, %{key => stored_data}}` or `{:error, reason}`
             """
-            defp filter_batch(batch), do: batch
+            def fetch_stored_data(_keys, _additional_info), do: {:ok, %{}}
+            defoverridable fetch_stored_data: 2
 
             @doc """
-            Builds the record data from payloads. Must be overridden to implement custom data construction logic. By default uses the last payload in the list and extracts values according to attributes defined in `attr_list/0`.
+            Builds the record data from payloads.
+            Override to implement custom data construction logic.
 
             ### Parameters:
-                - `payloads`: List of maps with payloads associated to the same `unique_id`
+                - `payloads`: List of maps for the same unique_id
+                - `stored_data`: Previously stored data (keyword list or empty)
+                - `additional_info`: Additional context
 
             ### Returns:
-                - Keyword list with extracted and processed values
+                - Keyword list with record data
             """
-            defp build_data(payloads) do
-                # By default, use the last payload
+            def build_data(payloads, stored_data, _additional_info) do
                 payload = List.last(payloads)
 
                 payload
                 |> Common.Payload.extract_with_format(attr_list(), false)
-                |> reprocess_data(payload)
+                |> apply_post_processing(stored_data, payload)
             end
+            defoverridable build_data: 3
 
             @doc """
-            Applies special post-processing to extracted values. Must be overridden to implement custom post-processing logic.
+            Applies special post-processing to extracted values.
+            Override to implement custom post-processing logic.
 
             ### Parameters:
-                - `values`: Keyword list with values extracted from the payload
-                - `payload`: Map with the original payload
+                - `new_values`: Keyword list with newly extracted values
+                - `stored_values`: Keyword list with previously stored values
+                - `payload`: Original payload map
 
             ### Returns:
                 - Keyword list with processed values
             """
-            defp reprocess_data(values, payload) do
-                entities = special_post_processing_entities()
+            def apply_post_processing(new_values, stored_values, payload) do
+                entities = @special_post_processing || []
 
                 entities
-                |> Enum.reduce(values, fn entity, acc ->
-                    if function_exported?(entity, :special_post_processing, 2) do
-                        entity.special_post_processing(acc, payload)
-                    else
-                        acc
+                |> Enum.reduce(new_values, fn entity, acc ->
+                    cond do
+                        function_exported?(entity, :special_post_processing, 3) ->
+                            entity.special_post_processing(acc, stored_values, payload)
+                        function_exported?(entity, :special_post_processing, 2) ->
+                            entity.special_post_processing(acc, payload)
+                        true ->
+                            acc
                     end
                 end)
             end
+            defoverridable apply_post_processing: 3
 
             @doc """
-            Returns the list of entities that require special post-processing.
-
-            ### Returns:
-                - List of modules that implement `special_post_processing` or empty list
-                    if no entities are defined
-            """
-            defp special_post_processing_entities() do
-                @special_post_processing || []
-            end
-
-            @doc """
-            Prepares and builds the SQL insert query for a record. Must be overridden to implement custom insert query construction logic.
+            Prepares and builds the insert query for a single record.
+            Override to implement custom query preparation logic.
 
             ### Parameters:
-                - `batch_id`: String. Batch identifier
                 - `unique_id`: String. Unique record identifier
                 - `payloads`: List of maps with associated payloads
-                - `additional_info`: List. Additional information for processing
+                - `stored_data`: Keyword list with stored data (or empty)
+                - `additional_info`: Additional context
 
             ### Returns:
                 - `{:ok, {unique_id, query}}` if successful
-                - `{:error, nil}` if there's an error (error is logged)
+                - `{:error, reason}` if there's an error
             """
-            defp prepare_and_build_insert_query(batch_id, unique_id, payloads, additional_info) do
-                try do
-                    timestamp_attr = timestamp_attr()
+            def prepare_insert_query(unique_id, payloads, stored_data, additional_info) do
+                timestamp_attr = timestamp_attr()
 
-                    record =
-                        build_data(payloads)
-                        |> Keyword.put(
-                            timestamp_attr.id,
-                            Timex.now() |> Timex.to_unix()
-                        )
+                record =
+                    build_data(payloads, stored_data, additional_info)
+                    |> Keyword.put(
+                        timestamp_attr.id,
+                        Timex.now() |> Timex.to_unix()
+                    )
 
-                    {
-                        :ok,
-                        {unique_id, Sql.insert(table_id(), record)}
-                    }
-
-                rescue
-                    error ->
-                        handle_error(batch_id, unique_id, error, inspect(__ENV__.function))
-                        {:error, nil}
-                end
+                {:ok, {unique_id, Sql.insert(table_id(), record)}}
             end
+            defoverridable prepare_insert_query: 4
 
             @doc """
-            Builds insertion tuples by combining multiple queries. Must be overridden to implement custom insertion tuple construction logic.
+            Builds insertion tuples by combining multiple queries. Override to implement custom tuple building logic.
 
             ### Parameters:
-                - `batches`: List of tuples `{unique_id, query}`
+                - `records`: List of tuples `{unique_id, query}`
 
             ### Returns:
-                - `[]` if the list is empty
-                - Tuple `{keys, merged_query}` where `keys` is a list of identifiers
-                    and `merged_query` is the combined query using `Statement.Sql.merge_inserts/1`
+                - `{list_of_keys, merged_query}` or `[]` if empty
             """
-            defp build_insert_tuples([]), do: []
+            def build_insert_tuples([]), do: []
 
-            defp build_insert_tuples(batches) do
-                {key, query} = hd(batches)
+            def build_insert_tuples(records) do
+                {key, query} = hd(records)
 
                 {keys, queries} =
-                    batches
+                    records
                     |> tl()
                     |> Enum.reduce(
                         {[key], [query]},
@@ -362,57 +389,62 @@ defmodule DataModel.RecordBase.Macro do
 
                 {keys, Sql.merge_inserts(queries)}
             end
+            defoverridable build_insert_tuples: 1
 
             @doc """
-            Inserts data into BigQuery using ODBC connections. Must be overridden to implement custom insertion logic.
+            Executes the insert operation in the database.
+            Override to implement custom insertion logic.
 
             ### Parameters:
                 - `data`: List of tuples `{keys, query}` to insert
-                - `batch_id`: String. Batch identifier
-                - `_additional_info`: List. Additional information (not used in this function)
+                - `batch_id`: Batch identifier for error logging
 
             ### Returns:
-                - List of insertion results (`:ok` or `:error`)
+                - List of results (`:ok` | `:error`)
             """
-            defp insert(data, batch_id, _additional_info) do
+            def execute_insert(data, batch_id) do
                 data
                 |> Task.async_stream(
                     fn {ids, query} ->
                         try do
-                        pid =
-                            Application.get_env(application_name(), :bigquery)[:configuration]
-                            |> Odbc.connect()
+                            pid =
+                                Application.get_env(application_name(), :bigquery)[:configuration]
+                                |> Odbc.connect()
 
-                        Odbc.insert(pid, query)
-
-                        Process.exit(pid, :kill)
-                        :ok
+                            Odbc.insert(pid, query)
+                            Process.exit(pid, :kill)
+                            :ok
                         rescue
-                        error ->
-                            handle_error(batch_id, ids, error, inspect(__ENV__.function))
-                            :error
+                            error ->
+                                handle_processing_error(batch_id, ids, error, %{
+                                    function: :execute_insert,
+                                    module: __MODULE__
+                                })
+                                :error
                         end
                     end,
                     timeout: :infinity
                 )
                 |> Enum.to_list()
             end
+            defoverridable execute_insert: 2
 
             @doc """
-            Handles errors during record processing. Must be overridden to implement custom error handling logic.
+            Handles errors during record processing.
+            Override to implement custom error handling (e.g., Slack notifications).
 
             ### Parameters:
-                - `batch_id`: String. Batch identifier
-                - `unique_id`: String or list of strings. Record identifier(s)
-                - `error`: Exception or term. The error that occurred
-                - `function`: String. Name of the function where the error occurred
+                - `batch_id`: Batch identifier
+                - `unique_id`: Record identifier (String or list)
+                - `error`: The error that occurred
+                - `context`: Map with `:function` and `:module`
             """
-            defp handle_error(batch_id, unique_id, error, function) do
+            def handle_processing_error(batch_id, unique_id, error, context) do
                 require Logger
 
                 msg = """
-                Module: #{inspect(__MODULE__)}.
-                Function: #{function}.
+                Module: #{inspect(context[:module] || __MODULE__)}.
+                Function: #{inspect(context[:function])}.
                 Record Id: #{inspect(unique_id)}.
                 Batch Id: #{inspect(batch_id)}.
                 Error: #{inspect(error)}
@@ -420,74 +452,83 @@ defmodule DataModel.RecordBase.Macro do
 
                 Logger.error(msg)
             end
+            defoverridable handle_processing_error: 4
+
         end
     end
 
-    @doc """
-    Generates getter functions for each attribute in the list.
+    # ============================================
+    # PRIVATE HELPER FUNCTIONS
+    # ============================================
 
-    ### Parameters:
-        - `attributes`: AST representing the list of attributes
-
-    ### Returns:
-        - List of AST nodes representing the generated getter functions
-    """
+    #
+    # Generates getter functions for each attribute in the list.
+    #
+    # ### Parameters:
+    #     - `attributes`: AST representing the list of attributes.
+    #       Can be a `{:__block__, _, list}` tuple or a plain list.
+    #
+    # ### Returns:
+    #     - List of AST nodes representing the generated getter functions.
+    #
+    # ### Example:
+    #     Given `[@name, @rut]`, generates:
+    #     - `def name(), do: @name`
+    #     - `def rut(), do: @rut`
+    #
+    @doc false
     defp generate_getter_functions(attributes) do
         case attributes do
-        {:__block__, _, list} when is_list(list) ->
-            process_attribute_list(list)
+            {:__block__, _, list} when is_list(list) ->
+                process_attribute_list(list)
 
-        list when is_list(list) ->
-            process_attribute_list(list)
+            list when is_list(list) ->
+                process_attribute_list(list)
 
-        _ ->
-            []
+            _ ->
+                []
         end
     end
 
-    @doc """
-    Processes a list of module attributes and generates getter functions for each one.
-
-    ### Parameters:
-        - `list`: List of AST nodes representing module attributes
-
-    ### Returns:
-        - List of AST nodes representing the generated getter functions
-
-    ### Example:
-        Given the list `[{:@, _, [{:name, _, _}]}, {:@, _, [{:rut, _, _}]}]`,
-        this function will generate the getter functions `name/0` and `rut/0`.
-    """
+    #
+    # Processes a list of module attributes and generates getter functions.
+    #
+    # ### Parameters:
+    #     - `list`: List of AST nodes representing module attributes.
+    #
+    # ### Returns:
+    #     - List of AST nodes (quoted expressions) for the getter functions.
+    #
+    # ### Generated Function Format:
+    #     Each generated function has:
+    #     - `@doc` with description and return type
+    #     - Public `def` that returns the module attribute value
+    #
+    @doc false
     defp process_attribute_list(list) do
         list
         |> Enum.filter(fn
-            {:@, _, [{name, _, _}]} when is_atom(name) ->
-                true
-            _ ->
-                false
+            {:@, _, [{name, _, _}]} when is_atom(name) -> true
+            _ -> false
         end)
         |> Enum.map(fn
             {:@, _, [{name, _, _}]} ->
                 function_name = name
-                # Build the module attribute AST correctly
                 attr_ast = {:@, [], [{name, [], nil}]}
 
                 quote do
                     @doc """
-                    Returns the information of the `#{unquote(function_name)}` attribute
+                    Returns the `#{unquote(function_name)}` attribute.
 
-                    ### Return:
-                        - Struct.InfoAttr
+                    ### Returns:
+                        - `Struct.InfoAttr`
                     """
-                    def unquote(function_name)() do
-                        unquote(attr_ast)
-                    end
+                    def unquote(function_name)(), do: unquote(attr_ast)
                 end
 
             _ ->
                 nil
-            end
-        )
+        end)
         |> Enum.filter(&(!is_nil(&1)))
     end
 
