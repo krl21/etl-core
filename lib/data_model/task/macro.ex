@@ -323,7 +323,7 @@ defmodule DataModel.Task.Macro do
                         if is_nil(start_date) or is_nil(end_date) do
                             default_value
                         else
-                            case Time.WorkingTime.elapsed_time(start_date, end_date, business, []) do
+                            case Time.WorkingTime.elapsed_time(end_date, start_date, business, []) do
                                 {:ok, value} -> value
                                 {:error, _msg} -> default_value
                             end
