@@ -9,7 +9,7 @@ defmodule Database.Postgres do
     - `id` - Autoincremental integer (PRIMARY KEY)
     - `id_nodo` - String (UUID of the node that generated the record)
     - `tipo` - String (record type/category)
-    - `datos` - JSONB (record data in JSON format)
+    - `informacion` - JSONB (record data in JSON format)
     - `fecha_creado` - Timestamp (creation date and time)
     - `en_bq` - Boolean (default: false, indicates if sent to BigQuery)
 
@@ -214,7 +214,7 @@ defmodule Database.Postgres do
             id SERIAL PRIMARY KEY,
             id_nodo VARCHAR(36) NOT NULL,
             tipo VARCHAR(100),
-            datos JSONB NOT NULL,
+            informacion JSONB NOT NULL,
             fecha_creado TIMESTAMP NOT NULL,
             en_bq BOOLEAN DEFAULT FALSE
         );
@@ -317,7 +317,7 @@ defmodule Database.Postgres do
         - record (Map) - Record data with:
             - :id_nodo (String) - Node UUID (required)
             - :tipo (String) - Type/category (optional)
-            - :datos (Map) - JSON data (required)
+            - :informacion (Map) - JSON data (required)
 
     ### Returns
         - {:ok, id} - Inserted record ID
@@ -325,30 +325,6 @@ defmodule Database.Postgres do
     """
     def insert(conn, table_name, record) do
         insert_many(conn, table_name, [record])
-        # write_conn = get_write_conn(conn)
-        # sanitized_name = Helpers.sanitize_identifier(table_name)
-
-        # id_nodo = Map.fetch!(record, :id_nodo)
-        # tipo = Map.get(record, :tipo)
-        # datos = Helpers.to_json(Map.fetch!(record, :datos))
-        # fecha_creado = DateTime.utc_now()
-        # en_bq = false
-
-        # query = """
-        # INSERT INTO #{sanitized_name} (id_nodo, tipo, datos, fecha_creado, en_bq)
-        # VALUES ($1, $2, $3::jsonb, $4, $5)
-        # RETURNING id;
-        # """
-
-        # Postgrex.query(write_conn, query, [id_nodo, tipo, datos, fecha_creado, en_bq])
-        # |> case do
-        #     {:ok, %{rows: [[id]]}} ->
-        #         {:ok, id}
-
-        #     {:error, reason} = error ->
-        #         Logger.error("Error inserting into #{table_name}: #{inspect(reason)}")
-        #         error
-        # end
     end
 
     @doc """
@@ -375,18 +351,18 @@ defmodule Database.Postgres do
                 |> Enum.reduce({"", [], 1}, fn record, {sql, params, idx} ->
                     id_nodo = Map.fetch!(record, :id_nodo)
                     tipo = Map.get(record, :tipo)
-                    datos = Helpers.to_json(Map.fetch!(record, :datos))
+                    informacion = Helpers.to_json(Map.fetch!(record, :informacion))
                     fecha_creado = DateTime.utc_now()
                     en_bq = false
 
                     value_sql = "($#{idx}, $#{idx + 1}, $#{idx + 2}::jsonb, $#{idx + 3}, $#{idx + 4})"
                     new_sql = if sql == "", do: value_sql, else: "#{sql}, #{value_sql}"
 
-                    {new_sql, params ++ [id_nodo, tipo, datos, fecha_creado, en_bq], idx + 5}
+                    {new_sql, params ++ [id_nodo, tipo, informacion, fecha_creado, en_bq], idx + 5}
                 end)
 
             query = """
-            INSERT INTO #{sanitized_name} (id_nodo, tipo, datos, fecha_creado, en_bq)
+            INSERT INTO #{sanitized_name} (id_nodo, tipo, informacion, fecha_creado, en_bq)
             VALUES #{values_sql};
             """
 
@@ -413,22 +389,35 @@ defmodule Database.Postgres do
     ### Parameters
         - conn (pid | Map) - Active connection
         - table_name (String) - Table name
+        - register_type (String | nil) - Optional type filter. If nil, returns all pending records.
 
     ### Returns
         - {:ok, records} - List of maps with records
         - {:error, reason} - Query error
     """
-    def get_pending_bq(conn, table_name) do
+    def get_pending_bq(conn, table_name, register_type \\ nil) do
         read_conn = get_read_conn(conn)
         sanitized_name = Helpers.sanitize_identifier(table_name)
 
-        query = """
-        SELECT id, id_nodo, tipo, datos, fecha_creado, en_bq
-        FROM #{sanitized_name}
-        WHERE NOT en_bq;
-        """
+        {query, params} =
+            register_type
+            |> case do
+                nil ->
+                    {"""
+                    SELECT id, id_nodo, tipo, informacion, fecha_creado, en_bq
+                    FROM #{sanitized_name}
+                    WHERE NOT en_bq;
+                    """, []}
 
-        Postgrex.query(read_conn, query, [])
+                _ ->
+                    {"""
+                    SELECT id, id_nodo, tipo, informacion, fecha_creado, en_bq
+                    FROM #{sanitized_name}
+                    WHERE tipo = $1 AND NOT en_bq;
+                    """, [register_type]}
+            end
+
+        Postgrex.query(read_conn, query, params)
         |> case do
             {:ok, result} ->
                 {:ok, Helpers.parse_query_result(result)}
