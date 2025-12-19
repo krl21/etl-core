@@ -318,38 +318,37 @@ defmodule EtlCore.Database.Postgres do
             - :id_nodo (String) - Node UUID (required)
             - :tipo (String) - Type/category (optional)
             - :datos (Map) - JSON data (required)
-            - :fecha_creado (DateTime) - Timestamp (optional, default: now)
-            - :en_bq (Boolean) - Sent to BQ flag (optional, default: false)
 
     ### Returns
         - {:ok, id} - Inserted record ID
         - {:error, reason} - Insert error
     """
     def insert(conn, table_name, record) do
-        write_conn = get_write_conn(conn)
-        sanitized_name = Helpers.sanitize_identifier(table_name)
+        insert_many(conn, table_name, [record])
+        # write_conn = get_write_conn(conn)
+        # sanitized_name = Helpers.sanitize_identifier(table_name)
 
-        id_nodo = Map.fetch!(record, :id_nodo)
-        tipo = Map.get(record, :tipo)
-        datos = Helpers.to_json(Map.fetch!(record, :datos))
-        fecha_creado = Map.get(record, :fecha_creado, DateTime.utc_now())
-        en_bq = Map.get(record, :en_bq, false)
+        # id_nodo = Map.fetch!(record, :id_nodo)
+        # tipo = Map.get(record, :tipo)
+        # datos = Helpers.to_json(Map.fetch!(record, :datos))
+        # fecha_creado = DateTime.utc_now()
+        # en_bq = false
 
-        query = """
-        INSERT INTO #{sanitized_name} (id_nodo, tipo, datos, fecha_creado, en_bq)
-        VALUES ($1, $2, $3::jsonb, $4, $5)
-        RETURNING id;
-        """
+        # query = """
+        # INSERT INTO #{sanitized_name} (id_nodo, tipo, datos, fecha_creado, en_bq)
+        # VALUES ($1, $2, $3::jsonb, $4, $5)
+        # RETURNING id;
+        # """
 
-        Postgrex.query(write_conn, query, [id_nodo, tipo, datos, fecha_creado, en_bq])
-        |> case do
-            {:ok, %{rows: [[id]]}} ->
-                {:ok, id}
+        # Postgrex.query(write_conn, query, [id_nodo, tipo, datos, fecha_creado, en_bq])
+        # |> case do
+        #     {:ok, %{rows: [[id]]}} ->
+        #         {:ok, id}
 
-            {:error, reason} = error ->
-                Logger.error("Error inserting into #{table_name}: #{inspect(reason)}")
-                error
-        end
+        #     {:error, reason} = error ->
+        #         Logger.error("Error inserting into #{table_name}: #{inspect(reason)}")
+        #         error
+        # end
     end
 
     @doc """
@@ -377,8 +376,8 @@ defmodule EtlCore.Database.Postgres do
                     id_nodo = Map.fetch!(record, :id_nodo)
                     tipo = Map.get(record, :tipo)
                     datos = Helpers.to_json(Map.fetch!(record, :datos))
-                    fecha_creado = Map.get(record, :fecha_creado, DateTime.utc_now())
-                    en_bq = Map.get(record, :en_bq, false)
+                    fecha_creado = DateTime.utc_now()
+                    en_bq = false
 
                     value_sql = "($#{idx}, $#{idx + 1}, $#{idx + 2}::jsonb, $#{idx + 3}, $#{idx + 4})"
                     new_sql = if sql == "", do: value_sql, else: "#{sql}, #{value_sql}"
