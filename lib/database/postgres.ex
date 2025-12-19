@@ -241,20 +241,47 @@ defmodule EtlCore.Database.Postgres do
         ON #{sanitized_name} (fecha_creado);
         """
 
-        with
-            {:ok, _} <- Postgrex.query(write_conn, query, []),
+        with {:ok, _} <- Postgrex.query(write_conn, query, []),
             {:ok, _} <- Postgrex.query(write_conn, index_query, []),
             {:ok, _} <- Postgrex.query(write_conn, composite_index_query, []),
             {:ok, _} <- Postgrex.query(write_conn, tipo_index_query, []),
             {:ok, _} <- Postgrex.query(write_conn, fecha_index_query, []),
-            :ok <- add_column_comments(write_conn, sanitized_name, column_comments)
-            do
+            :ok <- add_column_comments(write_conn, sanitized_name, column_comments) do
 
             Logger.info("Table #{table_name} created/verified successfully")
             :ok
         else
             {:error, reason} = error ->
                 Logger.error("Error creating table #{table_name}: #{inspect(reason)}")
+                error
+        end
+    end
+
+    @doc """
+    Drops a table from the database.
+
+    ### Parameters
+        - conn (pid | Map) - Active connection
+        - table_name (String) - Table name to drop
+
+    ### Returns
+        - :ok - Table dropped successfully
+        - {:error, reason} - Drop error
+    """
+    def drop_table(conn, table_name) do
+        write_conn = get_write_conn(conn)
+        sanitized_name = Helpers.sanitize_identifier(table_name)
+
+        query = "DROP TABLE IF EXISTS #{sanitized_name};"
+
+        Postgrex.query(write_conn, query, [])
+        |> case do
+            {:ok, _} ->
+                Logger.info("Table #{table_name} dropped successfully")
+                :ok
+
+            {:error, reason} = error ->
+                Logger.error("Error dropping table #{table_name}: #{inspect(reason)}")
                 error
         end
     end
