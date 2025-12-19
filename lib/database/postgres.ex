@@ -1,5 +1,5 @@
 
-defmodule EtlCore.Database.Postgres do
+defmodule Database.Postgres do
     @moduledoc """
     Module for working with PostgreSQL databases.
 
@@ -20,7 +20,7 @@ defmodule EtlCore.Database.Postgres do
     """
 
     require Logger
-    alias EtlCore.Database.Helpers
+    alias Database.Helpers
 
 
     ############

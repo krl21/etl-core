@@ -1,5 +1,5 @@
 
-defmodule EtlCore.Database.Helpers do
+defmodule Database.Helpers do
     @moduledoc """
     Helper functions for database operations.
     """
