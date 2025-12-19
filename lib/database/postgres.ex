@@ -257,6 +257,23 @@ defmodule EtlCore.Database.Postgres do
         end
     end
 
+    defp add_column_comments(conn, table_name, comments) when is_map(comments) do
+        results =
+            comments
+            |> Enum.map(fn {column, description} ->
+                escaped = Helpers.escape_sql_string(description)
+                comment_query = "COMMENT ON COLUMN #{table_name}.#{column} IS '#{escaped}';"
+                Postgrex.query(conn, comment_query, [])
+            end)
+
+        Enum.find(results, fn result -> match?({:error, _}, result) end)
+        |> case do
+            nil -> :ok
+            error -> error
+        end
+    end
+
+
     @doc """
     Drops a table from the database.
 
@@ -286,57 +303,6 @@ defmodule EtlCore.Database.Postgres do
         end
     end
 
-    defp add_column_comments(conn, table_name, comments) when is_map(comments) do
-        results =
-            comments
-            |> Enum.map(fn {column, description} ->
-                escaped = Helpers.escape_sql_string(description)
-                comment_query = "COMMENT ON COLUMN #{table_name}.#{column} IS '#{escaped}';"
-                Postgrex.query(conn, comment_query, [])
-            end)
-
-        Enum.find(results, fn result -> match?({:error, _}, result) end)
-        |> case do
-            nil -> :ok
-            error -> error
-        end
-    end
-
-    ############
-    # READ Operations (use read connection)
-    ############
-
-    @doc """
-    Gets all records where `en_bq == false`.
-
-    ### Parameters
-        - conn (pid | Map) - Active connection
-        - table_name (String) - Table name
-
-    ### Returns
-        - {:ok, records} - List of maps with records
-        - {:error, reason} - Query error
-    """
-    def get_pending_bq(conn, table_name) do
-        read_conn = get_read_conn(conn)
-        sanitized_name = Helpers.sanitize_identifier(table_name)
-
-        query = """
-        SELECT id, id_nodo, tipo, datos, fecha_creado, en_bq
-        FROM #{sanitized_name}
-        WHERE NOT en_bq;
-        """
-
-        Postgrex.query(read_conn, query, [])
-        |> case do
-            {:ok, result} ->
-                {:ok, Helpers.parse_query_result(result)}
-
-            {:error, reason} = error ->
-                Logger.error("Error getting pending records from #{table_name}: #{inspect(reason)}")
-                error
-        end
-    end
 
     ############
     # WRITE Operations (use write connection)
@@ -436,6 +402,47 @@ defmodule EtlCore.Database.Postgres do
             end
         end
     end
+
+
+    ############
+    # READ Operations (use read connection)
+    ############
+
+    @doc """
+    Gets all records where `en_bq == false`.
+
+    ### Parameters
+        - conn (pid | Map) - Active connection
+        - table_name (String) - Table name
+
+    ### Returns
+        - {:ok, records} - List of maps with records
+        - {:error, reason} - Query error
+    """
+    def get_pending_bq(conn, table_name) do
+        read_conn = get_read_conn(conn)
+        sanitized_name = Helpers.sanitize_identifier(table_name)
+
+        query = """
+        SELECT id, id_nodo, tipo, datos, fecha_creado, en_bq
+        FROM #{sanitized_name}
+        WHERE NOT en_bq;
+        """
+
+        Postgrex.query(read_conn, query, [])
+        |> case do
+            {:ok, result} ->
+                {:ok, Helpers.parse_query_result(result)}
+
+            {:error, reason} = error ->
+                Logger.error("Error getting pending records from #{table_name}: #{inspect(reason)}")
+                error
+        end
+    end
+
+    ############
+    # Change Operations (use write connection)
+    ############
 
     @doc """
     Deletes records by a list of IDs.
