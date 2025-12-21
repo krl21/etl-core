@@ -268,12 +268,12 @@ defmodule DataModel.RecordPg.Macro do
                     data = build_data(payloads, stored_data, additional_info)
 
                     # Convert keyword list to map for JSON storage
-                    datos_map = Enum.into(data, %{})
+                    informacion_map = Enum.into(data, %{})
 
                     record = %{
                         id_nodo: unique_id,
                         tipo: table_name(),
-                        datos: datos_map
+                        informacion: informacion_map
                     }
 
                     {:ok, record}

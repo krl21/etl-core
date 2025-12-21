@@ -136,7 +136,7 @@ defmodule Database.Helpers do
             id: "Unique autoincremental identifier",
             id_nodo: "Node/record UUID",
             tipo: "Record type or category, or BigQuery target table name",
-            datos: "Transformed record data in JSON format",
+            informacion: "Transformed record data in JSON format",
             fecha_creado: "Creation timestamp",
             en_bq: "Indicates if the record was sent to BigQuery (false = pending)"
         }
