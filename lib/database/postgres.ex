@@ -226,26 +226,14 @@ defmodule Database.Postgres do
         WHERE en_bq = FALSE;
         """
 
-        composite_index_query = """
-        CREATE INDEX IF NOT EXISTS idx_#{sanitized_name}_nodo_fecha
-        ON #{sanitized_name} (id_nodo, fecha_creado);
-        """
-
         tipo_index_query = """
         CREATE INDEX IF NOT EXISTS idx_#{sanitized_name}_tipo
         ON #{sanitized_name} (tipo);
         """
 
-        fecha_index_query = """
-        CREATE INDEX IF NOT EXISTS idx_#{sanitized_name}_fecha_creado
-        ON #{sanitized_name} (fecha_creado);
-        """
-
         with {:ok, _} <- Postgrex.query(write_conn, query, []),
             {:ok, _} <- Postgrex.query(write_conn, index_query, []),
-            {:ok, _} <- Postgrex.query(write_conn, composite_index_query, []),
             {:ok, _} <- Postgrex.query(write_conn, tipo_index_query, []),
-            {:ok, _} <- Postgrex.query(write_conn, fecha_index_query, []),
             :ok <- add_column_comments(write_conn, sanitized_name, column_comments) do
 
             Logger.info("Table #{table_name} created/verified successfully")
