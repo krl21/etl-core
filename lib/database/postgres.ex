@@ -394,14 +394,16 @@ defmodule Database.Postgres do
                     {"""
                     SELECT id, id_nodo, tipo, informacion, fecha_creado, en_bq
                     FROM #{sanitized_name}
-                    WHERE NOT en_bq;
+                    WHERE NOT en_bq
+                    ORDER BY id_nodo, fecha_creado DESC;
                     """, []}
 
                 _ ->
                     {"""
                     SELECT id, id_nodo, tipo, informacion, fecha_creado, en_bq
                     FROM #{sanitized_name}
-                    WHERE tipo = $1 AND NOT en_bq;
+                    WHERE tipo = $1 AND NOT en_bq
+                    ORDER BY id_nodo, fecha_creado DESC;
                     """, [register_type]}
             end
 
