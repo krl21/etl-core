@@ -16,25 +16,26 @@ defmodule Genserver.BigqueryUploader do
     Starts the GenServer for data upload to BigQuery.
 
     ### Parameters:
-        - business (atom): Business/context identifier.
-        - data_source (list): ODBC connection configuration for BigQuery.
-        - pg_config (map): PostgreSQL connection configuration.
-        - info (list): List of maps with table configuration:
-            - :bq_table (string): Full BigQuery table name.
-            - :tipo (string): Type field value to filter records.
-            - :pg_table (string): PostgreSQL table name for pending records.
-        - periodicity (map): Activation periodicity map:
-            - :day (integer): Days.
-            - :hour (integer): Hours.
-            - :minute (integer): Minutes.
-            - :second (integer): Seconds.
-        - batch_size (integer): Number of records to insert per batch.
-        - webhook_url (string): Slack webhook URL for error notifications.
+        - args (map): Configuration map with the following keys:
+            - :business (atom): Business/context identifier.
+            - :data_source (list): ODBC connection configuration for BigQuery.
+            - :pg_config (map): PostgreSQL connection configuration.
+            - :info (list): List of maps with table configuration:
+                - :bq_table (string): Full BigQuery table name.
+                - :tipo (string): Type field value to filter records.
+                - :pg_table (string): PostgreSQL table name for pending records.
+            - :periodicity (map): Activation periodicity map:
+                - :day (integer): Days.
+                - :hour (integer): Hours.
+                - :minute (integer): Minutes.
+                - :second (integer): Seconds.
+            - :batch_size (integer): Number of records to insert per batch.
+            - :webhook_url (string): Slack webhook URL for error notifications.
 
     ### Returns:
         - {:ok, pid} | {:error, reason}
     """
-    def start_link({business, _data_source, _pg_config, _info, _periodicity, _batch_size, _webhook_url} = args) do
+    def start_link(%{business: business} = args) do
         GenServer.start_link(__MODULE__, args, name: :"#{__MODULE__}.#{business}")
     end
 
@@ -42,19 +43,19 @@ defmodule Genserver.BigqueryUploader do
     Initializes the GenServer state.
 
     ### Parameters:
-        - Tuple with:
-            - business (atom): Business identifier.
-            - data_source (list): ODBC connection configuration for BigQuery.
-            - pg_config (map): PostgreSQL connection configuration.
-            - info (list): List of table configurations.
-            - periodicity (map): Activation periodicity.
-            - batch_size (integer): Number of records per batch.
-            - webhook_url (string): Slack webhook URL for error notifications.
+        - args (map): Configuration map with the following keys:
+            - :business (atom): Business identifier.
+            - :data_source (list): ODBC connection configuration for BigQuery.
+            - :pg_config (map): PostgreSQL connection configuration.
+            - :info (list): List of table configurations.
+            - :periodicity (map): Activation periodicity.
+            - :batch_size (integer): Number of records per batch.
+            - :webhook_url (string): Slack webhook URL for error notifications.
 
     ### Returns:
         - {:ok, state}
     """
-    def init({business, data_source, pg_config, info, periodicity, batch_size, webhook_url}) do
+    def init(%{business: business, data_source: data_source, pg_config: pg_config, info: info, periodicity: periodicity, batch_size: batch_size, webhook_url: webhook_url}) do
         Monitor.register(self(), to_string(__MODULE__) <> "." <> to_string(business))
 
         Logger.info("#{to_string(__MODULE__)}. Initializing. Business: ---#{to_string(business)}---")
@@ -87,6 +88,7 @@ defmodule Genserver.BigqueryUploader do
         - {:noreply, state}
     """
     def handle_info(:update, state) do
+        IO.puts("---> ...")
         %{
             business: business,
             data_source: data_source,
@@ -129,6 +131,3 @@ defmodule Genserver.BigqueryUploader do
     end
 
 end
-
-
-# Genserver.BigqueryUploader.start_link(:tt, [dsn: "bigquery64", warehouse: "ttlchk-cloud.transferencia_vehiculos_qa"], %{hostname: "10.0.32.3", port: 5432, database: "etl_buffer", username: "etl_service", password: "Etl$3rv1c3_2024!", pool_size: 3}, "test_table", "ttlchk-cloud.transferencia_vehiculos_qa.expediente", "expediente", "batch_id", 100, "https://hooks.slack.com/services/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")
