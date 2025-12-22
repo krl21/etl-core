@@ -15,6 +15,9 @@ defmodule Genserver.Handlers.Bigquery do
     @doc """
     Uploads pending records to BigQuery.
 
+    For records with the same id_nodo, only the most recent one (by fecha_creado) is uploaded. If successful, all records with that id_nodo are marked as sent.
+    If failed, the next most recent record is tried.
+
     ### Parameters:
         - business: Atom. Business type.
         - data_source: List. ODBC connection configuration for BigQuery.
@@ -33,40 +36,202 @@ defmodule Genserver.Handlers.Bigquery do
     def run(_business, data_source, pg_config, pg_table, bq_table, tipo, batch_id, batch_size, webhook_url) do
         {:ok, conn} = Postgres.connect(pg_config)
 
-        Postgres.get_pending_bq(conn, pg_table, tipo)
-        |> case do
-            {:ok, records} when records == [] ->
-                {:ok, 0}
+        result =
+            Postgres.get_pending_bq(conn, pg_table, tipo)
+            |> case do
+                {:ok, records} when records == [] ->
+                    {:ok, 0}
 
-            {:ok, records} ->
-                # Build list of {record, query} tuples
-                data =
-                    records
-                    |> Enum.map(fn record ->
-                        {
-                            record |> Map.get(:id_nodo),
-                            record |> Map.get(:id),
-                            record,
-                            Sql.insert(bq_table, build_insert_values(record))
-                        }
-                    end)
+                {:ok, records} ->
 
+                    grouped_records = group_by_id_nodo(records)
 
-                results = execute_insert_with_retry(data, data_source, batch_id, batch_size, webhook_url)
+                    # Process each group: try inserting most recent first
+                    {successful_ids, uploaded_count} =
+                        process_grouped_records(
+                            grouped_records,
+                            bq_table,
+                            data_source,
+                            batch_id,
+                            batch_size,
+                            webhook_url
+                        )
 
-                uploaded_ids = get_uploaded_ids(results)
-                if not Enum.empty?(uploaded_ids) do
-                    Postgres.mark_as_sent_to_bq(conn, pg_table, uploaded_ids)
-                end
+                    # Mark all successful records as sent
+                    if not Enum.empty?(successful_ids) do
+                        Postgres.mark_as_sent_to_bq(conn, pg_table, successful_ids)
+                    end
 
-                {:ok, length(uploaded_ids)}
+                    {:ok, uploaded_count}
 
-            {:error, reason} ->
-                Logger.error("Error getting pending records from #{pg_table}: #{inspect(reason)}")
-                {:error, reason}
-        end
+                {:error, reason} ->
+                    Logger.error("Error getting pending records from #{pg_table}: #{inspect(reason)}")
+                    {:error, reason}
+            end
 
         Postgres.disconnect(conn)
+        result
+    end
+
+    #
+    # Groups records by id_nodo.
+    # Records are already sorted by fecha_creado DESC from the database query.
+    #
+    # ### Parameters:
+    #     - records: List of records from PostgreSQL (already sorted by id_nodo, fecha_creado DESC)
+    #
+    # ### Returns:
+    #     - Map where key is id_nodo and value is list of records (most recent first)
+    #
+    defp group_by_id_nodo(records) do
+        records
+        |> Enum.group_by(&Map.get(&1, :id_nodo))
+    end
+
+    #
+    # Processes grouped records, trying to insert the most recent record for each group.
+    # If insertion fails, tries the next most recent record.
+    #
+    # ### Parameters:
+    #     - grouped_records: Map of id_nodo => sorted records list
+    #     - bq_table: String. BigQuery table name
+    #     - data_source: List. ODBC connection configuration
+    #     - batch_id: String. Batch identifier
+    #     - batch_size: Integer. Number of records per batch
+    #     - webhook_url: String. Slack webhook URL
+    #
+    # ### Returns:
+    #     - {list_of_all_ids_to_mark, count_of_uploaded_records}
+    #
+    defp process_grouped_records(grouped_records, bq_table, data_source, batch_id, batch_size, webhook_url) do
+        # Extract the most recent record from each group for batch insertion
+        {records_to_insert, group_info} =
+            grouped_records
+            |> Enum.map(fn {id_nodo, [most_recent | rest]} ->
+                all_ids = Enum.map([most_recent | rest], &Map.get(&1, :id))
+                {most_recent, {id_nodo, all_ids, rest}}
+            end)
+            |> Enum.unzip()
+
+        # Build insert data for most recent records
+        data =
+            records_to_insert
+            |> Enum.map(fn record ->
+                {
+                    Map.get(record, :id_nodo),
+                    Map.get(record, :id),
+                    record,
+                    Sql.insert(bq_table, build_insert_values(record))
+                }
+            end)
+
+        # Execute batch insert with retry
+        results = execute_insert_with_retry(data, data_source, batch_id, batch_size, webhook_url)
+
+        # Process results and handle failures
+        process_insert_results(results, group_info, bq_table, data_source, batch_id, batch_size, webhook_url)
+    end
+
+    #
+    # Processes insert results and handles failures by trying alternative records
+    #
+    # ### Parameters:
+    #     - results: List of {:ok, id} | {:error, id}
+    #     - group_info: List of {id_nodo, all_ids, remaining_records}
+    #     - bq_table, data_source, batch_id, batch_size, webhook_url: Config params
+    #
+    # ### Returns:
+    #     - {list_of_all_ids_to_mark, count_of_uploaded_records}
+    #
+    defp process_insert_results(results, group_info, bq_table, data_source, batch_id, batch_size, webhook_url) do
+        # Create a map of id_nodo => result for quick lookup
+        result_map =
+            results
+            |> Enum.reduce(%{}, fn
+                {:ok, id}, acc ->
+                    # Find the id_nodo for this id
+                    case Enum.find(group_info, fn {_id_nodo, all_ids, _rest} -> id in all_ids end) do
+                        {id_nodo, _, _} -> Map.put(acc, id_nodo, {:ok, id})
+                        nil -> acc
+                    end
+                {:error, id}, acc ->
+                    case Enum.find(group_info, fn {_id_nodo, all_ids, _rest} -> id in all_ids end) do
+                        {id_nodo, _, _} -> Map.put(acc, id_nodo, {:error, id})
+                        nil -> acc
+                    end
+            end)
+
+        # Process each group
+        {all_successful_ids, uploaded_count} =
+            group_info
+            |> Enum.reduce(
+                {[], 0},
+                fn {id_nodo, all_ids, remaining_records}, {ids_acc, count_acc} ->
+                    case Map.get(result_map, id_nodo) do
+                        {:ok, _} ->
+                            # Success: mark all records in this group as sent
+                            {ids_acc ++ all_ids, count_acc + 1}
+
+                        {:error, _} ->
+                            # Failure: try remaining records one by one
+                            try_remaining_records(
+                                remaining_records,
+                                all_ids,
+                                bq_table,
+                                data_source,
+                                batch_id,
+                                batch_size,
+                                webhook_url,
+                                {ids_acc, count_acc}
+                            )
+
+                        nil ->
+                            # No result found for this id_nodo
+                            {ids_acc, count_acc}
+                    end
+                end
+            )
+
+        {all_successful_ids, uploaded_count}
+    end
+
+    #
+    # Tries to insert remaining records one by one until one succeeds
+    #
+    # ### Parameters:
+    #     - remaining_records: List of records to try (already sorted by fecha_creado desc)
+    #     - all_ids: List of all ids in this group
+    #     - bq_table, data_source, batch_id, batch_size, webhook_url: Config params
+    #     - {ids_acc, count_acc}: Accumulator for successful ids and count
+    #
+    # ### Returns:
+    #     - {updated_ids_acc, updated_count_acc}
+    #
+    defp try_remaining_records([], _all_ids, _bq_table, _data_source, _batch_id, _batch_size, _webhook_url, acc) do
+        # No more records to try
+        acc
+    end
+
+    defp try_remaining_records([record | rest], all_ids, bq_table, data_source, batch_id, batch_size, webhook_url, {ids_acc, count_acc}) do
+        # Try inserting this single record
+        data = [{
+            Map.get(record, :id_nodo),
+            Map.get(record, :id),
+            record,
+            Sql.insert(bq_table, build_insert_values(record))
+        }]
+
+        results = execute_insert_with_retry(data, data_source, batch_id, batch_size, webhook_url)
+
+        case results do
+            [{:ok, _}] ->
+                # Success: mark all records in this group as sent
+                {ids_acc ++ all_ids, count_acc + 1}
+
+            _ ->
+                # Failure: try next record
+                try_remaining_records(rest, all_ids, bq_table, data_source, batch_id, batch_size, webhook_url, {ids_acc, count_acc})
+        end
     end
 
     #
