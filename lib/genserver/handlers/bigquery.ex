@@ -15,9 +15,6 @@ defmodule Genserver.Handlers.Bigquery do
     @doc """
     Uploads pending records to BigQuery.
 
-    For records with the same id_nodo, only the most recent one (by fecha_creado) is uploaded. If successful, all records with that id_nodo are marked as sent.
-    If failed, the next most recent record is tried.
-
     ### Parameters:
         - business: Atom. Business type.
         - data_source: List. ODBC connection configuration for BigQuery.
@@ -44,12 +41,11 @@ defmodule Genserver.Handlers.Bigquery do
 
                 {:ok, records} ->
 
-                    grouped_records = group_by_id_nodo(records)
-
-                    # Process each group: try inserting most recent first
+                    # Procesa cada grupo, insertando en Bigquery el registro más actualizado posible
                     {successful_ids, failed_ids, uploaded_count} =
-                        process_grouped_records(
-                            grouped_records,
+                        records
+                        |> Enum.group_by(&Map.get(&1, :id_nodo))
+                        |> process_grouped_records(
                             bq_table,
                             data_source,
                             batch_id,
@@ -57,12 +53,12 @@ defmodule Genserver.Handlers.Bigquery do
                             webhook_url
                         )
 
-                    # Mark all successful records as sent
+                    # Marca como enviado en Bigquery los registros exitosos
                     if not Enum.empty?(successful_ids) do
                         Postgres.mark_as_sent_to_bq(conn, pg_table, successful_ids)
                     end
 
-                    # Mark all failed records as having problems
+                    # Marca como con problemas los registros fallidos que se analizaron antes de los exitosos
                     if not Enum.empty?(failed_ids) do
                         Postgres.mark_as_with_problems(conn, pg_table, failed_ids)
                     end
@@ -79,23 +75,7 @@ defmodule Genserver.Handlers.Bigquery do
     end
 
     #
-    # Groups records by id_nodo.
-    # Records are already sorted by fecha_creado DESC from the database query.
-    #
-    # ### Parameters:
-    #     - records: List of records from PostgreSQL (already sorted by id_nodo, fecha_creado DESC)
-    #
-    # ### Returns:
-    #     - Map where key is id_nodo and value is list of records (most recent first)
-    #
-    defp group_by_id_nodo(records) do
-        records
-        |> Enum.group_by(&Map.get(&1, :id_nodo))
-    end
-
-    #
-    # Processes grouped records, trying to insert the most recent record for each group.
-    # If insertion fails, tries the next most recent record.
+    # Processes grouped records, trying to insert the most recent record for each group. If insertion fails, tries the next most recent record.
     #
     # ### Parameters:
     #     - grouped_records: Map of id_nodo => sorted records list
@@ -109,7 +89,7 @@ defmodule Genserver.Handlers.Bigquery do
     #     - {list_of_successful_ids, list_of_failed_ids, count_of_uploaded_records}
     #
     defp process_grouped_records(grouped_records, bq_table, data_source, batch_id, batch_size, webhook_url) do
-        # Extract the most recent record from each group for batch insertion
+        # Extrae el registro más actualizado de cada grupo para la inserción por lotes
         {records_to_insert, group_info} =
             grouped_records
             |> Enum.map(fn {id_nodo, [most_recent | rest]} ->
@@ -118,7 +98,7 @@ defmodule Genserver.Handlers.Bigquery do
             end)
             |> Enum.unzip()
 
-        # Build insert data for most recent records
+        # Construye los datos de inserción para los registros más actualizados
         data =
             records_to_insert
             |> Enum.map(fn record ->
@@ -130,10 +110,10 @@ defmodule Genserver.Handlers.Bigquery do
                 }
             end)
 
-        # Execute batch insert with retry
+        # Ejecuta la inserción por lotes con retry
         results = execute_insert_with_retry(data, data_source, batch_id, batch_size, webhook_url)
 
-        # Process results and handle failures
+        # Procesa los resultados y maneja los fallos
         process_insert_results(results, group_info, bq_table, data_source, batch_id, batch_size, webhook_url)
     end
 
@@ -149,7 +129,7 @@ defmodule Genserver.Handlers.Bigquery do
     #     - {list_of_successful_ids, list_of_failed_ids, count_of_uploaded_records}
     #
     defp process_insert_results(results, group_info, bq_table, data_source, batch_id, batch_size, webhook_url) do
-        # Create a map of id_nodo => result for quick lookup
+        # Crea un mapa de id_nodo => result para una búsqueda rápida
         result_map =
             results
             |> Enum.reduce(%{}, fn
@@ -166,7 +146,7 @@ defmodule Genserver.Handlers.Bigquery do
                     end
             end)
 
-        # Process each group
+        # Procesa cada grupo
         {all_successful_ids, all_failed_ids, uploaded_count} =
             group_info
             |> Enum.reduce(
@@ -174,14 +154,15 @@ defmodule Genserver.Handlers.Bigquery do
                 fn {id_nodo, all_ids, remaining_records}, {ids_acc, failed_acc, count_acc} ->
                     case Map.get(result_map, id_nodo) do
                         {:ok, _} ->
-                            # Success: mark all records in this group as sent
+                            # Exito: marca todos los registros en este grupo como enviados
                             {ids_acc ++ all_ids, failed_acc, count_acc + 1}
 
-                        {:error, _} ->
-                            # Failure: try remaining records one by one
+                        {:error, first_failed_id} ->
+                            # Primer registro fallido - intenta los registros restantes
+                            # Rastrea el ID fallido por separado
                             try_remaining_records(
                                 remaining_records,
-                                all_ids,
+                                [first_failed_id],  # IDs que han fallado hasta ahora
                                 bq_table,
                                 data_source,
                                 batch_id,
@@ -191,7 +172,7 @@ defmodule Genserver.Handlers.Bigquery do
                             )
 
                         nil ->
-                            # No result found for this id_nodo
+                            # Sin resultado para este id_nodo
                             {ids_acc, failed_acc, count_acc}
                     end
                 end
@@ -201,28 +182,28 @@ defmodule Genserver.Handlers.Bigquery do
     end
 
     #
-    # Tries to insert remaining records one by one until one succeeds.
-    # If all records fail, adds them to the failed list.
+    # Tries to insert remaining records one by one until one succeeds. Tracks which records failed during retries.
     #
     # ### Parameters:
     #     - remaining_records: List of records to try (already sorted by fecha_creado desc)
-    #     - all_ids: List of all ids in this group
+    #     - tried_failed_ids: List of IDs that have been tried and failed
     #     - bq_table, data_source, batch_id, batch_size, webhook_url: Config params
     #     - {ids_acc, failed_acc, count_acc}: Accumulator for successful/failed ids and count
     #
     # ### Returns:
     #     - {updated_ids_acc, updated_failed_acc, updated_count_acc}
     #
-    defp try_remaining_records([], all_ids, _bq_table, _data_source, _batch_id, _batch_size, _webhook_url, {ids_acc, failed_acc, count_acc}) do
-        # No more records to try - mark all as failed
-        {ids_acc, failed_acc ++ all_ids, count_acc}
+    defp try_remaining_records([], tried_failed_ids, _bq_table, _data_source, _batch_id, _batch_size, _webhook_url, {ids_acc, failed_acc, count_acc}) do
+        # No hay más registros para intentar - todos los registros intentados se marcan como fallidos
+        {ids_acc, failed_acc ++ tried_failed_ids, count_acc}
     end
 
-    defp try_remaining_records([record | rest], all_ids, bq_table, data_source, batch_id, batch_size, webhook_url, {ids_acc, failed_acc, count_acc}) do
-        # Try inserting this single record
+    defp try_remaining_records([record | rest], tried_failed_ids, bq_table, data_source, batch_id, batch_size, webhook_url, {ids_acc, failed_acc, count_acc}) do
+        # Intenta insertar este registro individual
+        current_id = Map.get(record, :id)
         data = [{
             Map.get(record, :id_nodo),
-            Map.get(record, :id),
+            current_id,
             record,
             Sql.insert(bq_table, build_insert_values(record))
         }]
@@ -231,12 +212,24 @@ defmodule Genserver.Handlers.Bigquery do
 
         case results do
             [{:ok, _}] ->
-                # Success: mark all records in this group as sent
-                {ids_acc ++ all_ids, failed_acc, count_acc + 1}
+                # Exito: marca este registro y los registros restantes no intentados como enviados
+                # Marca los registros intentados previamente como fallidos
+                remaining_ids = Enum.map(rest, &Map.get(&1, :id))
+                successful_ids = [current_id | remaining_ids]
+                {ids_acc ++ successful_ids, failed_acc ++ tried_failed_ids, count_acc + 1}
 
             _ ->
-                # Failure: try next record
-                try_remaining_records(rest, all_ids, bq_table, data_source, batch_id, batch_size, webhook_url, {ids_acc, failed_acc, count_acc})
+                # Fallo: agrega el ID actual a la lista de fallidos y trata el siguiente registro
+                try_remaining_records(
+                    rest,
+                    tried_failed_ids ++ [current_id],
+                    bq_table,
+                    data_source,
+                    batch_id,
+                    batch_size,
+                    webhook_url,
+                    {ids_acc, failed_acc, count_acc}
+                )
         end
     end
 
@@ -274,14 +267,12 @@ defmodule Genserver.Handlers.Bigquery do
     def execute_insert_with_retry([], _data_source, _batch_id, _batch_size, _webhook_url), do: []
 
     def execute_insert_with_retry(data, data_source, batch_id, batch_size, webhook_url) do
-        # Chunk data into batches and merge queries
         insert_tuples =
             data
             |> Enum.chunk_every(batch_size)
             |> Enum.map(&group_for_batch_insert/1)
             |> Enum.reject(&(&1 == []))
 
-        # Execute inserts
         results = execute_insert(insert_tuples, data_source)
 
         has_errors? = Enum.any?(results, fn
@@ -291,13 +282,11 @@ defmodule Genserver.Handlers.Bigquery do
 
         case {has_errors?, length(data)} do
             {false, _} ->
-                Logger.info("---> Insert batch successful")
                 results
                 |> Enum.flat_map(fn {:ok, ids} -> Enum.map(ids, &{:ok, &1}) end)
 
             {true, 1} ->
-                IO.puts("---> Single record failed")
-                # Single record failed
+                # Registro individual fallido
                 Enum.flat_map(results, fn
                     {:ok, ids} -> Enum.map(ids, &{:ok, &1})
                     {:error, {id_nodos, ids, records, error}} ->
