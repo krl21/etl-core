@@ -47,7 +47,7 @@ defmodule Genserver.Handlers.Bigquery do
                     grouped_records = group_by_id_nodo(records)
 
                     # Process each group: try inserting most recent first
-                    {successful_ids, uploaded_count} =
+                    {successful_ids, failed_ids, uploaded_count} =
                         process_grouped_records(
                             grouped_records,
                             bq_table,
@@ -60,6 +60,11 @@ defmodule Genserver.Handlers.Bigquery do
                     # Mark all successful records as sent
                     if not Enum.empty?(successful_ids) do
                         Postgres.mark_as_sent_to_bq(conn, pg_table, successful_ids)
+                    end
+
+                    # Mark all failed records as having problems
+                    if not Enum.empty?(failed_ids) do
+                        Postgres.mark_as_with_problems(conn, pg_table, failed_ids)
                     end
 
                     {:ok, uploaded_count}
@@ -101,7 +106,7 @@ defmodule Genserver.Handlers.Bigquery do
     #     - webhook_url: String. Slack webhook URL
     #
     # ### Returns:
-    #     - {list_of_all_ids_to_mark, count_of_uploaded_records}
+    #     - {list_of_successful_ids, list_of_failed_ids, count_of_uploaded_records}
     #
     defp process_grouped_records(grouped_records, bq_table, data_source, batch_id, batch_size, webhook_url) do
         # Extract the most recent record from each group for batch insertion
@@ -141,7 +146,7 @@ defmodule Genserver.Handlers.Bigquery do
     #     - bq_table, data_source, batch_id, batch_size, webhook_url: Config params
     #
     # ### Returns:
-    #     - {list_of_all_ids_to_mark, count_of_uploaded_records}
+    #     - {list_of_successful_ids, list_of_failed_ids, count_of_uploaded_records}
     #
     defp process_insert_results(results, group_info, bq_table, data_source, batch_id, batch_size, webhook_url) do
         # Create a map of id_nodo => result for quick lookup
@@ -162,15 +167,15 @@ defmodule Genserver.Handlers.Bigquery do
             end)
 
         # Process each group
-        {all_successful_ids, uploaded_count} =
+        {all_successful_ids, all_failed_ids, uploaded_count} =
             group_info
             |> Enum.reduce(
-                {[], 0},
-                fn {id_nodo, all_ids, remaining_records}, {ids_acc, count_acc} ->
+                {[], [], 0},
+                fn {id_nodo, all_ids, remaining_records}, {ids_acc, failed_acc, count_acc} ->
                     case Map.get(result_map, id_nodo) do
                         {:ok, _} ->
                             # Success: mark all records in this group as sent
-                            {ids_acc ++ all_ids, count_acc + 1}
+                            {ids_acc ++ all_ids, failed_acc, count_acc + 1}
 
                         {:error, _} ->
                             # Failure: try remaining records one by one
@@ -182,37 +187,38 @@ defmodule Genserver.Handlers.Bigquery do
                                 batch_id,
                                 batch_size,
                                 webhook_url,
-                                {ids_acc, count_acc}
+                                {ids_acc, failed_acc, count_acc}
                             )
 
                         nil ->
                             # No result found for this id_nodo
-                            {ids_acc, count_acc}
+                            {ids_acc, failed_acc, count_acc}
                     end
                 end
             )
 
-        {all_successful_ids, uploaded_count}
+        {all_successful_ids, all_failed_ids, uploaded_count}
     end
 
     #
-    # Tries to insert remaining records one by one until one succeeds
+    # Tries to insert remaining records one by one until one succeeds.
+    # If all records fail, adds them to the failed list.
     #
     # ### Parameters:
     #     - remaining_records: List of records to try (already sorted by fecha_creado desc)
     #     - all_ids: List of all ids in this group
     #     - bq_table, data_source, batch_id, batch_size, webhook_url: Config params
-    #     - {ids_acc, count_acc}: Accumulator for successful ids and count
+    #     - {ids_acc, failed_acc, count_acc}: Accumulator for successful/failed ids and count
     #
     # ### Returns:
-    #     - {updated_ids_acc, updated_count_acc}
+    #     - {updated_ids_acc, updated_failed_acc, updated_count_acc}
     #
-    defp try_remaining_records([], _all_ids, _bq_table, _data_source, _batch_id, _batch_size, _webhook_url, acc) do
-        # No more records to try
-        acc
+    defp try_remaining_records([], all_ids, _bq_table, _data_source, _batch_id, _batch_size, _webhook_url, {ids_acc, failed_acc, count_acc}) do
+        # No more records to try - mark all as failed
+        {ids_acc, failed_acc ++ all_ids, count_acc}
     end
 
-    defp try_remaining_records([record | rest], all_ids, bq_table, data_source, batch_id, batch_size, webhook_url, {ids_acc, count_acc}) do
+    defp try_remaining_records([record | rest], all_ids, bq_table, data_source, batch_id, batch_size, webhook_url, {ids_acc, failed_acc, count_acc}) do
         # Try inserting this single record
         data = [{
             Map.get(record, :id_nodo),
@@ -226,11 +232,11 @@ defmodule Genserver.Handlers.Bigquery do
         case results do
             [{:ok, _}] ->
                 # Success: mark all records in this group as sent
-                {ids_acc ++ all_ids, count_acc + 1}
+                {ids_acc ++ all_ids, failed_acc, count_acc + 1}
 
             _ ->
                 # Failure: try next record
-                try_remaining_records(rest, all_ids, bq_table, data_source, batch_id, batch_size, webhook_url, {ids_acc, count_acc})
+                try_remaining_records(rest, all_ids, bq_table, data_source, batch_id, batch_size, webhook_url, {ids_acc, failed_acc, count_acc})
         end
     end
 

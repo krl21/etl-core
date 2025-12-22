@@ -11,13 +11,23 @@ defmodule Database.Postgres do
     - `tipo` - String (record type/category)
     - `informacion` - JSONB (record data in JSON format)
     - `fecha_creado` - Timestamp (creation date and time)
-    - `en_bq` - Boolean (default: false, indicates if sent to BigQuery)
+    - `estado_analisis` - String (analysis status: "sin_analizar", "analizado_en_bq", "con_problemas")
+
+    ## Analysis Status Values
+
+    - `sin_analizar` - Record has not been analyzed yet (default)
+    - `analizado_en_bq` - Record was analyzed and successfully sent to BigQuery
+    - `con_problemas` - Record was analyzed but has issues preventing upload
 
     ## Connection Modes
 
     - **Simple**: use `hostname` for single server
     - **Dual**: use `write_hostname` + `read_hostname` for read replica setup
     """
+
+    @unanalyzed_state "sin_analizar"
+    @state_analyzed_in_bq "analizado_en_bq"
+    @state_with_problems "con_problemas"
 
     require Logger
     alias Database.Helpers
@@ -216,14 +226,8 @@ defmodule Database.Postgres do
             tipo VARCHAR(100),
             informacion JSONB NOT NULL,
             fecha_creado TIMESTAMP NOT NULL,
-            en_bq BOOLEAN DEFAULT FALSE
+            estado_analisis VARCHAR(20) DEFAULT 'sin_analizar'
         );
-        """
-
-        index_query = """
-        CREATE INDEX IF NOT EXISTS idx_#{sanitized_name}_en_bq
-        ON #{sanitized_name} (en_bq)
-        WHERE en_bq = FALSE;
         """
 
         tipo_index_query = """
@@ -231,9 +235,15 @@ defmodule Database.Postgres do
         ON #{sanitized_name} (tipo);
         """
 
+        estado_index_query = """
+        CREATE INDEX IF NOT EXISTS idx_#{sanitized_name}_estado_analisis
+        ON #{sanitized_name} (estado_analisis)
+        WHERE estado_analisis != '#{@state_analyzed_in_bq}';
+        """
+
         with {:ok, _} <- Postgrex.query(write_conn, query, []),
-            {:ok, _} <- Postgrex.query(write_conn, index_query, []),
             {:ok, _} <- Postgrex.query(write_conn, tipo_index_query, []),
+            {:ok, _} <- Postgrex.query(write_conn, estado_index_query, []),
             :ok <- add_column_comments(write_conn, sanitized_name, column_comments) do
 
             Logger.info("Table #{table_name} created/verified successfully")
@@ -245,6 +255,18 @@ defmodule Database.Postgres do
         end
     end
 
+    #
+    # Adds descriptive comments to each column in the table.
+    #
+    # ### Parameters
+    #     - conn: Active database connection (pid)
+    #     - table_name: String. Sanitized table name
+    #     - comments: Map. Column names as keys, descriptions as values
+    #
+    # ### Returns
+    #     - :ok - All comments added successfully
+    #     - {:error, reason} - First error encountered
+    #
     defp add_column_comments(conn, table_name, comments) when is_map(comments) do
         results =
             comments
@@ -341,16 +363,16 @@ defmodule Database.Postgres do
                     tipo = Map.get(record, :tipo)
                     informacion = Helpers.to_json(Map.fetch!(record, :informacion))
                     fecha_creado = DateTime.utc_now()
-                    en_bq = false
+                    estado_analisis = @unanalyzed_state
 
                     value_sql = "($#{idx}, $#{idx + 1}, $#{idx + 2}::jsonb, $#{idx + 3}, $#{idx + 4})"
                     new_sql = if sql == "", do: value_sql, else: "#{sql}, #{value_sql}"
 
-                    {new_sql, params ++ [id_nodo, tipo, informacion, fecha_creado, en_bq], idx + 5}
+                    {new_sql, params ++ [id_nodo, tipo, informacion, fecha_creado, estado_analisis], idx + 5}
                 end)
 
             query = """
-            INSERT INTO #{sanitized_name} (id_nodo, tipo, informacion, fecha_creado, en_bq)
+            INSERT INTO #{sanitized_name} (id_nodo, tipo, informacion, fecha_creado, estado_analisis)
             VALUES #{values_sql};
             """
 
@@ -372,7 +394,7 @@ defmodule Database.Postgres do
     ############
 
     @doc """
-    Gets all records where `en_bq == false`.
+    Gets all records pending to be sent to BigQuery (estado_analisis = "sin_analizar").
 
     ### Parameters
         - conn (pid | Map) - Active connection
@@ -392,17 +414,17 @@ defmodule Database.Postgres do
             |> case do
                 nil ->
                     {"""
-                    SELECT id, id_nodo, tipo, informacion, fecha_creado, en_bq
+                    SELECT id, id_nodo, tipo, informacion, fecha_creado, estado_analisis
                     FROM #{sanitized_name}
-                    WHERE NOT en_bq
+                    WHERE estado_analisis = '#{@unanalyzed_state}'
                     ORDER BY id_nodo, fecha_creado DESC;
                     """, []}
 
                 _ ->
                     {"""
-                    SELECT id, id_nodo, tipo, informacion, fecha_creado, en_bq
+                    SELECT id, id_nodo, tipo, informacion, fecha_creado, estado_analisis
                     FROM #{sanitized_name}
-                    WHERE tipo = $1 AND NOT en_bq
+                    WHERE tipo = $1 AND estado_analisis = '#{@unanalyzed_state}'
                     ORDER BY id_nodo, fecha_creado DESC;
                     """, [register_type]}
             end
@@ -414,6 +436,51 @@ defmodule Database.Postgres do
 
             {:error, reason} = error ->
                 Logger.error("Error getting pending records from #{table_name}: #{inspect(reason)}")
+                error
+        end
+    end
+
+    @doc """
+    Gets all records from the table.
+
+    ### Parameters
+        - conn (pid | Map) - Active connection
+        - table_name (String) - Table name
+        - limit (Integer | nil) - Maximum number of records to return. If nil, returns all records.
+
+    ### Returns
+        - {:ok, records} - List of maps with records
+        - {:error, reason} - Query error
+    """
+    def get_all(conn, table_name, limit \\ nil) do
+        read_conn = get_read_conn(conn)
+        sanitized_name = Helpers.sanitize_identifier(table_name)
+
+        query =
+            case limit do
+                nil ->
+                    """
+                    SELECT id, id_nodo, tipo, informacion, fecha_creado, estado_analisis
+                    FROM #{sanitized_name}
+                    ORDER BY id_nodo, fecha_creado DESC;
+                    """
+
+                _ ->
+                    """
+                    SELECT id, id_nodo, tipo, informacion, fecha_creado, estado_analisis
+                    FROM #{sanitized_name}
+                    ORDER BY id_nodo, fecha_creado DESC
+                    LIMIT #{limit};
+                    """
+            end
+
+        Postgrex.query(read_conn, query, [])
+        |> case do
+            {:ok, result} ->
+                {:ok, Helpers.parse_query_result(result)}
+
+            {:error, reason} = error ->
+                Logger.error("Error getting records from #{table_name}: #{inspect(reason)}")
                 error
         end
     end
@@ -461,7 +528,7 @@ defmodule Database.Postgres do
     end
 
     @doc """
-    Updates the `en_bq` field to `true` for the specified records.
+    Marks records as successfully sent to BigQuery (estado_analisis = "analizado_en_bq").
 
     ### Parameters
         - conn (pid | Map) - Active connection
@@ -482,7 +549,7 @@ defmodule Database.Postgres do
 
             query = """
             UPDATE #{sanitized_name}
-            SET en_bq = TRUE
+            SET estado_analisis = '#{@state_analyzed_in_bq}'
             WHERE id IN (#{placeholders});
             """
 
@@ -492,9 +559,89 @@ defmodule Database.Postgres do
                     {:ok, count}
 
                 {:error, reason} = error ->
-                    Logger.error("Error updating en_bq in #{table_name}: #{inspect(reason)}")
+                    Logger.error("Error updating estado_analisis in #{table_name}: #{inspect(reason)}")
                     error
             end
+        end
+    end
+
+    @doc """
+    Marks records as having problems (estado_analisis = "con_problemas").
+
+    ### Parameters
+        - conn (pid | Map) - Active connection
+        - table_name (String) - Table name
+        - ids (List) - List of record IDs to mark as problematic
+
+    ### Returns
+        - {:ok, count} - Number of updated records
+        - {:error, reason} - Update error
+    """
+    def mark_as_with_problems(conn, table_name, ids) when is_list(ids) do
+        if Enum.empty?(ids) do
+            {:ok, 0}
+        else
+            write_conn = get_write_conn(conn)
+            sanitized_name = Helpers.sanitize_identifier(table_name)
+            placeholders = Helpers.build_placeholders(length(ids))
+
+            query = """
+            UPDATE #{sanitized_name}
+            SET estado_analisis = '#{@state_with_problems}'
+            WHERE id IN (#{placeholders});
+            """
+
+            Postgrex.query(write_conn, query, ids)
+            |> case do
+                {:ok, %{num_rows: count}} ->
+                    Logger.warning("Marked #{count} records as problematic in #{table_name}")
+                    {:ok, count}
+
+                {:error, reason} = error ->
+                    Logger.error("Error marking records as problematic in #{table_name}: #{inspect(reason)}")
+                    error
+            end
+        end
+    end
+
+    @doc """
+    Deletes records that have been analyzed and sent to BigQuery.
+
+    ### Parameters
+        - conn (pid | Map) - Active connection
+        - table_name (String) - Table name
+        - include_with_problems (Boolean) - If true, also deletes records with "con_problemas" status. Defaults to true.
+
+    ### Returns
+        - {:ok, count} - Number of deleted records
+        - {:error, reason} - Delete error
+    """
+    def delete_analyzed_records(conn, table_name, include_with_problems \\ true) do
+        write_conn = get_write_conn(conn)
+        sanitized_name = Helpers.sanitize_identifier(table_name)
+
+        query =
+            if include_with_problems do
+                """
+                DELETE FROM #{sanitized_name}
+                WHERE estado_analisis IN ('#{@state_analyzed_in_bq}', '#{@state_with_problems}');
+                """
+            else
+                """
+                DELETE FROM #{sanitized_name}
+                WHERE estado_analisis = '#{@state_analyzed_in_bq}';
+                """
+            end
+
+        Postgrex.query(write_conn, query, [])
+        |> case do
+            {:ok, %{num_rows: count}} ->
+                Logger.info("Deleted #{count} analyzed records from #{table_name}")
+                {:ok, count}
+
+            {:error, reason} = error ->
+                Logger.error("Error deleting analyzed records from #{table_name}: #{inspect(reason)}")
+                error
         end
     end
 
@@ -541,4 +688,7 @@ defmodule Database.Postgres do
             alive: Process.alive?(conn)
         }
     end
+
+
+
 end

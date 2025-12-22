@@ -133,12 +133,12 @@ defmodule Database.Helpers do
     """
     def default_column_comments do
         %{
-            id: "Unique autoincremental identifier",
-            id_nodo: "Node/record UUID",
-            tipo: "Record type or category, or BigQuery target table name",
-            informacion: "Transformed record data in JSON format",
-            fecha_creado: "Creation timestamp",
-            en_bq: "Indicates if the record was sent to BigQuery (false = pending)"
+            id: "Identificador único autoincremental",
+            id_nodo: "UUID del nodo o registro",
+            tipo: "Tipo o categoría del registro, o nombre de la tabla de destino en BigQuery",
+            informacion: "Datos del registro transformados en formato JSON",
+            fecha_creado: "Marca de tiempo de creación",
+            estado_analisis: "Estado del análisis: sin_analizar (pendiente), analizado_en_bq (enviado a BigQuery), con_problemas (presenta errores)"
         }
     end
 
