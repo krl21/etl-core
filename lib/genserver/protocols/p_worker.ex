@@ -8,17 +8,12 @@ defprotocol Genserver.Protocols.PWorker do
     Sends to process the batch of messages, according to the business from which it comes
 
     ### Parameters:
-
         - batch: List of map. Payloads.
-
         - batch_id: String. Batch identifier.
-
-        - conn_odbc_pid: Process. Process connecting Elixir and ODBC.
-
         - business: Atom. Business type.
 
     """
-    def perform(batch, batch_id, pid, business)
+    def perform(batch, batch_id, business)
 
 
 end
