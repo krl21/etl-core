@@ -8,6 +8,7 @@ defmodule Genserver.BigqueryUploader do
     require Logger
     alias Genserver.Monitor
     alias Genserver.Handlers.Bigquery
+    alias Database.Postgres
     import Time.Timem, only: [notification_frequency: 1]
     import Stuff, only: [random_string_generate: 1]
 
@@ -19,7 +20,7 @@ defmodule Genserver.BigqueryUploader do
         - args (map): Configuration map with the following keys:
             - :business (atom): Business/context identifier.
             - :data_source (list): ODBC connection configuration for BigQuery.
-            - :pg_config (map): PostgreSQL connection configuration.
+            - :pg_config (map): PostgreSQL connection configuration (used to establish persistent connection).
             - :info (list): List of maps with table configuration:
                 - :bq_table (string): Full BigQuery table name.
                 - :tipo (string): Type field value to filter records.
@@ -60,12 +61,15 @@ defmodule Genserver.BigqueryUploader do
 
         Logger.info("#{to_string(__MODULE__)}. Initializing. Business: ---#{to_string(business)}---")
 
+        {:ok, pg_conn} = Postgres.connect(pg_config)
+        Logger.info("#{to_string(__MODULE__)}. PostgreSQL connection established for business: #{to_string(business)}")
+
         milliseconds_timeout = notification_frequency(periodicity)
 
         state = %{
             business: business,
             data_source: data_source,
-            pg_config: pg_config,
+            pg_conn: pg_conn,
             info: info,
             milliseconds_timeout: milliseconds_timeout,
             batch_size: batch_size,
@@ -88,11 +92,10 @@ defmodule Genserver.BigqueryUploader do
         - {:noreply, state}
     """
     def handle_info(:update, state) do
-        IO.puts("---> ...")
         %{
             business: business,
             data_source: data_source,
-            pg_config: pg_config,
+            pg_conn: pg_conn,
             info: info,
             milliseconds_timeout: milliseconds_timeout,
             batch_size: batch_size,
@@ -106,7 +109,7 @@ defmodule Genserver.BigqueryUploader do
             tipo = Map.fetch!(table_config, :tipo)
             pg_table = Map.fetch!(table_config, :pg_table)
 
-            Bigquery.run(business, data_source, pg_config, pg_table, bq_table, tipo, batch_id, batch_size, webhook_url)
+            Bigquery.run(business, data_source, pg_conn, pg_table, bq_table, tipo, batch_id, batch_size, webhook_url)
         end)
 
         variable_wait(:later, milliseconds_timeout)

@@ -18,7 +18,7 @@ defmodule Genserver.Handlers.Bigquery do
     ### Parameters:
         - business: Atom. Business type.
         - data_source: List. ODBC connection configuration for BigQuery.
-        - pg_config: Map. PostgreSQL connection configuration.
+        - pg_conn: pid | Map. Active PostgreSQL connection (persistent, not closed here).
         - pg_table: String. PostgreSQL table name for pending records.
         - bq_table: String. BigQuery table name.
         - tipo: String. Type field value to filter records.
@@ -30,48 +30,42 @@ defmodule Genserver.Handlers.Bigquery do
         - {:ok, count} - Number of records uploaded
         - {:error, reason} - Upload error
     """
-    def run(_business, data_source, pg_config, pg_table, bq_table, tipo, batch_id, batch_size, webhook_url) do
-        {:ok, conn} = Postgres.connect(pg_config)
+    def run(_business, data_source, pg_conn, pg_table, bq_table, tipo, batch_id, batch_size, webhook_url) do
+        Postgres.get_pending_bq(pg_conn, pg_table, tipo)
+        |> case do
+            {:ok, records} when records == [] ->
+                {:ok, 0}
 
-        result =
-            Postgres.get_pending_bq(conn, pg_table, tipo)
-            |> case do
-                {:ok, records} when records == [] ->
-                    {:ok, 0}
+            {:ok, records} ->
 
-                {:ok, records} ->
+                # Procesa cada grupo, insertando en Bigquery el registro más actualizado posible
+                {successful_ids, failed_ids, uploaded_count} =
+                    records
+                    |> Enum.group_by(&Map.get(&1, :id_nodo))
+                    |> process_grouped_records(
+                        bq_table,
+                        data_source,
+                        batch_id,
+                        batch_size,
+                        webhook_url
+                    )
 
-                    # Procesa cada grupo, insertando en Bigquery el registro más actualizado posible
-                    {successful_ids, failed_ids, uploaded_count} =
-                        records
-                        |> Enum.group_by(&Map.get(&1, :id_nodo))
-                        |> process_grouped_records(
-                            bq_table,
-                            data_source,
-                            batch_id,
-                            batch_size,
-                            webhook_url
-                        )
+                # Marca como enviado en Bigquery los registros exitosos
+                if not Enum.empty?(successful_ids) do
+                    Postgres.mark_as_sent_to_bq(pg_conn, pg_table, successful_ids)
+                end
 
-                    # Marca como enviado en Bigquery los registros exitosos
-                    if not Enum.empty?(successful_ids) do
-                        Postgres.mark_as_sent_to_bq(conn, pg_table, successful_ids)
-                    end
+                # Marca como con problemas los registros fallidos que se analizaron antes de los exitosos
+                if not Enum.empty?(failed_ids) do
+                    Postgres.mark_as_with_problems(pg_conn, pg_table, failed_ids)
+                end
 
-                    # Marca como con problemas los registros fallidos que se analizaron antes de los exitosos
-                    if not Enum.empty?(failed_ids) do
-                        Postgres.mark_as_with_problems(conn, pg_table, failed_ids)
-                    end
+                {:ok, uploaded_count}
 
-                    {:ok, uploaded_count}
-
-                {:error, reason} ->
-                    Logger.error("Error getting pending records from #{pg_table}: #{inspect(reason)}")
-                    {:error, reason}
-            end
-
-        Postgres.disconnect(conn)
-        result
+            {:error, reason} ->
+                Logger.error("Error getting pending records from #{pg_table}: #{inspect(reason)}")
+                {:error, reason}
+        end
     end
 
     #
