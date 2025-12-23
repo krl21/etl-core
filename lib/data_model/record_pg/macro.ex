@@ -58,6 +58,8 @@ defmodule DataModel.RecordPg.Macro do
             - unique_id (InfoAttr) - Attribute that uniquely identifies the record
             - timestamp (InfoAttr, optional) - Timestamp attribute
             - value_type (String, optional) - Value for the 'tipo' field in records. Defaults to table_name if not provided.
+            - slack_webhook_url (String, optional) - Slack webhook URL for error notifications
+            - slack_env (String, optional) - Environment name for Slack notifications. Defaults to "unknown"
     """
     defmacro entity_config(opts) do
         quote do
@@ -108,6 +110,18 @@ defmodule DataModel.RecordPg.Macro do
             Defaults to table_name if not explicitly configured.
             """
             def value_type(), do: @entity_config[:value_type] || @entity_config[:table_name]
+
+            @doc """
+            Returns the Slack webhook URL for error notifications.
+            Returns nil if not configured.
+            """
+            def slack_webhook_url(), do: @entity_config[:slack_webhook_url]
+
+            @doc """
+            Returns the environment name for Slack notifications.
+            Defaults to "unknown" if not configured.
+            """
+            def slack_env(), do: @entity_config[:slack_env] || "unknown"
 
             @doc """
             Returns the batch size for chunking insert operations.
@@ -382,6 +396,7 @@ defmodule DataModel.RecordPg.Macro do
 
             @doc """
             Handles errors during record processing.
+            Logs the error and sends a Slack notification if webhook is configured.
             Override to implement custom error handling.
             """
             def handle_processing_error(batch_id, unique_id, error, context) do
@@ -397,6 +412,19 @@ defmodule DataModel.RecordPg.Macro do
                 """
 
                 Logger.error(msg)
+
+                # Send to Slack if webhook is configured
+                case slack_webhook_url() do
+                    nil -> :ok
+                    url when is_binary(url) and url != "" ->
+                        Notification.Notify.notify_slack(
+                            url,
+                            [{"Content-Type", "application/json"}],
+                            slack_env(),
+                            msg
+                        )
+                    _ -> :ok
+                end
             end
             defoverridable handle_processing_error: 4
 

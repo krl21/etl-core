@@ -74,6 +74,7 @@ defmodule DataModel.RecordPg.Base do
             alias Struct.InfoAttr
             alias Common.Payload
             alias Database.Postgres
+            alias Notification.Notify
             alias Timex
 
             import DataModel.RecordPg.Macro
