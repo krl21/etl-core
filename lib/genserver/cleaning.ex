@@ -6,7 +6,7 @@ defmodule Genserver.Cleaning do
 
     use GenServer
     require Logger
-    import Connection.Odbc, only: [connect: 1]
+    import Connection.Odbc, only: [connect: 1, disconnect: 1]
     import Genserver.Protocols.PAutomaticClean
     alias Genserver.Monitor
 
@@ -20,21 +20,24 @@ defmodule Genserver.Cleaning do
 
         Logger.info("#{to_string(__MODULE__)}. Initializing. Business: ---#{to_string(business)}---")
 
-        Logger.info("#{to_string(__MODULE__)}. Created the process to communicate with ODBC-BigQuery")
-        pid_odbc = data_source |> connect()
-
         variable_wait(:start, milliseconds_timeout)
 
-        {:ok, {business, pid_odbc, milliseconds_timeout}}
+        {:ok, {business, data_source, milliseconds_timeout}}
     end
 
-    def handle_info(:update, {business, pid_odbc, milliseconds_timeout}) do
+    def handle_info(:update, {business, data_source, milliseconds_timeout}) do
         Logger.debug("#{to_string(__MODULE__)}. Applying duplicate/stale row cleanup in ---#{to_string(business)}---")
+
+        Logger.debug("#{to_string(__MODULE__)}. Creating ODBC connection for cleanup")
+        pid_odbc = data_source |> connect()
 
         run(business, pid_odbc, {})
 
+        Logger.debug("#{to_string(__MODULE__)}. Closing ODBC connection after cleanup")
+        disconnect(pid_odbc)
+
         variable_wait(:later, milliseconds_timeout)
-        {:noreply, {business, pid_odbc, milliseconds_timeout}}
+        {:noreply, {business, data_source, milliseconds_timeout}}
     end
 
     #
