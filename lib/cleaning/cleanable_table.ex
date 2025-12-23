@@ -66,12 +66,7 @@ defmodule Cleaning.CleanableTable do
     ## Optional Keys
         - `:partition_field` - Atom for partition field (if table is partitioned)
     """
-    @callback bigquery_config() :: %{
-        table: String.t(),
-        id_fields: [atom()],
-        timestamp_field: atom(),
-        optional(:partition_field) => atom()
-    }
+    @callback bigquery_config() :: map()
 
     @doc """
     Returns the PostgreSQL configuration for this cleanable table.
@@ -83,11 +78,7 @@ defmodule Cleaning.CleanableTable do
         - `:id_fields` - List of atoms for ID fields (defaults to bigquery id_fields)
         - `:timestamp_field` - Atom for timestamp field (defaults to bigquery timestamp_field)
     """
-    @callback postgres_config() :: %{
-        table: String.t(),
-        optional(:id_fields) => [atom()],
-        optional(:timestamp_field) => atom()
-    }
+    @callback postgres_config() :: map()
 
     @doc """
     Returns the business key that identifies this entity type.
