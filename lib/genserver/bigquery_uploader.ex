@@ -102,6 +102,8 @@ defmodule Genserver.BigqueryUploader do
             webhook_url: webhook_url
         } = state
 
+        Logger.info("#{to_string(__MODULE__)}. Starting BigQuery upload cycle for business: #{to_string(business)}")
+
         Enum.each(info, fn table_config ->
             batch_id = random_string_generate(15)
 
@@ -111,6 +113,8 @@ defmodule Genserver.BigqueryUploader do
 
             Bigquery.run(business, data_source, pg_conn, pg_table, bq_table, tipo, batch_id, batch_size, webhook_url)
         end)
+
+        Logger.info("#{to_string(__MODULE__)}. Finished BigQuery upload cycle for business: #{to_string(business)}")
 
         variable_wait(:later, milliseconds_timeout)
         {:noreply, state}
