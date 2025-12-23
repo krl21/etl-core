@@ -1,7 +1,7 @@
 
 defmodule Genserver.Cleaning do
     @moduledoc """
-    Module/genserver oriented to delete the least updated rows in Bigquery. Uses the `timestamp` field to determine freshness of records.
+    Module/genserver oriented to delete the least updated rows in Bigquery and analyzed records in PostgreSQL. Uses the `timestamp` field to determine freshness of records.
 
     ## Modes of Operation
 
@@ -9,18 +9,23 @@ defmodule Genserver.Cleaning do
 
     1. **Single business mode**: Pass a specific business key to clean only that table
        ```elixir
-       {Genserver.Cleaning, {:record, data_source, 60_000}}
+       {Genserver.Cleaning, %{business: :record, bq_config: bq_config, pg_config: pg_config, periodicity: 60_000}}
        ```
 
     2. **All tables mode**: Pass `:all` to clean all registered CleanableTable modules
        ```elixir
-       {Genserver.Cleaning, {:all, data_source, 60_000}}
+       {Genserver.Cleaning, %{business: :all, bq_config: bq_config, pg_config: pg_config, periodicity: 60_000}}
        ```
 
     ## Configuration
 
     Tables must be registered via the CleanableTable behaviour to be cleaned.
     See `Cleaning.CleanableTable` for more information.
+
+    ## Connection Management
+
+    Connections to BigQuery (ODBC) and PostgreSQL are opened once at startup and reused
+    for all cleaning cycles. They are properly closed when the GenServer terminates.
     """
 
     use GenServer
@@ -28,53 +33,78 @@ defmodule Genserver.Cleaning do
     import Connection.Odbc, only: [connect: 1, disconnect: 1]
     alias Genserver.Monitor
     alias Cleaning.Cleaner
+    alias Database.Postgres
 
 
     @doc """
     Starts the cleaning GenServer.
 
     ### Parameters
-        - info: Tuple. {business, data_source, milliseconds_timeout}
-            - business: Atom. :all to clean all tables, or specific business key (e.g., :record)
-            - data_source: List. ODBC connection configuration for BigQuery
-            - milliseconds_timeout: Integer. Interval between cleaning cycles in milliseconds
+        - config: Map with:
+            - :business - Atom. :all to clean all tables, or specific business key (e.g., :record)
+            - :bq_config - List. ODBC connection configuration for BigQuery
+            - :pg_config - Map. PostgreSQL connection configuration (optional, if nil skips PG cleaning)
+            - :periodicity - Integer. Interval between cleaning cycles in milliseconds
     """
-    def start_link({business, _data_source, _milliseconds_timeout} = info) do
-        GenServer.start_link(__MODULE__, info, name: :"#{__MODULE__}.#{business}")
+    def start_link(%{business: business} = config) do
+        GenServer.start_link(__MODULE__, config, name: :"#{__MODULE__}.#{business}")
+    end
+
+    # Legacy support for tuple format
+    def start_link({business, bq_config, periodicity}) do
+        start_link(%{
+            business: business,
+            bq_config: bq_config,
+            pg_config: nil,
+            periodicity: periodicity
+        })
     end
 
 
     @doc """
     Initializes the GenServer state.
 
-    Registers with Monitor and schedules first cleaning cycle.
+    Opens connections to BigQuery and PostgreSQL (if configured), registers with Monitor
+    and schedules first cleaning cycle.
     """
     @impl true
-    def init({business, data_source, milliseconds_timeout}) do
+    def init(%{business: business, bq_config: bq_config, pg_config: pg_config, periodicity: periodicity}) do
         Monitor.register(self(), to_string(__MODULE__) <> "." <> to_string(business))
 
         Logger.info("#{to_string(__MODULE__)}. Initializing. Business: ---#{to_string(business)}---")
 
-        variable_wait(:start, milliseconds_timeout)
+        # Open BigQuery connection
+        Logger.debug("#{to_string(__MODULE__)}. Opening BigQuery ODBC connection")
+        pid_odbc = connect(bq_config)
 
-        {:ok, {business, data_source, milliseconds_timeout}}
+        # Open PostgreSQL connection if configured
+        pid_pg = open_postgres_connection(pg_config)
+
+        state = %{
+            business: business,
+            bq_config: bq_config,
+            pg_config: pg_config,
+            periodicity: periodicity,
+            pid_odbc: pid_odbc,
+            pid_pg: pid_pg
+        }
+
+        variable_wait(:start, periodicity)
+
+        {:ok, state}
     end
 
 
     @doc """
     Handles the periodic :update message to perform cleaning.
 
-    Creates an ODBC connection, executes cleaning using `Cleaning.Cleaner`,
-    then closes the connection. Uses configurations defined via `Cleaning.CleanableTable`.
+    Uses existing connections to clean both BigQuery and PostgreSQL.
     """
     @impl true
-    def handle_info(:update, {business, data_source, milliseconds_timeout}) do
+    def handle_info(:update, %{business: business, pid_odbc: pid_odbc, pid_pg: pid_pg, periodicity: periodicity} = state) do
         Logger.debug("#{to_string(__MODULE__)}. Applying duplicate/stale row cleanup in ---#{to_string(business)}---")
 
-        Logger.debug("#{to_string(__MODULE__)}. Creating ODBC connection for cleanup")
-        pid_odbc = data_source |> connect()
-
-        # Use the new Cleaner module with CleanableTable configurations
+        # Clean BigQuery
         case business do
             :all ->
                 Cleaner.run_all(pid_odbc)
@@ -83,30 +113,91 @@ defmodule Genserver.Cleaning do
                 Cleaner.run(business_key, pid_odbc)
         end
 
-        Logger.debug("#{to_string(__MODULE__)}. Closing ODBC connection after cleanup")
-        disconnect(pid_odbc)
+        # Clean PostgreSQL (if connection exists)
+        if pid_pg do
+            case business do
+                :all ->
+                    Cleaner.run_all_postgres(pid_pg)
 
-        variable_wait(:later, milliseconds_timeout)
-        {:noreply, {business, data_source, milliseconds_timeout}}
+                business_key ->
+                    Cleaner.run_postgres(business_key, pid_pg)
+            end
+        end
+
+        variable_wait(:later, periodicity)
+        {:noreply, state}
     end
 
+
+    @doc """
+    Handles GenServer termination by closing connections.
+    """
+    @impl true
+    def terminate(reason, %{pid_odbc: pid_odbc, pid_pg: pid_pg, business: business}) do
+        Logger.info("#{to_string(__MODULE__)}. Terminating (#{inspect(reason)}). Business: ---#{to_string(business)}---")
+
+        # Close BigQuery connection
+        if pid_odbc do
+            Logger.debug("#{to_string(__MODULE__)}. Closing BigQuery ODBC connection")
+            disconnect(pid_odbc)
+        end
+
+        # Close PostgreSQL connection
+        if pid_pg do
+            Logger.debug("#{to_string(__MODULE__)}. Closing PostgreSQL connection")
+            Postgres.disconnect(pid_pg)
+        end
+
+        :ok
+    end
+
+
+    # ============================================
+    # PRIVATE FUNCTIONS
+    # ============================================
+
+    #
+    # Opens a PostgreSQL connection if configuration is provided.
+    #
+    # ### Parameters
+    #     - pg_config: Map | nil. PostgreSQL connection configuration
+    #
+    # ### Returns
+    #     - pid | Map | nil
+    #
+    defp open_postgres_connection(nil) do
+        Logger.debug("#{to_string(__MODULE__)}. No PostgreSQL configuration provided, skipping PG cleaning")
+        nil
+    end
+
+    defp open_postgres_connection(pg_config) do
+        Logger.debug("#{to_string(__MODULE__)}. Opening PostgreSQL connection")
+
+        case Postgres.connect(pg_config) do
+            {:ok, conn} ->
+                Logger.info("#{to_string(__MODULE__)}. PostgreSQL connection established")
+                conn
+
+            {:error, reason} ->
+                Logger.error("#{to_string(__MODULE__)}. Failed to connect to PostgreSQL: #{inspect(reason)}")
+                nil
+        end
+    end
 
     #
     # Adjusts the time for the activation of the genserver.
     #
     # ### Parameters
-    #
     #     - state: Atom. Genserver status. Possible values: :start and :later
+    #     - periodicity: Integer. Total milliseconds to reactivate the genserver.
     #
-    #     - milliseconds_timeout: Integer. Total milliseconds to reactivate the genserver.
-    #
-    defp variable_wait(:start, _milliseconds_timeout) do
+    defp variable_wait(:start, _periodicity) do
         10 * 1_000
         |> :erlang.send_after(self(), :update)
     end
 
-    defp variable_wait(:later, milliseconds_timeout) do
-        milliseconds_timeout
+    defp variable_wait(:later, periodicity) do
+        periodicity
         |> :erlang.send_after(self(), :update)
     end
 
