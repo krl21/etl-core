@@ -57,6 +57,7 @@ defmodule DataModel.RecordPg.Macro do
             - batch_size_key (Atom) - Key to obtain batch size from config
             - unique_id (InfoAttr) - Attribute that uniquely identifies the record
             - timestamp (InfoAttr, optional) - Timestamp attribute
+            - value_type (String, optional) - Value for the 'tipo' field in records. Defaults to table_name if not provided.
     """
     defmacro entity_config(opts) do
         quote do
@@ -101,6 +102,12 @@ defmodule DataModel.RecordPg.Macro do
             Returns the PostgreSQL table name.
             """
             def table_name(), do: @entity_config[:table_name]
+
+            @doc """
+            Returns the value for the 'tipo' field in records.
+            Defaults to table_name if not explicitly configured.
+            """
+            def value_type(), do: @entity_config[:value_type] || @entity_config[:table_name]
 
             @doc """
             Returns the batch size for chunking insert operations.
@@ -272,7 +279,7 @@ defmodule DataModel.RecordPg.Macro do
 
                     record = %{
                         id_nodo: unique_id,
-                        tipo: table_name(),
+                        tipo: value_type(),
                         informacion: informacion_map
                     }
 
