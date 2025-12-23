@@ -222,7 +222,7 @@ defmodule Database.Postgres do
         query = """
         CREATE TABLE IF NOT EXISTS #{sanitized_name} (
             id SERIAL PRIMARY KEY,
-            id_nodo VARCHAR(36) NOT NULL,
+            id_nodo VARCHAR(100) NOT NULL,
             tipo VARCHAR(100),
             informacion JSONB NOT NULL,
             fecha_creado TIMESTAMP NOT NULL,
