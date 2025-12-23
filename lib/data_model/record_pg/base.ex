@@ -73,7 +73,7 @@ defmodule DataModel.RecordPg.Base do
 
             alias Struct.InfoAttr
             alias Common.Payload
-            alias EtlCore.Database.Postgres
+            alias Database.Postgres
             alias Timex
 
             import DataModel.RecordPg.Macro
