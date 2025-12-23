@@ -8,17 +8,24 @@ defmodule Cleaning.Cleaner do
     ## Usage
 
     ```elixir
-    # Clean a specific business type
+    # Clean a specific business type in BigQuery
     Cleaning.Cleaner.run(:record, pid_odbc)
 
-    # Clean all registered tables
+    # Clean all registered tables in BigQuery
     Cleaning.Cleaner.run_all(pid_odbc)
+
+    # Clean a specific business type in PostgreSQL
+    Cleaning.Cleaner.run_postgres(:record, pid_pg)
+
+    # Clean all registered tables in PostgreSQL
+    Cleaning.Cleaner.run_all_postgres(pid_pg)
     ```
     """
 
     require Logger
     import Connection.Odbc, only: [select: 2, delete: 2]
     alias Statement.Sql
+    alias Database.Postgres
     import Stuff, only: [convert_seconds_to_humans: 1]
 
 
@@ -110,7 +117,102 @@ defmodule Cleaning.Cleaner do
 
 
     # ============================================
-    # PRIVATE FUNCTIONS
+    # POSTGRESQL CLEANING FUNCTIONS
+    # ============================================
+
+    @doc """
+    Runs PostgreSQL cleaning for a specific business type. Deletes records with estado_analisis = "analizado_en_bq" from the configured table.
+
+    ### Parameters
+        - business_key: Atom. The business key (e.g., :record, :task)
+        - pid_pg: pid | Map. PostgreSQL connection
+
+    ### Returns
+        - {:ok, count} on success with number of rows removed
+        - {:error, :not_registered} if module not found
+        - {:error, reason} if cleaning fails
+    """
+    def run_postgres(business_key, pid_pg) when is_atom(business_key) do
+        case Cleaning.CleanableTableRegistry.get(business_key) do
+            nil ->
+                Logger.warning("CleanableTable registered for business_key: #{inspect(business_key)}")
+                {:error, :not_registered}
+
+            module ->
+                run_postgres_for_module(module, pid_pg)
+        end
+    end
+
+    @doc """
+    Runs PostgreSQL cleaning for all enabled CleanableTable modules.
+
+    ### Parameters
+        - pid_pg: pid | Map. PostgreSQL connection
+
+    ### Returns
+        - List of tuples {business_key, {:ok, count} | {:error, reason}}
+    """
+    def run_all_postgres(pid_pg) do
+        start = Timex.now()
+        total_deleted = :counters.new(1, [:atomics])
+
+        results =
+            Cleaning.CleanableTableRegistry.enabled()
+            |> Enum.map(fn module ->
+                result = run_postgres_for_module(module, pid_pg)
+
+                case result do
+                    {:ok, count} -> :counters.add(total_deleted, 1, count)
+                    _ -> :ok
+                end
+
+                {module.business_key(), result}
+            end)
+
+        total_time = Timex.diff(Timex.now(), start, :second)
+        total_count = :counters.get(total_deleted, 1)
+
+        Logger.info("PostgreSQL cleanup completed. Total records deleted: #{total_count}. Duration: #{convert_seconds_to_humans(total_time)}")
+
+        results
+    end
+
+    @doc """
+    Runs PostgreSQL cleaning for a specific module implementing CleanableTable.
+
+    ### Parameters
+        - module: Module. A module implementing CleanableTable behaviour
+        - pid_pg: pid | Map. PostgreSQL connection
+
+    ### Returns
+        - {:ok, count} with number of rows removed
+        - {:error, reason} if cleaning fails
+    """
+    def run_postgres_for_module(module, pid_pg) do
+        pg_config = module.postgres_config()
+        business_key = module.business_key()
+        table_name = pg_config.table
+
+        Logger.debug("Starting PostgreSQL cleanup for #{inspect(business_key)} - Table: #{table_name}")
+
+        case Postgres.delete_analyzed_records(pid_pg, table_name) do
+            {:ok, count} ->
+                Logger.info("PostgreSQL cleanup for #{inspect(business_key)}: #{count} records deleted from #{table_name}")
+                {:ok, count}
+
+            {:error, reason} = error ->
+                Logger.error("Error cleaning PostgreSQL table #{table_name}: #{inspect(reason)}")
+                error
+        end
+    rescue
+        error ->
+            Logger.error("Error cleaning PostgreSQL for #{inspect(module)}: #{inspect(error)}")
+            {:error, error}
+    end
+
+
+    # ============================================
+    # PRIVATE FUNCTIONS - BIGQUERY
     # ============================================
 
     #
