@@ -6,14 +6,14 @@ defmodule Genserver.RabbitConsumer do
 
     require Logger
     import Genserver.Protocols.PWorker
-    import Stuff, only: [random_string_generate: 1]
+    # import Stuff, only: [random_string_generate: 1]
     alias Genserver.Monitor
 
-    def start_link({%{config: %{queue: queue}} = _queue_info, _configuration_amqp} = info) do
-        GenServer.start_link(__MODULE__, info, name: :"#{__MODULE__}.#{queue}")
+    def start_link({%{config: %{queue: queue}} = _queue_info, _configuration_amqp, _info} = args) do
+        GenServer.start_link(__MODULE__, args, name: :"#{__MODULE__}.#{queue}")
     end
 
-    def init({%{business: business, config: %{queue: queue} = queue_info}, configuration_amqp}) do
+    def init({%{business: business, config: %{queue: queue} = queue_info}, configuration_amqp, info}) do
         Monitor.register(self(), to_string(__MODULE__) <> "." <> to_string(business) <> "." <> to_string(queue))
 
         Logger.info("#{to_string(__MODULE__)}. Initializing. Associated queue: ---#{to_string(queue)}---")
@@ -27,7 +27,7 @@ defmodule Genserver.RabbitConsumer do
 
         {:ok, _consumer_tag} = AMQP.Basic.consume(channel, queue)
 
-        {:ok, {channel, queue, business}}
+        {:ok, {channel, queue, business, info}}
     end
 
     # Confirmation sent by the broker after registering this process as a consumer
@@ -49,7 +49,7 @@ defmodule Genserver.RabbitConsumer do
     end
 
     # Handle incoming messages from the queue
-    def handle_info({:basic_deliver, payload, %{delivery_tag: delivery_tag}}, {channel, queue, business} = state) do
+    def handle_info({:basic_deliver, payload, %{delivery_tag: delivery_tag}}, {channel, queue, business, info} = state) do
         # Logger.debug("#{to_string(__MODULE__)}. Message received on queue: #{queue}")
 
         payload
@@ -58,8 +58,9 @@ defmodule Genserver.RabbitConsumer do
             {:ok, msg_decode} ->
                 [msg_decode]
                 |> perform(
-                    random_string_generate(15),
-                    business
+                    nil, #random_string_generate(15),
+                    business,
+                    info
                 )
 
                 AMQP.Basic.ack(channel, delivery_tag)

@@ -11,9 +11,10 @@ defprotocol Genserver.Protocols.PWorker do
         - batch: List of map. Payloads.
         - batch_id: String. Batch identifier.
         - business: Atom. Business type.
+        - info: any. Additional context/resources (e.g., pg_conn, config). Can be nil if not needed.
 
     """
-    def perform(batch, batch_id, business)
+    def perform(batch, batch_id, business, info)
 
 
 end
