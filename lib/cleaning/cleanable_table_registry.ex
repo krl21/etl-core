@@ -178,6 +178,8 @@ defmodule Cleaning.CleanableTableRegistry do
     # ============================================
 
     defp implements_behaviour?(module) do
+        Code.ensure_loaded(module)
+
         function_exported?(module, :bigquery_config, 0) &&
         function_exported?(module, :postgres_config, 0) &&
         function_exported?(module, :business_key, 0)
