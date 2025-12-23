@@ -82,6 +82,27 @@ defmodule Connection.Odbc do
     end
 
     @doc"""
+    Closes the connection to the Data Source
+
+    ### Parameter:
+        - pid: Process. Process connecting Elixir and ODBC.
+
+    ### Return:
+        - :ok | Exception. If the connection can be closed, return the atom. Otherwise, it throws an exception with the error.
+
+    """
+    def disconnect(pid) when is_pid(pid) do
+        :odbc.disconnect(pid)
+        |> case do
+            :ok ->
+                Logger.debug("Connection closed with ODBC")
+                :ok
+            {:error, error} ->
+                raise("Unhandled error trying to \":odbc.disconnect/1\", Error: #{inspect error}")
+        end
+    end
+
+    @doc"""
     Genera un UUID
 
     ### Parameter:
