@@ -67,7 +67,9 @@ defmodule Genserver.Handlers.Bigquery do
                     failed_ids: failed_ids,
                     batch_id: batch_id,
                     bq_table: bq_table,
-                    pg_table: pg_table
+                    bq_conn: bq_conn,
+                    pg_table: pg_table,
+                    pg_conn: pg_conn
                 })
 
                 {:ok, uploaded_count}

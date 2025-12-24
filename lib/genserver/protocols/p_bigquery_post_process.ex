@@ -18,7 +18,9 @@ defprotocol Genserver.Protocols.PBigqueryPostProcess do
             - :failed_ids (list) - List of IDs that failed to upload
             - :batch_id (string) - Batch identifier
             - :bq_table (string) - BigQuery table name
+            - :bq_conn (pid) - BigQuery connection
             - :pg_table (string) - PostgreSQL table name
+            - :pg_conn (pid) - PostgreSQL connection
 
     ### Returns:
         - :ok | {:ok, result} | {:error, reason}
