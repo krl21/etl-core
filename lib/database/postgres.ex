@@ -610,33 +610,45 @@ defmodule Database.Postgres do
     ### Parameters
         - conn (pid | Map) - Active connection
         - table_name (String) - Table name
-        - include_with_problems (Boolean) - If true, also deletes records with "con_problemas" status. Defaults to true.
+        - opts (Keyword) - Optional parameters:
+            - :register_type (String | nil) - If provided, only deletes records with this `tipo` value. If nil, deletes all analyzed records regardless of type. Defaults to nil.
+            - :include_with_problems (Boolean) - If true, also deletes records with "con_problemas" status. Defaults to true.
 
     ### Returns
         - {:ok, count} - Number of deleted records
         - {:error, reason} - Delete error
     """
-    def delete_analyzed_records(conn, table_name, include_with_problems \\ true) do
+    def delete_analyzed_records(conn, table_name, opts \\ []) do
         write_conn = get_write_conn(conn)
         sanitized_name = Helpers.sanitize_identifier(table_name)
 
-        query =
+        include_with_problems = Keyword.get(opts, :include_with_problems, true)
+        register_type = Keyword.get(opts, :register_type, nil)
+
+        estado_condition =
             if include_with_problems do
-                """
-                DELETE FROM #{sanitized_name}
-                WHERE estado_analisis IN ('#{@state_analyzed_in_bq}', '#{@state_with_problems}');
-                """
+                "estado_analisis IN ('#{@state_analyzed_in_bq}', '#{@state_with_problems}')"
             else
-                """
-                DELETE FROM #{sanitized_name}
-                WHERE estado_analisis = '#{@state_analyzed_in_bq}';
-                """
+                "estado_analisis = '#{@state_analyzed_in_bq}'"
             end
+
+        tipo_condition =
+            if register_type do
+                " AND tipo = '#{register_type}'"
+            else
+                ""
+            end
+
+        query = """
+        DELETE FROM #{sanitized_name}
+        WHERE #{estado_condition}#{tipo_condition};
+        """
 
         Postgrex.query(write_conn, query, [])
         |> case do
             {:ok, %{num_rows: count}} ->
-                Logger.info("Deleted #{count} analyzed records from #{table_name}")
+                type_info = if register_type, do: " (tipo: #{register_type})", else: ""
+                Logger.info("Deleted #{count} analyzed records from #{table_name}#{type_info}")
                 {:ok, count}
 
             {:error, reason} = error ->
