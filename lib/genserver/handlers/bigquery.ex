@@ -11,6 +11,7 @@ defmodule Genserver.Handlers.Bigquery do
     alias Statement.Sql
     alias Connection.Odbc
     alias Notification.Notify
+    alias Genserver.Protocols.PBigqueryPostProcess
 
     @doc """
     Uploads pending records to BigQuery.
@@ -30,7 +31,7 @@ defmodule Genserver.Handlers.Bigquery do
         - {:ok, count} - Number of records uploaded
         - {:error, reason} - Upload error
     """
-    def run(_business, data_source, pg_conn, pg_table, bq_table, tipo, batch_id, batch_size, webhook_url) do
+    def run(business, data_source, pg_conn, pg_table, bq_table, tipo, batch_id, batch_size, webhook_url) do
         Postgres.get_pending_bq(pg_conn, pg_table, tipo)
         |> case do
             {:ok, records} when records == [] ->
@@ -59,6 +60,15 @@ defmodule Genserver.Handlers.Bigquery do
                 if not Enum.empty?(failed_ids) do
                     Postgres.mark_as_with_problems(pg_conn, pg_table, failed_ids)
                 end
+
+                run_post_process(business, tipo, %{
+                    uploaded_count: uploaded_count,
+                    successful_ids: successful_ids,
+                    failed_ids: failed_ids,
+                    batch_id: batch_id,
+                    bq_table: bq_table,
+                    pg_table: pg_table
+                })
 
                 {:ok, uploaded_count}
 
@@ -404,6 +414,21 @@ defmodule Genserver.Handlers.Bigquery do
             "BigQuery Uploader",
             message
         )
+    end
+
+    #
+    # Executes post-processing logic after BigQuery upload completes.
+    #
+    # ### Parameters:
+    #     - business: Atom. Business type identifier.
+    #     - tipo: String. Type field value used to differentiate processing logic.
+    #     - context: Map. Context information about the upload.
+    #
+    # ### Returns:
+    #     - :ok | {:ok, result} | {:error, reason}
+    #
+    defp run_post_process(business, tipo, context) do
+        PBigqueryPostProcess.after_upload(business, tipo, context)
     end
 
 end
