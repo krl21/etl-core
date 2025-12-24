@@ -64,14 +64,9 @@ defmodule Type.Type do
 
     """
     def convert_for_bigquery(x) when is_binary(x) do
-        cond do
-            Regex.match?(~r/^-?\d+$/, x) -> x
-            Regex.match?(~r/^-?\d+\.\d+$/, x) -> x
-            true ->
-                x
-                |> Normalize.normalize_special_chars()
-                |> escape_bigquery_string()
-        end
+        x
+        |> Normalize.normalize_special_chars()
+        |> escape_bigquery_string()
     end
 
     def convert_for_bigquery(x) when is_map(x) do
