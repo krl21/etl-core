@@ -26,8 +26,8 @@ defmodule Cleaning.Cleaner do
     import Connection.Odbc, only: [select: 2, delete: 2]
     alias Statement.Sql
     alias Database.Postgres
+    alias Type.Type
     import Stuff, only: [convert_seconds_to_humans: 1]
-    import Type.Type, only: [convert_for_bigquery: 1]
 
 
     @doc """
@@ -221,13 +221,13 @@ defmodule Cleaning.Cleaner do
     #
     # ### Parameters
     #     - pid: Process. ODBC connection to BigQuery
-    #     - config: Map. Must contain :table and :id_fields keys
+    #     - config: Map. Must contain :table and :id_fields keys (list of Struct.InfoAttr)
     #
     # ### Returns
     #     - List of IDs (single values if one id_field, tuples if multiple)
     #
     defp get_duplicate_ids(pid, %{table: table, id_fields: id_fields}) do
-        id_columns = Enum.map(id_fields, &to_string/1) |> Enum.join(", ")
+        id_columns = Enum.map(id_fields, fn info_attr -> to_string(info_attr.id) end) |> Enum.join(", ")
 
         statement = """
         SELECT #{id_columns}
@@ -253,7 +253,7 @@ defmodule Cleaning.Cleaner do
     # ### Parameters
     #     - ids: List. List of duplicate IDs to process
     #     - pid: Process. ODBC connection to BigQuery
-    #     - config: Map. Must contain :table, :id_fields, and :timestamp_field keys
+    #     - config: Map. Must contain :table, :id_fields (list of Struct.InfoAttr), and :timestamp_field (Struct.InfoAttr) keys
     #
     # ### Returns
     #     - List of tuples containing (id_values..., timestamp) for rows to keep
@@ -261,8 +261,8 @@ defmodule Cleaning.Cleaner do
     defp get_rows_to_keep([], _pid, _config), do: []
 
     defp get_rows_to_keep(ids, pid, %{table: table, id_fields: id_fields, timestamp_field: ts_field}) do
-        id_columns = Enum.map(id_fields, &to_string/1) |> Enum.join(", ")
-        ts_column = to_string(ts_field)
+        id_columns = Enum.map(id_fields, fn info_attr -> to_string(info_attr.id) end) |> Enum.join(", ")
+        ts_column = to_string(ts_field.id)
         all_columns = "#{id_columns}, #{ts_column}"
 
         where_clause = build_where_clause(ids, id_fields)
@@ -292,7 +292,7 @@ defmodule Cleaning.Cleaner do
     # ### Parameters
     #     - rows_to_keep: List. List of tuples with (id_values..., timestamp) for rows to preserve
     #     - pid: Process. ODBC connection to BigQuery
-    #     - config: Map. Must contain :table, :id_fields, and :timestamp_field keys
+    #     - config: Map. Must contain :table, :id_fields (list of Struct.InfoAttr), and :timestamp_field (Struct.InfoAttr) keys
     #
     # ### Returns
     #     - Integer. Number of rows deleted
@@ -309,9 +309,9 @@ defmodule Cleaning.Cleaner do
                 # Match on ID fields but NOT on the timestamp (delete older ones)
                 id_conditions =
                     Enum.zip(id_fields, id_values)
-                    |> Enum.map(fn {field, val} -> {field, val, :eq} end)
+                    |> Enum.map(fn {info_attr, val} -> {info_attr.id, val, :eq} end)
 
-                ts_condition = {ts_field, ts_value, :neq}
+                ts_condition = {ts_field.id, ts_value, :neq}
 
                 id_conditions ++ [ts_condition]
             end)
@@ -328,14 +328,15 @@ defmodule Cleaning.Cleaner do
     #
     # ### Parameters
     #     - ids: List. List of ID values or tuples
-    #     - id_fields: List. List of field atoms that form the ID
+    #     - id_fields: List. List of Struct.InfoAttr that form the ID
     #
     # ### Returns
     #     - String. SQL WHERE clause content (without the WHERE keyword)
     #
     defp build_where_clause(ids, id_fields) when length(id_fields) == 1 do
-        field = hd(id_fields) |> to_string()
-        values = Enum.map(ids, &convert_for_bigquery/1) |> Enum.join(", ")
+        info_attr = hd(id_fields)
+        field = info_attr.id |> to_string()
+        values = Enum.map(ids, &mconvert_for_bigquery(&1, info_attr.type)) |> Enum.join(", ")
         "#{field} IN (#{values})"
     end
 
@@ -345,13 +346,30 @@ defmodule Cleaning.Cleaner do
                 id_values = if is_tuple(id_tuple), do: Tuple.to_list(id_tuple), else: [id_tuple]
 
                 Enum.zip(id_fields, id_values)
-                |> Enum.map(fn {field, val} -> "#{field} = #{convert_for_bigquery(val)}" end)
+                |> Enum.map(fn {info_attr, val} -> "#{info_attr.id} = #{mconvert_for_bigquery(val, info_attr.type)}" end)
                 |> Enum.join(" AND ")
                 |> then(&"(#{&1})")
             end)
             |> Enum.join(" OR ")
 
         "(#{conditions})"
+    end
+
+    #
+    # Converts a value to its BigQuery SQL representation based on the type from InfoAttr.
+    # First converts the value to the correct type, then formats it for BigQuery.
+    #
+    # ### Parameters
+    #     - value: Any. The value to convert
+    #     - type: Atom. The type from InfoAttr (:string, :integer, :float, :timestamp, etc.)
+    #
+    # ### Returns
+    #     - String. SQL-safe representation for BigQuery
+    #
+    defp mconvert_for_bigquery(value, type) do
+        value
+        |> Type.convert(type)
+        |> Type.convert_for_bigquery()
     end
 
 

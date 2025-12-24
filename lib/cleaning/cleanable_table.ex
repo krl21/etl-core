@@ -12,13 +12,17 @@ defmodule Cleaning.CleanableTable do
     ```elixir
     defmodule MyApp.Entity.Record do
         @behaviour Cleaning.CleanableTable
+        alias Struct.InfoAttr
+
+        @unique_id %InfoAttr{id: :unique_id, type: :string}
+        @timestamp %InfoAttr{id: :timestamp, type: :integer}
 
         @impl true
         def bigquery_config do
         %{
             table: "dataset.my_records",
-            id_fields: [:unique_id],
-            timestamp_field: :timestamp
+            id_fields: [@unique_id],
+            timestamp_field: @timestamp
         }
         end
 
@@ -39,13 +43,17 @@ defmodule Cleaning.CleanableTable do
     ```elixir
     defmodule MyApp.Entity.Record do
         use Cleaning.CleanableTable
+        alias Struct.InfoAttr
+
+        @unique_id %InfoAttr{id: :unique_id, type: :string}
+        @timestamp %InfoAttr{id: :timestamp, type: :integer}
 
         cleanable_table(
         business_key: :record,
         bigquery: %{
             table: "dataset.my_records",
-            id_fields: [:unique_id],
-            timestamp_field: :timestamp
+            id_fields: [@unique_id],
+            timestamp_field: @timestamp
         },
         postgres: %{
             table: "my_records"
@@ -60,11 +68,11 @@ defmodule Cleaning.CleanableTable do
 
     ## Required Keys
         - `:table` - Full BigQuery table name (dataset.table)
-        - `:id_fields` - List of atoms representing the fields that form the unique identifier
-        - `:timestamp_field` - Atom representing the field used to determine freshness
+        - `:id_fields` - List of Struct.InfoAttr representing the fields that form the unique identifier
+        - `:timestamp_field` - Struct.InfoAttr representing the field used to determine freshness
 
     ## Optional Keys
-        - `:partition_field` - Atom for partition field (if table is partitioned)
+        - `:partition_field` - Struct.InfoAttr for partition field (if table is partitioned)
     """
     @callback bigquery_config() :: map()
 
