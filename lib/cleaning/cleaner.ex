@@ -193,10 +193,13 @@ defmodule Cleaning.Cleaner do
         pg_config = module.postgres_config()
         business_key = module.business_key()
         table_name = pg_config.table
+        register_type = Map.get(pg_config, :register_type, nil)
 
-        Logger.debug("Starting PostgreSQL cleanup for #{inspect(business_key)} - Table: #{table_name}")
+        Logger.debug("Starting PostgreSQL cleanup for #{inspect(business_key)} - Table: #{table_name}, Type: #{inspect(register_type)}")
 
-        case Postgres.delete_analyzed_records(pid_pg, table_name) do
+        opts = if register_type, do: [register_type: register_type], else: []
+
+        case Postgres.delete_analyzed_records(pid_pg, table_name, opts) do
             {:ok, count} ->
                 Logger.info("PostgreSQL cleanup for #{inspect(business_key)}: #{count} records deleted from #{table_name}")
                 {:ok, count}

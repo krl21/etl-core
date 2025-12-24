@@ -83,6 +83,7 @@ defmodule Cleaning.CleanableTable do
         - `:table` - PostgreSQL table name
 
     ## Optional Keys
+        - `:register_type` - String. Value of the `tipo` field to filter records for deletion. If not provided, deletes all analyzed records regardless of type.
         - `:id_fields` - List of atoms for ID fields (defaults to bigquery id_fields)
         - `:timestamp_field` - Atom for timestamp field (defaults to bigquery timestamp_field)
     """
