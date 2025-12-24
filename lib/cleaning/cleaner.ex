@@ -94,24 +94,35 @@ defmodule Cleaning.Cleaner do
         bq_config = module.bigquery_config()
         business_key = module.business_key()
 
+        IO.inspect(bq_config, label: ">>> [1] bq_config")
+        IO.inspect(business_key, label: ">>> [2] business_key")
         Logger.debug("Starting cleanup for #{inspect(business_key)} - Table: #{bq_config.table}")
 
+        duplicate_ids = get_duplicate_ids(pid, bq_config)
+        IO.inspect(duplicate_ids, label: ">>> [3] duplicate_ids (all)")
+        IO.inspect(length(duplicate_ids), label: ">>> [4] duplicate_ids count")
+
         count =
-            get_duplicate_ids(pid, bq_config)
+            duplicate_ids
             |> Enum.chunk_every(500)
             |> Enum.reduce(0, fn batch, acc ->
-                batch
-                |> get_rows_to_keep(pid, bq_config)
-                |> delete_duplicates(pid, bq_config)
-                |> Kernel.+(acc)
+                IO.inspect(batch, label: ">>> [5] processing batch")
+                rows_to_keep = get_rows_to_keep(batch, pid, bq_config)
+                IO.inspect(rows_to_keep, label: ">>> [6] rows_to_keep")
+                deleted = delete_duplicates(rows_to_keep, pid, bq_config)
+                IO.inspect(deleted, label: ">>> [7] deleted count in batch")
+                deleted + acc
             end)
 
         duration = Timex.diff(Timex.now(), start, :second)
+        IO.inspect(count, label: ">>> [8] total deleted")
         Logger.debug("Finished cleaning #{inspect(business_key)}. Rows removed: #{count}. Duration: #{convert_seconds_to_humans(duration)}")
 
         {:ok, count}
     rescue
         error ->
+            IO.inspect(error, label: ">>> [ERROR] Exception")
+            IO.inspect(__STACKTRACE__, label: ">>> [ERROR] Stacktrace")
             Logger.error("Error cleaning #{inspect(module)}: #{inspect(error)}")
             {:error, error}
     end
@@ -300,26 +311,43 @@ defmodule Cleaning.Cleaner do
     defp delete_duplicates([], _pid, _config), do: 0
 
     defp delete_duplicates(rows_to_keep, pid, %{table: table, id_fields: id_fields, timestamp_field: ts_field}) do
+        IO.inspect(rows_to_keep, label: ">>> [DELETE-1] rows_to_keep input")
+        IO.inspect(id_fields, label: ">>> [DELETE-2] id_fields")
+        IO.inspect(ts_field, label: ">>> [DELETE-3] ts_field")
+
         conditions =
             Enum.map(rows_to_keep, fn row_tuple ->
+                IO.inspect(row_tuple, label: ">>> [DELETE-4] processing row_tuple")
                 row_values = Tuple.to_list(row_tuple)
+                IO.inspect(row_values, label: ">>> [DELETE-5] row_values")
                 id_values = Enum.take(row_values, length(id_fields))
+                IO.inspect(id_values, label: ">>> [DELETE-6] id_values")
                 ts_value = List.last(row_values)
+                IO.inspect(ts_value, label: ">>> [DELETE-7] ts_value (raw from BQ)")
+                IO.inspect(ts_field.type, label: ">>> [DELETE-8] ts_field.type")
 
                 # Match on ID fields but NOT on the timestamp (delete older ones)
                 id_conditions =
                     Enum.zip(id_fields, id_values)
-                    |> Enum.map(fn {info_attr, val} -> {info_attr.id, val, :eq} end)
+                    |> Enum.map(fn {info_attr, val} ->
+                        IO.inspect({info_attr.id, val, info_attr.type}, label: ">>> [DELETE-9] id condition (field, val, type)")
+                        {info_attr.id, val, :eq}
+                    end)
 
+                IO.inspect(id_conditions, label: ">>> [DELETE-10] id_conditions built")
                 ts_condition = {ts_field.id, ts_value, :neq}
+                IO.inspect(ts_condition, label: ">>> [DELETE-11] ts_condition built")
 
                 id_conditions ++ [ts_condition]
             end)
 
+        IO.inspect(conditions, label: ">>> [DELETE-12] all conditions")
         statement = Sql.delete(table, conditions, [:and, :or])
+        IO.inspect(statement, label: ">>> [DELETE-13] SQL statement to execute")
 
-        delete(pid, statement)
-        |> elem(1)
+        result = delete(pid, statement)
+        IO.inspect(result, label: ">>> [DELETE-14] delete result")
+        result |> elem(1)
     end
 
     #
@@ -334,25 +362,36 @@ defmodule Cleaning.Cleaner do
     #     - String. SQL WHERE clause content (without the WHERE keyword)
     #
     defp build_where_clause(ids, id_fields) when length(id_fields) == 1 do
+        IO.inspect({ids, id_fields}, label: ">>> [WHERE-1] single id_field clause")
         info_attr = hd(id_fields)
         field = info_attr.id |> to_string()
         values = Enum.map(ids, &mconvert_for_bigquery(&1, info_attr.type)) |> Enum.join(", ")
-        "#{field} IN (#{values})"
+        result = "#{field} IN (#{values})"
+        IO.inspect(result, label: ">>> [WHERE-2] built IN clause")
+        result
     end
 
     defp build_where_clause(ids, id_fields) do
+        IO.inspect({ids, id_fields}, label: ">>> [WHERE-3] multiple id_fields clause")
         conditions =
             Enum.map(ids, fn id_tuple ->
                 id_values = if is_tuple(id_tuple), do: Tuple.to_list(id_tuple), else: [id_tuple]
+                IO.inspect({id_tuple, id_values}, label: ">>> [WHERE-4] id_tuple -> id_values")
 
                 Enum.zip(id_fields, id_values)
-                |> Enum.map(fn {info_attr, val} -> "#{info_attr.id} = #{mconvert_for_bigquery(val, info_attr.type)}" end)
+                |> Enum.map(fn {info_attr, val} ->
+                    converted = mconvert_for_bigquery(val, info_attr.type)
+                    IO.inspect({info_attr.id, val, info_attr.type, converted}, label: ">>> [WHERE-5] field, val, type, converted")
+                    "#{info_attr.id} = #{converted}"
+                end)
                 |> Enum.join(" AND ")
                 |> then(&"(#{&1})")
             end)
             |> Enum.join(" OR ")
 
-        "(#{conditions})"
+        result = "(#{conditions})"
+        IO.inspect(result, label: ">>> [WHERE-6] built OR clause")
+        result
     end
 
     #
