@@ -27,6 +27,7 @@ defmodule Cleaning.Cleaner do
     alias Statement.Sql
     alias Database.Postgres
     import Stuff, only: [convert_seconds_to_humans: 1]
+    import Type.Type, only: [convert_for_bigquery: 1]
 
 
     @doc """
@@ -334,7 +335,7 @@ defmodule Cleaning.Cleaner do
     #
     defp build_where_clause(ids, id_fields) when length(id_fields) == 1 do
         field = hd(id_fields) |> to_string()
-        values = Enum.map(ids, &format_value/1) |> Enum.join(", ")
+        values = Enum.map(ids, &convert_for_bigquery/1) |> Enum.join(", ")
         "#{field} IN (#{values})"
     end
 
@@ -344,7 +345,7 @@ defmodule Cleaning.Cleaner do
                 id_values = if is_tuple(id_tuple), do: Tuple.to_list(id_tuple), else: [id_tuple]
 
                 Enum.zip(id_fields, id_values)
-                |> Enum.map(fn {field, val} -> "#{field} = #{format_value(val)}" end)
+                |> Enum.map(fn {field, val} -> "#{field} = #{convert_for_bigquery(val)}" end)
                 |> Enum.join(" AND ")
                 |> then(&"(#{&1})")
             end)
@@ -352,21 +353,6 @@ defmodule Cleaning.Cleaner do
 
         "(#{conditions})"
     end
-
-
-    #
-    # Formats a value for use in SQL statements.
-    #
-    # ### Parameters
-    #     - val: Any. The value to format
-    #
-    # ### Returns
-    #     - String. SQL-safe representation of the value
-    #
-    defp format_value(val) when is_binary(val), do: "'#{val}'"
-    defp format_value(val) when is_integer(val), do: to_string(val)
-    defp format_value(val) when is_float(val), do: to_string(val)
-    defp format_value(val), do: "'#{to_string(val)}'"
 
 
 end
