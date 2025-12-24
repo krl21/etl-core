@@ -304,7 +304,7 @@ defmodule Database.Postgres do
         Postgrex.query(write_conn, query, [])
         |> case do
             {:ok, _} ->
-                Logger.info("Table #{table_name} dropped successfully")
+                # Logger.info("Table #{table_name} dropped successfully")
                 :ok
 
             {:error, reason} = error ->
@@ -517,7 +517,7 @@ defmodule Database.Postgres do
             Postgrex.query(write_conn, query, ids)
             |> case do
                 {:ok, %{num_rows: count}} ->
-                    Logger.info("Deleted #{count} records from #{table_name}")
+                    # Logger.info("Deleted #{count} records from #{table_name}")
                     {:ok, count}
 
                 {:error, reason} = error ->
@@ -648,7 +648,6 @@ defmodule Database.Postgres do
         |> case do
             {:ok, %{num_rows: count}} ->
                 type_info = if register_type, do: " (tipo: #{register_type})", else: ""
-                Logger.info("Deleted #{count} analyzed records from #{table_name}#{type_info}")
                 {:ok, count}
 
             {:error, reason} = error ->
