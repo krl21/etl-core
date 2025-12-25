@@ -18,7 +18,7 @@ defmodule Genserver.Handlers.Bigquery do
 
     ### Parameters:
         - business: Atom. Business type.
-        - data_source: List. ODBC connection configuration for BigQuery.
+        - bq_conn: pid. Active BigQuery ODBC connection (persistent, not closed here).
         - pg_conn: pid | Map. Active PostgreSQL connection (persistent, not closed here).
         - pg_table: String. PostgreSQL table name for pending records.
         - bq_table: String. BigQuery table name.
@@ -31,7 +31,7 @@ defmodule Genserver.Handlers.Bigquery do
         - {:ok, count} - Number of records uploaded
         - {:error, reason} - Upload error
     """
-    def run(business, data_source, pg_conn, pg_table, bq_table, tipo, batch_id, batch_size, webhook_url) do
+    def run(business, bq_conn, pg_conn, pg_table, bq_table, tipo, batch_id, batch_size, webhook_url) do
         Postgres.get_pending_bq(pg_conn, pg_table, tipo)
         |> case do
             {:ok, records} when records == [] ->
@@ -45,7 +45,7 @@ defmodule Genserver.Handlers.Bigquery do
                     |> Enum.group_by(&Map.get(&1, :id_nodo))
                     |> process_grouped_records(
                         bq_table,
-                        data_source,
+                        bq_conn,
                         batch_id,
                         batch_size,
                         webhook_url
@@ -86,7 +86,7 @@ defmodule Genserver.Handlers.Bigquery do
     # ### Parameters:
     #     - grouped_records: Map of id_nodo => sorted records list
     #     - bq_table: String. BigQuery table name
-    #     - data_source: List. ODBC connection configuration
+    #     - bq_conn: pid. Active BigQuery ODBC connection
     #     - batch_id: String. Batch identifier
     #     - batch_size: Integer. Number of records per batch
     #     - webhook_url: String. Slack webhook URL
@@ -94,7 +94,7 @@ defmodule Genserver.Handlers.Bigquery do
     # ### Returns:
     #     - {list_of_successful_ids, list_of_failed_ids, count_of_uploaded_records}
     #
-    defp process_grouped_records(grouped_records, bq_table, data_source, batch_id, batch_size, webhook_url) do
+    defp process_grouped_records(grouped_records, bq_table, bq_conn, batch_id, batch_size, webhook_url) do
         # Extrae el registro más actualizado de cada grupo para la inserción por lotes
         {records_to_insert, group_info} =
             grouped_records
@@ -117,10 +117,10 @@ defmodule Genserver.Handlers.Bigquery do
             end)
 
         # Ejecuta la inserción por lotes con retry
-        results = execute_insert_with_retry(data, data_source, batch_id, batch_size, webhook_url)
+        results = execute_insert_with_retry(data, bq_conn, batch_id, batch_size, webhook_url)
 
         # Procesa los resultados y maneja los fallos
-        process_insert_results(results, group_info, bq_table, data_source, batch_id, batch_size, webhook_url)
+        process_insert_results(results, group_info, bq_table, bq_conn, batch_id, batch_size, webhook_url)
     end
 
     #
@@ -129,12 +129,12 @@ defmodule Genserver.Handlers.Bigquery do
     # ### Parameters:
     #     - results: List of {:ok, id} | {:error, id}
     #     - group_info: List of {id_nodo, all_ids, remaining_records}
-    #     - bq_table, data_source, batch_id, batch_size, webhook_url: Config params
+    #     - bq_table, bq_conn, batch_id, batch_size, webhook_url: Config params
     #
     # ### Returns:
     #     - {list_of_successful_ids, list_of_failed_ids, count_of_uploaded_records}
     #
-    defp process_insert_results(results, group_info, bq_table, data_source, batch_id, batch_size, webhook_url) do
+    defp process_insert_results(results, group_info, bq_table, bq_conn, batch_id, batch_size, webhook_url) do
         # Crea un mapa de id_nodo => result para una búsqueda rápida
         result_map =
             results
@@ -170,7 +170,7 @@ defmodule Genserver.Handlers.Bigquery do
                                 remaining_records,
                                 [first_failed_id],  # IDs que han fallado hasta ahora
                                 bq_table,
-                                data_source,
+                                bq_conn,
                                 batch_id,
                                 batch_size,
                                 webhook_url,
@@ -193,18 +193,18 @@ defmodule Genserver.Handlers.Bigquery do
     # ### Parameters:
     #     - remaining_records: List of records to try (already sorted by fecha_creado desc)
     #     - tried_failed_ids: List of IDs that have been tried and failed
-    #     - bq_table, data_source, batch_id, batch_size, webhook_url: Config params
+    #     - bq_table, bq_conn, batch_id, batch_size, webhook_url: Config params
     #     - {ids_acc, failed_acc, count_acc}: Accumulator for successful/failed ids and count
     #
     # ### Returns:
     #     - {updated_ids_acc, updated_failed_acc, updated_count_acc}
     #
-    defp try_remaining_records([], tried_failed_ids, _bq_table, _data_source, _batch_id, _batch_size, _webhook_url, {ids_acc, failed_acc, count_acc}) do
+    defp try_remaining_records([], tried_failed_ids, _bq_table, _bq_conn, _batch_id, _batch_size, _webhook_url, {ids_acc, failed_acc, count_acc}) do
         # No hay más registros para intentar - todos los registros intentados se marcan como fallidos
         {ids_acc, failed_acc ++ tried_failed_ids, count_acc}
     end
 
-    defp try_remaining_records([record | rest], tried_failed_ids, bq_table, data_source, batch_id, batch_size, webhook_url, {ids_acc, failed_acc, count_acc}) do
+    defp try_remaining_records([record | rest], tried_failed_ids, bq_table, bq_conn, batch_id, batch_size, webhook_url, {ids_acc, failed_acc, count_acc}) do
         # Intenta insertar este registro individual
         current_id = Map.get(record, :id)
         data = [{
@@ -214,7 +214,7 @@ defmodule Genserver.Handlers.Bigquery do
             Sql.insert(bq_table, build_insert_values(record))
         }]
 
-        results = execute_insert_with_retry(data, data_source, batch_id, batch_size, webhook_url)
+        results = execute_insert_with_retry(data, bq_conn, batch_id, batch_size, webhook_url)
 
         case results do
             [{:ok, _}] ->
@@ -230,7 +230,7 @@ defmodule Genserver.Handlers.Bigquery do
                     rest,
                     tried_failed_ids ++ [current_id],
                     bq_table,
-                    data_source,
+                    bq_conn,
                     batch_id,
                     batch_size,
                     webhook_url,
@@ -262,7 +262,7 @@ defmodule Genserver.Handlers.Bigquery do
     #
     # ### Parameters:
     #     - data: List of tuples {id_nodo, id, record, query} to insert
-    #     - data_source: List. ODBC connection configuration
+    #     - bq_conn: pid. Active BigQuery ODBC connection
     #     - batch_id: String. Batch identifier for error logging
     #     - batch_size: Integer. Number of records per batch
     #     - webhook_url: String. Slack webhook URL for error notifications
@@ -270,16 +270,16 @@ defmodule Genserver.Handlers.Bigquery do
     # ### Returns:
     #     - List of tuples {:ok, id} | {:error, id}
     #
-    def execute_insert_with_retry([], _data_source, _batch_id, _batch_size, _webhook_url), do: []
+    def execute_insert_with_retry([], _bq_conn, _batch_id, _batch_size, _webhook_url), do: []
 
-    def execute_insert_with_retry(data, data_source, batch_id, batch_size, webhook_url) do
+    def execute_insert_with_retry(data, bq_conn, batch_id, batch_size, webhook_url) do
         insert_tuples =
             data
             |> Enum.chunk_every(batch_size)
             |> Enum.map(&group_for_batch_insert/1)
             |> Enum.reject(&(&1 == []))
 
-        results = execute_insert(insert_tuples, data_source)
+        results = execute_insert(insert_tuples, bq_conn)
 
         has_errors? = Enum.any?(results, fn
             {:error, _} -> true
@@ -306,8 +306,8 @@ defmodule Genserver.Handlers.Bigquery do
                 mid = div(length(data), 2)
                 {first_half, second_half} = Enum.split(data, mid)
 
-                first_results = execute_insert_with_retry(first_half, data_source, batch_id, batch_size, webhook_url)
-                second_results = execute_insert_with_retry(second_half, data_source, batch_id, batch_size, webhook_url)
+                first_results = execute_insert_with_retry(first_half, bq_conn, batch_id, batch_size, webhook_url)
+                second_results = execute_insert_with_retry(second_half, bq_conn, batch_id, batch_size, webhook_url)
 
                 first_results ++ second_results
         end
@@ -343,27 +343,23 @@ defmodule Genserver.Handlers.Bigquery do
     end
 
     #
-    # Executes the insert operation in BigQuery
+    # Executes the insert operation in BigQuery using persistent connection
     #
     # ### Parameters:
     #     - insert_tuples: List of tuples {id_nodos, ids, records, merged_query}
-    #     - data_source: List. ODBC connection configuration
+    #     - bq_conn: pid. Active BigQuery ODBC connection
     #
     # ### Returns:
     #     - List of {:ok, ids} | {:error, {id_nodos, ids, records, error}}
     #
-    defp execute_insert(insert_tuples, data_source) do
+    defp execute_insert(insert_tuples, bq_conn) do
         Enum.map(insert_tuples, fn {id_nodos, ids, records, query} ->
-            pid = Odbc.connect(data_source)
             try do
-                Odbc.insert(pid, query)
-
+                Odbc.insert(bq_conn, query)
                 {:ok, ids}
             rescue
                 error ->
                     {:error, {id_nodos, ids, records, error}}
-            after
-                Process.exit(pid, :kill)
             end
         end)
     end

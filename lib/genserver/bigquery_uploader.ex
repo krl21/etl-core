@@ -2,6 +2,7 @@
 defmodule Genserver.BigqueryUploader do
     @moduledoc"""
     GenServer for uploading pending records to BigQuery.
+    Maintains persistent connections to both PostgreSQL and BigQuery (ODBC).
     """
 
     use GenServer
@@ -9,6 +10,7 @@ defmodule Genserver.BigqueryUploader do
     alias Genserver.Monitor
     alias Genserver.Handlers.Bigquery
     alias Database.Postgres
+    alias Connection.Odbc
     import Time.Timem, only: [notification_frequency: 1]
     import Stuff, only: [random_string_generate: 1]
 
@@ -64,12 +66,16 @@ defmodule Genserver.BigqueryUploader do
         {:ok, pg_conn} = Postgres.connect(pg_config)
         Logger.info("#{to_string(__MODULE__)}. PostgreSQL connection established for business: #{to_string(business)}")
 
+        bq_conn = Odbc.connect(data_source)
+        Logger.info("#{to_string(__MODULE__)}. BigQuery ODBC connection established for business: #{to_string(business)}")
+
         milliseconds_timeout = notification_frequency(periodicity)
 
         state = %{
             business: business,
             data_source: data_source,
             pg_conn: pg_conn,
+            bq_conn: bq_conn,
             info: info,
             milliseconds_timeout: milliseconds_timeout,
             batch_size: batch_size,
@@ -94,8 +100,8 @@ defmodule Genserver.BigqueryUploader do
     def handle_info(:update, state) do
         %{
             business: business,
-            data_source: data_source,
             pg_conn: pg_conn,
+            bq_conn: bq_conn,
             info: info,
             milliseconds_timeout: milliseconds_timeout,
             batch_size: batch_size,
@@ -111,7 +117,7 @@ defmodule Genserver.BigqueryUploader do
             tipo = Map.fetch!(table_config, :tipo)
             pg_table = Map.fetch!(table_config, :pg_table)
 
-            Bigquery.run(business, data_source, pg_conn, pg_table, bq_table, tipo, batch_id, batch_size, webhook_url)
+            Bigquery.run(business, bq_conn, pg_conn, pg_table, bq_table, tipo, batch_id, batch_size, webhook_url)
         end)
 
         Logger.info("#{to_string(__MODULE__)}. Finished BigQuery upload cycle for business: #{to_string(business)}")
@@ -135,6 +141,23 @@ defmodule Genserver.BigqueryUploader do
     defp variable_wait(:later, milliseconds_timeout) do
         milliseconds_timeout
         |> :erlang.send_after(self(), :update)
+    end
+
+    @impl true
+    def terminate(reason, %{pg_conn: pg_conn, bq_conn: bq_conn, business: business}) do
+        Logger.info("#{to_string(__MODULE__)}. Terminating for business: #{to_string(business)}. Reason: #{inspect(reason)}")
+
+        if pg_conn do
+            Postgres.disconnect(pg_conn)
+            Logger.debug("#{to_string(__MODULE__)}. PostgreSQL connection closed")
+        end
+
+        if bq_conn do
+            Odbc.disconnect(bq_conn)
+            Logger.debug("#{to_string(__MODULE__)}. BigQuery ODBC connection closed")
+        end
+
+        :ok
     end
 
 end
