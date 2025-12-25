@@ -6,7 +6,7 @@ defmodule Genserver.RabbitConsumer do
 
     require Logger
     import Genserver.Protocols.PWorker
-    # import Stuff, only: [random_string_generate: 1]
+    import Stuff, only: [random_string_generate: 1]
     alias Genserver.Monitor
 
     def start_link({%{config: %{queue: queue}} = _queue_info, _configuration_amqp, _info} = args) do
@@ -58,7 +58,7 @@ defmodule Genserver.RabbitConsumer do
             {:ok, msg_decode} ->
                 [msg_decode]
                 |> perform(
-                    nil, #random_string_generate(15),
+                    random_string_generate(15),
                     business,
                     info
                 )
