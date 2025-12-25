@@ -219,7 +219,8 @@ defmodule Cleaning.Cleaner do
 
         delete_opts = if register_type, do: [register_type: register_type], else: []
 
-        case Postgres.delete_analyzed_records(pid_pg, table_name, delete_opts) do
+        Postgres.delete_analyzed_records(pid_pg, table_name, delete_opts)
+        |> case do
             {:ok, count} ->
                 Logger.info("PostgreSQL cleanup for #{inspect(business_key)}: #{count} records deleted from #{table_name}")
                 {:ok, count}
@@ -229,7 +230,6 @@ defmodule Cleaning.Cleaner do
                 Logger.error(message)
                 notify_error(webhook_url, message)
                 error
-        end
         end
     end
 
