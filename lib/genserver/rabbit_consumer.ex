@@ -8,6 +8,8 @@ defmodule Genserver.RabbitConsumer do
     import Genserver.Protocols.PWorker
     import Stuff, only: [random_string_generate: 1]
     alias Genserver.Monitor
+    alias Notification.Notify
+
 
     def start_link({%{config: %{queue: queue}} = _queue_info, _configuration_amqp, _info} = args) do
         GenServer.start_link(__MODULE__, args, name: :"#{__MODULE__}.#{queue}")
@@ -37,8 +39,10 @@ defmodule Genserver.RabbitConsumer do
     end
 
     # Sent by the broker when the consumer is unexpectedly cancelled
-    def handle_info({:basic_cancel, %{consumer_tag: consumer_tag}}, state) do
-        Logger.error("#{to_string(__MODULE__)}. Consumer cancelled unexpectedly: #{consumer_tag}")
+    def handle_info({:basic_cancel, %{consumer_tag: consumer_tag}}, {_channel, queue, _business, info} = state) do
+        message = "#{to_string(__MODULE__)}. Consumer cancelled unexpectedly: #{consumer_tag}. Queue: #{queue}"
+        Logger.error(message)
+        notify_error(info, message)
         {:stop, :consumer_cancelled, state}
     end
 
@@ -66,7 +70,9 @@ defmodule Genserver.RabbitConsumer do
                 AMQP.Basic.ack(channel, delivery_tag)
 
             {:error, reason} ->
-                Logger.error("#{to_string(__MODULE__)}. Failed to decode message: #{inspect(reason)}")
+                message = "#{to_string(__MODULE__)}. Failed to decode message: #{inspect(reason)}. Queue: #{queue}"
+                Logger.error(message)
+                notify_error(info, message)
                 AMQP.Basic.reject(channel, delivery_tag, requeue: false)
         end
 
@@ -98,6 +104,17 @@ defmodule Genserver.RabbitConsumer do
         end)
     end
 
-
+    #
+    # Sends error notification to Slack if webhook_url is configured in info map.
+    #
+    defp notify_error(%{webhook_url: webhook_url}, message) when is_binary(webhook_url) and webhook_url != "" do
+        Notify.notify_slack(
+            webhook_url,
+            [{"Content-type", "application/json"}],
+            "RabbitMQ Consumer",
+            message
+        )
+    end
+    defp notify_error(_, _), do: :ok
 
 end

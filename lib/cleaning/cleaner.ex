@@ -2,23 +2,6 @@
 defmodule Cleaning.Cleaner do
     @moduledoc """
     Core cleaning logic that uses CleanableTable configurations.
-
-    This module provides the actual cleaning operations using the configurations defined via the CleanableTable behaviour.
-
-    ## Usage
-
-    ```elixir
-    # Clean a specific business type in BigQuery
-    Cleaning.Cleaner.run(:record, pid_odbc)
-
-    # Clean all registered tables in BigQuery
-    Cleaning.Cleaner.run_all(pid_odbc)
-
-    # Clean a specific business type in PostgreSQL
-    Cleaning.Cleaner.run_postgres(:record, pid_pg)
-
-    # Clean all registered tables in PostgreSQL
-    Cleaning.Cleaner.run_all_postgres(pid_pg)
     ```
     """
 
@@ -27,6 +10,7 @@ defmodule Cleaning.Cleaner do
     alias Statement.Sql
     alias Database.Postgres
     alias Type.Type
+    alias Notification.Notify
     import Stuff, only: [convert_seconds_to_humans: 1]
 
 
@@ -89,10 +73,11 @@ defmodule Cleaning.Cleaner do
         - {:ok, count} with number of rows removed
         - {:error, reason} if cleaning fails
     """
-    def run_for_module(module, pid) do
+    def run_for_module(module, pid, opts \\ []) do
         start = Timex.now()
         bq_config = module.bigquery_config()
         business_key = module.business_key()
+        webhook_url = Keyword.get(opts, :webhook_url)
 
         Logger.debug("Starting cleanup for #{inspect(business_key)} - Table: #{bq_config.table}")
 
@@ -112,7 +97,9 @@ defmodule Cleaning.Cleaner do
         {:ok, count}
     rescue
         error ->
-            Logger.error("Error cleaning #{inspect(module)}: #{inspect(error)}")
+            message = "Error cleaning BigQuery #{inspect(module)}: #{inspect(error)}"
+            Logger.error(message)
+            notify_error(webhook_url, message)
             {:error, error}
     end
 
@@ -189,28 +176,33 @@ defmodule Cleaning.Cleaner do
         - {:ok, count} with number of rows removed
         - {:error, reason} if cleaning fails
     """
-    def run_postgres_for_module(module, pid_pg) do
+    def run_postgres_for_module(module, pid_pg, opts \\ []) do
         pg_config = module.postgres_config()
         business_key = module.business_key()
         table_name = pg_config.table
         register_type = Map.get(pg_config, :register_type, nil)
+        webhook_url = Keyword.get(opts, :webhook_url)
 
         Logger.debug("Starting PostgreSQL cleanup for #{inspect(business_key)} - Table: #{table_name}, Type: #{inspect(register_type)}")
 
-        opts = if register_type, do: [register_type: register_type], else: []
+        delete_opts = if register_type, do: [register_type: register_type], else: []
 
-        case Postgres.delete_analyzed_records(pid_pg, table_name, opts) do
+        case Postgres.delete_analyzed_records(pid_pg, table_name, delete_opts) do
             {:ok, count} ->
                 Logger.info("PostgreSQL cleanup for #{inspect(business_key)}: #{count} records deleted from #{table_name}")
                 {:ok, count}
 
             {:error, reason} = error ->
-                Logger.error("Error cleaning PostgreSQL table #{table_name}: #{inspect(reason)}")
+                message = "Error cleaning PostgreSQL table #{table_name}: #{inspect(reason)}"
+                Logger.error(message)
+                notify_error(webhook_url, message)
                 error
         end
     rescue
         error ->
-            Logger.error("Error cleaning PostgreSQL for #{inspect(module)}: #{inspect(error)}")
+            message = "Error cleaning PostgreSQL for #{inspect(module)}: #{inspect(error)}"
+            Logger.error(message)
+            notify_error(webhook_url, message)
             {:error, error}
     end
 
@@ -387,5 +379,18 @@ defmodule Cleaning.Cleaner do
         |> Type.convert_for_bigquery()
     end
 
+    #
+    # Sends error notification to Slack if webhook_url is provided.
+    #
+    defp notify_error(nil, _message), do: :ok
+    defp notify_error("", _message), do: :ok
+    defp notify_error(webhook_url, message) when is_binary(webhook_url) do
+        Notify.notify_slack(
+            webhook_url,
+            [{"Content-type", "application/json"}],
+            "Cleaning Service",
+            message
+        )
+    end
 
 end
