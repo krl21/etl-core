@@ -26,14 +26,14 @@ defmodule Cleaning.Cleaner do
         - {:error, :not_registered} if module not found
         - {:error, reason} if cleaning fails
     """
-    def run(business_key, pid) when is_atom(business_key) do
+    def run(business_key, pid, opts \\ []) when is_atom(business_key) do
         case Cleaning.CleanableTableRegistry.get(business_key) do
             nil ->
                 Logger.warning("No CleanableTable registered for business_key: #{inspect(business_key)}")
                 {:error, :not_registered}
 
             module ->
-                run_for_module(module, pid)
+                run_for_module(module, pid, opts)
         end
     end
 
@@ -47,13 +47,13 @@ defmodule Cleaning.Cleaner do
     ### Returns
         - List of tuples {business_key, {:ok, count} | {:error, reason}}
     """
-    def run_all(pid) do
+    def run_all(pid, opts \\ []) do
         start = Timex.now()
 
         results =
             Cleaning.CleanableTableRegistry.enabled()
             |> Enum.map(fn module ->
-                {module.business_key(), run_for_module(module, pid)}
+                {module.business_key(), run_for_module(module, pid, opts)}
             end)
 
         total_time = Timex.diff(Timex.now(), start, :second)
@@ -120,14 +120,14 @@ defmodule Cleaning.Cleaner do
         - {:error, :not_registered} if module not found
         - {:error, reason} if cleaning fails
     """
-    def run_postgres(business_key, pid_pg) when is_atom(business_key) do
+    def run_postgres(business_key, pid_pg, opts \\ []) when is_atom(business_key) do
         case Cleaning.CleanableTableRegistry.get(business_key) do
             nil ->
                 Logger.warning("CleanableTable registered for business_key: #{inspect(business_key)}")
                 {:error, :not_registered}
 
             module ->
-                run_postgres_for_module(module, pid_pg)
+                run_postgres_for_module(module, pid_pg, opts)
         end
     end
 
@@ -140,14 +140,14 @@ defmodule Cleaning.Cleaner do
     ### Returns
         - List of tuples {business_key, {:ok, count} | {:error, reason}}
     """
-    def run_all_postgres(pid_pg) do
+    def run_all_postgres(pid_pg, opts \\ []) do
         start = Timex.now()
         total_deleted = :counters.new(1, [:atomics])
 
         results =
             Cleaning.CleanableTableRegistry.enabled()
             |> Enum.map(fn module ->
-                result = run_postgres_for_module(module, pid_pg)
+                result = run_postgres_for_module(module, pid_pg, opts)
 
                 case result do
                     {:ok, count} -> :counters.add(total_deleted, 1, count)

@@ -45,6 +45,7 @@ defmodule Genserver.Cleaning do
             - :bq_config - List. ODBC connection configuration for BigQuery
             - :pg_config - Map. PostgreSQL connection configuration (optional, if nil skips PG cleaning)
             - :periodicity - Integer. Interval between cleaning cycles in milliseconds
+            - :webhook_url - String. Slack webhook URL for error notifications (optional)
     """
     def start_link(%{business: business} = config) do
         GenServer.start_link(__MODULE__, config, name: :"#{__MODULE__}.#{business}")
@@ -68,10 +69,13 @@ defmodule Genserver.Cleaning do
     and schedules first cleaning cycle.
     """
     @impl true
-    def init(%{business: business, bq_config: bq_config, pg_config: pg_config, periodicity: periodicity}) do
+    def init(%{business: business, bq_config: bq_config, periodicity: periodicity} = config) do
         Monitor.register(self(), to_string(__MODULE__) <> "." <> to_string(business))
 
         Logger.info("#{to_string(__MODULE__)}. Initializing. Business: ---#{to_string(business)}---")
+
+        pg_config = Map.get(config, :pg_config)
+        webhook_url = Map.get(config, :webhook_url)
 
         # Open BigQuery connection
         Logger.debug("#{to_string(__MODULE__)}. Opening BigQuery ODBC connection")
@@ -86,7 +90,8 @@ defmodule Genserver.Cleaning do
             pg_config: pg_config,
             periodicity: periodicity,
             pid_odbc: pid_odbc,
-            pid_pg: pid_pg
+            pid_pg: pid_pg,
+            webhook_url: webhook_url
         }
 
         variable_wait(:start, periodicity)
@@ -101,26 +106,28 @@ defmodule Genserver.Cleaning do
     Uses existing connections to clean both BigQuery and PostgreSQL.
     """
     @impl true
-    def handle_info(:update, %{business: business, pid_odbc: pid_odbc, pid_pg: pid_pg, periodicity: periodicity} = state) do
+    def handle_info(:update, %{business: business, pid_odbc: pid_odbc, pid_pg: pid_pg, periodicity: periodicity, webhook_url: webhook_url} = state) do
         Logger.debug("#{to_string(__MODULE__)}. Applying duplicate/stale row cleanup in ---#{to_string(business)}---")
+
+        opts = if webhook_url, do: [webhook_url: webhook_url], else: []
 
         # Clean BigQuery
         case business do
             :all ->
-                Cleaner.run_all(pid_odbc)
+                Cleaner.run_all(pid_odbc, opts)
 
             business_key ->
-                Cleaner.run(business_key, pid_odbc)
+                Cleaner.run(business_key, pid_odbc, opts)
         end
 
         # Clean PostgreSQL (if connection exists)
         if pid_pg do
             case business do
                 :all ->
-                    Cleaner.run_all_postgres(pid_pg)
+                    Cleaner.run_all_postgres(pid_pg, opts)
 
                 business_key ->
-                    Cleaner.run_postgres(business_key, pid_pg)
+                    Cleaner.run_postgres(business_key, pid_pg, opts)
             end
         end
 
