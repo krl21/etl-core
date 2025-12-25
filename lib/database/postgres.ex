@@ -701,5 +701,194 @@ defmodule Database.Postgres do
     end
 
 
+    ############
+    # Flexible Query
+    ############
+
+    @doc """
+    Executes a flexible SELECT query with configurable fields, DISTINCT, and WHERE conditions.
+
+    ### Parameters
+        - conn (pid | Map) - Active connection
+        - table_name (String) - Table name
+        - opts (Keyword) - Query options:
+            - :select (List) - Fields to select. Each element can be:
+                - String/Atom: field name (e.g., "id_nodo" or :id_nodo)
+                - Tuple {field, :distinct}: applies DISTINCT to that field
+                - Tuple {field, alias}: renames the field (e.g., {"informacion->>'expediente_asociado'", "contentref"})
+                - Tuple {field, alias, :distinct}: DISTINCT with alias
+            - :where (List) - WHERE conditions. Each element is a tuple:
+                - {field, :eq, value} - field = value
+                - {field, :neq, value} - field != value
+                - {field, :in, list} - field = ANY(list)
+                - {field, :not_null} - field IS NOT NULL
+                - {field, :is_null} - field IS NULL
+
+    ### Returns
+        - {:ok, rows} - List of result rows (as lists)
+        - {:error, :empty_select} - No fields specified
+        - {:error, :invalid_table_name} - Invalid table name
+        - {:error, reason} - Query error
+    """
+    def query_flexible(conn, table_name, opts \\ []) do
+        select_fields = Keyword.get(opts, :select, [])
+        where_conditions = Keyword.get(opts, :where, [])
+
+        with :ok <- validate_table_name(table_name),
+             :ok <- validate_select_fields(select_fields),
+             :ok <- validate_where_conditions(where_conditions) do
+
+            read_conn = get_read_conn(conn)
+            sanitized_name = Helpers.sanitize_identifier(table_name)
+
+            {select_sql, has_distinct} = build_select_clause(select_fields)
+            {where_sql, params} = build_where_clause(where_conditions)
+
+            distinct_keyword = if has_distinct, do: "DISTINCT ", else: ""
+
+            query = """
+            SELECT #{distinct_keyword}#{select_sql}
+            FROM #{sanitized_name}
+            #{where_sql}
+            """
+
+            case Postgrex.query(read_conn, query, params) do
+                {:ok, %{rows: rows}} ->
+                    {:ok, rows}
+
+                {:error, reason} = error ->
+                    Logger.error("Error in flexible query on #{table_name}: #{inspect(reason)}")
+                    error
+            end
+        end
+    end
+
+    #
+    # Validates the table name is not empty and contains only valid characters.
+    #
+    defp validate_table_name(nil), do: {:error, :invalid_table_name}
+    defp validate_table_name(""), do: {:error, :invalid_table_name}
+    defp validate_table_name(name) when is_binary(name) do
+        if Regex.match?(~r/^[a-zA-Z_][a-zA-Z0-9_]*$/, name) do
+            :ok
+        else
+            {:error, :invalid_table_name}
+        end
+    end
+    defp validate_table_name(_), do: {:error, :invalid_table_name}
+
+    #
+    # Validates that select fields list is not empty and has valid format.
+    #
+    defp validate_select_fields([]), do: {:error, :empty_select}
+    defp validate_select_fields(fields) when is_list(fields) do
+        valid? = Enum.all?(fields, fn
+            field when is_atom(field) or is_binary(field) -> true
+            {field, :distinct} when is_atom(field) or is_binary(field) -> true
+            {field, alias} when (is_atom(field) or is_binary(field)) and is_binary(alias) -> true
+            {field, alias, :distinct} when (is_atom(field) or is_binary(field)) and is_binary(alias) -> true
+            _ -> false
+        end)
+
+        if valid?, do: :ok, else: {:error, :invalid_select_format}
+    end
+    defp validate_select_fields(_), do: {:error, :invalid_select_format}
+
+    #
+    # Validates WHERE conditions format.
+    #
+    defp validate_where_conditions([]), do: :ok
+    defp validate_where_conditions(conditions) when is_list(conditions) do
+        valid? = Enum.all?(conditions, fn
+            {_field, :eq, _value} -> true
+            {_field, :neq, _value} -> true
+            {_field, :in, list} when is_list(list) -> true
+            {_field, :not_null} -> true
+            {_field, :is_null} -> true
+            _ -> false
+        end)
+
+        if valid?, do: :ok, else: {:error, :invalid_where_format}
+    end
+    defp validate_where_conditions(_), do: {:error, :invalid_where_format}
+
+    #
+    # Builds the SELECT clause from field specifications.
+    # Returns {sql_string, has_distinct_flag}
+    #
+    defp build_select_clause(fields) do
+        {parts, has_distinct} =
+            fields
+            |> Enum.reduce({[], false}, fn field, {acc, distinct_flag} ->
+                case field do
+                    {f, :distinct} ->
+                        {acc ++ [to_string(f)], true}
+
+                    {f, alias, :distinct} ->
+                        {acc ++ ["#{to_string(f)} AS #{alias}"], true}
+
+                    {f, alias} when is_binary(alias) ->
+                        {acc ++ ["#{to_string(f)} AS #{alias}"], distinct_flag}
+
+                    f ->
+                        {acc ++ [to_string(f)], distinct_flag}
+                end
+            end)
+
+        {Enum.join(parts, ", "), has_distinct}
+    end
+
+    #
+    # Builds the WHERE clause from conditions.
+    # Returns {sql_string, params_list}
+    #
+    defp build_where_clause([]), do: {"", []}
+
+    defp build_where_clause(conditions) do
+        {clauses, params, _idx} =
+            conditions
+            |> Enum.reduce({[], [], 1}, fn condition, {clauses_acc, params_acc, idx} ->
+                case condition do
+                    {field, :eq, value} ->
+                        {
+                            clauses_acc ++ ["#{to_string(field)} = $#{idx}"],
+                            params_acc ++ [value],
+                            idx + 1
+                        }
+
+                    {field, :neq, value} ->
+                        {
+                            clauses_acc ++ ["#{to_string(field)} != $#{idx}"],
+                            params_acc ++ [value],
+                            idx + 1
+                        }
+
+                    {field, :in, list} ->
+                        {
+                            clauses_acc ++ ["#{to_string(field)} = ANY($#{idx})"],
+                            params_acc ++ [list],
+                            idx + 1
+                        }
+
+                    {field, :not_null} ->
+                        {
+                            clauses_acc ++ ["#{to_string(field)} IS NOT NULL"],
+                            params_acc,
+                            idx
+                        }
+
+                    {field, :is_null} ->
+                        {
+                            clauses_acc ++ ["#{to_string(field)} IS NULL"],
+                            params_acc,
+                            idx
+                        }
+                end
+            end)
+
+        where_sql = "WHERE " <> Enum.join(clauses, " AND ")
+        {where_sql, params}
+    end
+
 
 end
