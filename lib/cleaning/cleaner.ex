@@ -74,33 +74,36 @@ defmodule Cleaning.Cleaner do
         - {:error, reason} if cleaning fails
     """
     def run_for_module(module, pid, opts \\ []) do
-        start = Timex.now()
-        bq_config = module.bigquery_config()
-        business_key = module.business_key()
         webhook_url = Keyword.get(opts, :webhook_url)
 
-        Logger.debug("Starting cleanup for #{inspect(business_key)} - Table: #{bq_config.table}")
+        try do
+            start = Timex.now()
+            bq_config = module.bigquery_config()
+            business_key = module.business_key()
 
-        count =
-            get_duplicate_ids(pid, bq_config)
-            |> Enum.chunk_every(500)
-            |> Enum.reduce(0, fn batch, acc ->
-                batch
-                |> get_rows_to_keep(pid, bq_config)
-                |> delete_duplicates(pid, bq_config)
-                |> Kernel.+(acc)
-            end)
+            Logger.debug("Starting cleanup for #{inspect(business_key)} - Table: #{bq_config.table}")
 
-        duration = Timex.diff(Timex.now(), start, :second)
-        Logger.debug("Finished cleaning #{inspect(business_key)}. Rows removed: #{count}. Duration: #{convert_seconds_to_humans(duration)}")
+            count =
+                get_duplicate_ids(pid, bq_config)
+                |> Enum.chunk_every(500)
+                |> Enum.reduce(0, fn batch, acc ->
+                    batch
+                    |> get_rows_to_keep(pid, bq_config)
+                    |> delete_duplicates(pid, bq_config)
+                    |> Kernel.+(acc)
+                end)
 
-        {:ok, count}
-    rescue
-        error ->
-            message = "Error cleaning BigQuery #{inspect(module)}: #{inspect(error)}"
-            Logger.error(message)
-            notify_error(webhook_url, message)
-            {:error, error}
+            duration = Timex.diff(Timex.now(), start, :second)
+            Logger.debug("Finished cleaning #{inspect(business_key)}. Rows removed: #{count}. Duration: #{convert_seconds_to_humans(duration)}")
+
+            {:ok, count}
+        rescue
+            error ->
+                message = "Error cleaning BigQuery #{inspect(module)}: #{inspect(error)}"
+                Logger.error(message)
+                notify_error(webhook_url, message)
+                {:error, error}
+        end
     end
 
 
@@ -177,33 +180,36 @@ defmodule Cleaning.Cleaner do
         - {:error, reason} if cleaning fails
     """
     def run_postgres_for_module(module, pid_pg, opts \\ []) do
-        pg_config = module.postgres_config()
-        business_key = module.business_key()
-        table_name = pg_config.table
-        register_type = Map.get(pg_config, :register_type, nil)
         webhook_url = Keyword.get(opts, :webhook_url)
 
-        Logger.debug("Starting PostgreSQL cleanup for #{inspect(business_key)} - Table: #{table_name}, Type: #{inspect(register_type)}")
+        try do
+            pg_config = module.postgres_config()
+            business_key = module.business_key()
+            table_name = pg_config.table
+            register_type = Map.get(pg_config, :register_type, nil)
 
-        delete_opts = if register_type, do: [register_type: register_type], else: []
+            Logger.debug("Starting PostgreSQL cleanup for #{inspect(business_key)} - Table: #{table_name}, Type: #{inspect(register_type)}")
 
-        case Postgres.delete_analyzed_records(pid_pg, table_name, delete_opts) do
-            {:ok, count} ->
-                Logger.info("PostgreSQL cleanup for #{inspect(business_key)}: #{count} records deleted from #{table_name}")
-                {:ok, count}
+            delete_opts = if register_type, do: [register_type: register_type], else: []
 
-            {:error, reason} = error ->
-                message = "Error cleaning PostgreSQL table #{table_name}: #{inspect(reason)}"
+            case Postgres.delete_analyzed_records(pid_pg, table_name, delete_opts) do
+                {:ok, count} ->
+                    Logger.info("PostgreSQL cleanup for #{inspect(business_key)}: #{count} records deleted from #{table_name}")
+                    {:ok, count}
+
+                {:error, reason} = error ->
+                    message = "Error cleaning PostgreSQL table #{table_name}: #{inspect(reason)}"
+                    Logger.error(message)
+                    notify_error(webhook_url, message)
+                    error
+            end
+        rescue
+            error ->
+                message = "Error cleaning PostgreSQL for #{inspect(module)}: #{inspect(error)}"
                 Logger.error(message)
                 notify_error(webhook_url, message)
-                error
+                {:error, error}
         end
-    rescue
-        error ->
-            message = "Error cleaning PostgreSQL for #{inspect(module)}: #{inspect(error)}"
-            Logger.error(message)
-            notify_error(webhook_url, message)
-            {:error, error}
     end
 
 
