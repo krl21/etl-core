@@ -13,6 +13,16 @@ defmodule Database.Helpers do
     ### Returns
         - String - Sanitized identifier
     """
+    def sanitize_identifier(nil) do
+        raise ArgumentError, "Invalid identifier name: nil - check if table name is properly configured (environment variable may not be set)"
+    end
+
+    def sanitize_identifier(name) when is_atom(name) do
+        name
+        |> Atom.to_string()
+        |> sanitize_identifier()
+    end
+
     def sanitize_identifier(name) when is_binary(name) do
         sanitized =
             name
