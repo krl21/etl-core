@@ -64,7 +64,7 @@ defmodule ForcedLoad.Handler do
         - `:on_task_error` - Function. `(contentref, error) -> :ok`. Called on task load error
 
     ### Optional - Custom Functions
-        - `:get_ids_fn` - Function. `(start_date, end_date, config) -> list`. Custom BigQuery ID fetcher
+        - `:get_ids_fn` - Function. `(start_date, end_date, bq_pid, config) -> list`. Custom BigQuery ID fetcher
         - `:get_ids_es_fn` - Function. `(start_date, end_date, config) -> list`. Custom ElasticSearch ID fetcher
         - `:load_record_fn` - Function. `(unique_id, ticket, channel, config) -> :ok | {:error, reason}`. Custom record loader
         - `:load_task_fn` - Function. `(contentref, ticket, channel, config) -> :ok | {:error, reason}`. Custom task loader
@@ -195,6 +195,12 @@ defmodule ForcedLoad.Handler do
         {:ok, connection} = AMQP.Connection.open(amqp_config)
         {:ok, channel} = AMQP.Channel.open(connection)
 
+        bq_pid = unless Map.get(config, :skip_bigquery, false) do
+            bq_config = get_bigquery_config(config)
+            notify(config, "Opening BigQuery connection...", :info)
+            Odbc.connect(bq_config)
+        end
+
         try do
             intervals
             |> Enum.each(fn {start_date_, end_date_} ->
@@ -202,6 +208,7 @@ defmodule ForcedLoad.Handler do
                     start_date_,
                     end_date_,
                     channel,
+                    bq_pid,
                     includes_record,
                     includes_task,
                     config
@@ -220,6 +227,10 @@ defmodule ForcedLoad.Handler do
             )
             :ok
         after
+            if bq_pid do
+                notify(config, "Closing BigQuery connection...", :info)
+                Odbc.disconnect(bq_pid)
+            end
             # Close AMQP connection
             if connection, do: AMQP.Connection.close(connection)
         end
@@ -230,13 +241,24 @@ defmodule ForcedLoad.Handler do
     # INTERVAL PROCESSING
     # ============================================
 
-    defp process_interval(start_date, end_date, channel, includes_record, includes_task, config) do
+
+    # Processes a single time interval: fetches IDs, splits into batches, and loads records/tasks.
+    #
+    # ### Parameters
+    #     - start_date: DateTime. Start of the interval
+    #     - end_date: DateTime. End of the interval
+    #     - channel: AMQP.Channel. Channel for publishing messages
+    #     - bq_pid: pid | nil. BigQuery ODBC connection process
+    #     - includes_record: boolean. Whether to load records
+    #     - includes_task: boolean. Whether to load tasks
+    #     - config: map. Configuration options
+    defp process_interval(start_date, end_date, channel, bq_pid, includes_record, includes_task, config) do
         notify(config,
             "Start of forced charge between #{to_string(start_date)} and #{to_string(end_date)}",
             :info
         )
 
-        ids = fetch_all_ids(start_date, end_date, config)
+        ids = fetch_all_ids(start_date, end_date, bq_pid, config)
 
         batch_size = Map.get(config, :batch_size, @default_batch_size)
         batch_delay = Map.get(config, :batch_delay, @default_batch_delay)
@@ -301,8 +323,19 @@ defmodule ForcedLoad.Handler do
     # ID FETCHING
     # ============================================
 
-    defp fetch_all_ids(start_date, end_date, config) do
-        bq_ids = fetch_ids_from_bigquery(start_date, end_date, config)
+
+    # Fetches unique IDs from both BigQuery and ElasticSearch, applies optional filter.
+    #
+    # ### Parameters
+    #     - start_date: DateTime. Start of date range
+    #     - end_date: DateTime. End of date range
+    #     - bq_pid: pid | nil. BigQuery ODBC connection process
+    #     - config: map. Configuration options
+    #
+    # ### Returns
+    #     - list. Unique IDs from both sources, optionally filtered
+    defp fetch_all_ids(start_date, end_date, bq_pid, config) do
+        bq_ids = fetch_ids_from_bigquery(start_date, end_date, bq_pid, config)
         es_ids = fetch_ids_from_elasticsearch(start_date, end_date, config)
 
         all_ids = (bq_ids ++ es_ids) |> Enum.uniq()
@@ -315,19 +348,23 @@ defmodule ForcedLoad.Handler do
     end
 
 
-    defp fetch_ids_from_bigquery(start_date, end_date, config) do
-        if Map.get(config, :skip_bigquery, false) do
-            []
-        else
-            # Use custom function if provided
-            case Map.get(config, :get_ids_fn) do
-                nil -> default_get_ids_bq(start_date, end_date, config)
-                custom_fn -> custom_fn.(start_date, end_date, config)
-            end
+
+    # Fetches IDs from BigQuery using the provided connection or custom function.
+    # Returns empty list if bq_pid is nil (BigQuery skipped).
+    defp fetch_ids_from_bigquery(_start_date, _end_date, nil, _config), do: []
+
+    defp fetch_ids_from_bigquery(start_date, end_date, bq_pid, config) do
+        # Use custom function if provided
+        case Map.get(config, :get_ids_fn) do
+            nil -> default_get_ids_bq(start_date, end_date, bq_pid, config)
+            custom_fn -> custom_fn.(start_date, end_date, bq_pid, config)
         end
     end
 
 
+
+    # Fetches IDs from ElasticSearch based on date range.
+    # Returns empty list if :skip_elasticsearch is true in config.
     defp fetch_ids_from_elasticsearch(start_date, end_date, config) do
         if Map.get(config, :skip_elasticsearch, false) do
             []
@@ -341,11 +378,22 @@ defmodule ForcedLoad.Handler do
     end
 
 
-    defp default_get_ids_bq(start_date, end_date, config) do
+
+    # Default implementation for fetching IDs from BigQuery.
+    # Builds SQL SELECT query and executes against BigQuery via ODBC.
+    #
+    # ### Parameters
+    #     - start_date: DateTime. Start of date range
+    #     - end_date: DateTime. End of date range
+    #     - bq_pid: pid. BigQuery ODBC connection process
+    #     - config: map. Must contain :bigquery_table, :unique_id_field, :last_update_field
+    #
+    # ### Returns
+    #     - list. List of unique IDs from BigQuery
+    defp default_get_ids_bq(start_date, end_date, bq_pid, config) do
         bigquery_table = Map.fetch!(config, :bigquery_table)
         unique_id_field = Map.fetch!(config, :unique_id_field)
         last_update_field = Map.fetch!(config, :last_update_field)
-        bq_config = get_bigquery_config(config)
 
         statement = Sql.select(
             bigquery_table,
@@ -367,21 +415,28 @@ defmodule ForcedLoad.Handler do
             [:and]
         )
 
-        pid = Odbc.connect(bq_config)
-
         try do
-            Odbc.select(pid, statement)
+            Odbc.select(bq_pid, statement)
             |> Enum.map(fn [{_, id}] -> id end)
         rescue
             error ->
                 notify(config, "Error fetching IDs from BigQuery: #{inspect(error)}", :error)
                 []
-        after
-            Process.exit(pid, :kill)
         end
     end
 
 
+
+    # Default implementation for fetching IDs from ElasticSearch.
+    # Queries ElasticSearch for documents within the date range.
+    #
+    # ### Parameters
+    #     - start_date: DateTime. Start of date range
+    #     - end_date: DateTime. End of date range
+    #     - config: map. Must contain :documentary_type, :unique_id_payload_field, :last_update_payload_field
+    #
+    # ### Returns
+    #     - list. List of unique IDs from ElasticSearch
     defp default_get_ids_es(start_date, end_date, config) do
         documentary_type = Map.fetch!(config, :documentary_type)
         unique_id_payload_field = Map.fetch!(config, :unique_id_payload_field)
@@ -411,6 +466,18 @@ defmodule ForcedLoad.Handler do
     # RECORD LOADING
     # ============================================
 
+
+    # Loads records for a batch of IDs and publishes them to AMQP queue.
+    #
+    # ### Parameters
+    #     - ids: list. List of unique IDs to load
+    #     - ticket: String | nil. Authentication ticket for NodeService
+    #     - channel: AMQP.Channel. Channel for publishing messages
+    #     - enabled: boolean. If false, returns 0 immediately
+    #     - config: map. Configuration options
+    #
+    # ### Returns
+    #     - integer. Number of records successfully loaded
     defp load_records(_ids, _ticket, _channel, false, _config), do: 0
 
     defp load_records(ids, ticket, channel, true, config) do
@@ -427,6 +494,19 @@ defmodule ForcedLoad.Handler do
     end
 
 
+
+    # Default implementation for loading a single record.
+    # Fetches record from NodeService and publishes to AMQP queue.
+    #
+    # ### Parameters
+    #     - unique_id: String. Unique identifier of the record
+    #     - ticket: String | nil. Authentication ticket
+    #     - channel: AMQP.Channel. Channel for publishing
+    #     - config: map. Must contain :record_queue, optionally :record_filter, :build_record_message_fn
+    #
+    # ### Returns
+    #     - :ok on success
+    #     - {:error, reason} on failure
     defp default_load_record(unique_id, ticket, channel, config) do
         record_queue = Map.fetch!(config, :record_queue)
         ns_config = get_nodeservice_config(config)
@@ -475,6 +555,18 @@ defmodule ForcedLoad.Handler do
     # TASK LOADING
     # ============================================
 
+
+    # Loads tasks for a batch of content references and publishes them to AMQP queue.
+    #
+    # ### Parameters
+    #     - ids: list. List of content references to load tasks for
+    #     - ticket: String | nil. Authentication ticket for WorkflowService
+    #     - channel: AMQP.Channel. Channel for publishing messages
+    #     - enabled: boolean. If false, returns 0 immediately
+    #     - config: map. Configuration options
+    #
+    # ### Returns
+    #     - integer. Number of content references with tasks successfully loaded
     defp load_tasks(_ids, _ticket, _channel, false, _config), do: 0
 
     defp load_tasks(ids, ticket, channel, true, config) do
@@ -490,6 +582,20 @@ defmodule ForcedLoad.Handler do
         end)
     end
 
+
+
+    # Default implementation for loading tasks for a single content reference.
+    # Fetches tasks from WorkflowService and publishes each to AMQP queue.
+    #
+    # ### Parameters
+    #     - contentref: String. Content reference to fetch tasks for
+    #     - ticket: String | nil. Authentication ticket
+    #     - channel: AMQP.Channel. Channel for publishing
+    #     - config: map. Must contain :task_queue, :documentary_type, optionally :task_name_filter
+    #
+    # ### Returns
+    #     - :ok on success
+    #     - {:error, reason} on failure
     defp default_load_task(contentref, ticket, channel, config) do
         task_queue = Map.fetch!(config, :task_queue)
         documentary_type = Map.fetch!(config, :documentary_type)
@@ -543,6 +649,15 @@ defmodule ForcedLoad.Handler do
     # HELPER FUNCTIONS
     # ============================================
 
+
+    # Obtains an authentication ticket from the Ticket service.
+    #
+    # ### Parameters
+    #     - config: map. Configuration with ticket service credentials
+    #
+    # ### Returns
+    #     - String. Authentication ticket on success
+    #     - nil on failure
     defp get_ticket(config) do
         ticket_config = get_ticket_config(config)
 
@@ -566,10 +681,19 @@ defmodule ForcedLoad.Handler do
     # CONFIG RESOLVERS
     # ============================================
 
-    @doc false
+
     # Generic helper to get a value from Application config using a path of atoms.
-    # Example: get_from_app_config(:my_app, [:nodeservice, :url])
-    #          => Application.get_env(:my_app, :nodeservice)[:url]
+    #
+    # ### Parameters
+    #     - app_name: atom. Application name
+    #     - path: list. List of atoms representing the config path
+    #
+    # ### Returns
+    #     - The resolved value from Application config
+    #
+    # ### Example
+    #     get_from_app_config(:my_app, [:nodeservice, :url])
+    #     => Application.get_env(:my_app, :nodeservice)[:url]
     defp get_from_app_config(app_name, path) when is_list(path) do
         [key | rest] = path
         app_config = Application.get_env(app_name, key)
@@ -581,6 +705,14 @@ defmodule ForcedLoad.Handler do
     end
 
 
+
+    # Resolves ticket service configuration from config or Application config.
+    #
+    # ### Parameters
+    #     - config: map. Handler configuration
+    #
+    # ### Returns
+    #     - map. Ticket config with :url, :headers, :username, :password
     defp get_ticket_config(config) do
         case Map.get(config, :ticket_config) do
             nil ->
@@ -597,6 +729,14 @@ defmodule ForcedLoad.Handler do
     end
 
 
+
+    # Resolves NodeService configuration from config or Application config.
+    #
+    # ### Parameters
+    #     - config: map. Handler configuration
+    #
+    # ### Returns
+    #     - map. NodeService config with :url and :headers
     defp get_nodeservice_config(config) do
         case Map.get(config, :nodeservice_config) do
             nil ->
@@ -611,6 +751,14 @@ defmodule ForcedLoad.Handler do
     end
 
 
+
+    # Resolves WorkflowService configuration from config or Application config.
+    #
+    # ### Parameters
+    #     - config: map. Handler configuration
+    #
+    # ### Returns
+    #     - map. WorkflowService config with :url and :headers
     defp get_workflowservice_config(config) do
         case Map.get(config, :workflowservice_config) do
             nil ->
@@ -625,6 +773,14 @@ defmodule ForcedLoad.Handler do
     end
 
 
+
+    # Resolves ElasticSearch configuration from config or Application config.
+    #
+    # ### Parameters
+    #     - config: map. Handler configuration
+    #
+    # ### Returns
+    #     - map. ElasticSearch config with :url and :headers
     defp get_elasticsearch_config(config) do
         case Map.get(config, :elasticsearch_config) do
             nil ->
@@ -639,6 +795,14 @@ defmodule ForcedLoad.Handler do
     end
 
 
+
+    # Resolves BigQuery ODBC configuration from config or Application config.
+    #
+    # ### Parameters
+    #     - config: map. Handler configuration
+    #
+    # ### Returns
+    #     - keyword. BigQuery ODBC connection config
     defp get_bigquery_config(config) do
         case Map.get(config, :bigquery_config) do
             nil ->
@@ -650,6 +814,14 @@ defmodule ForcedLoad.Handler do
     end
 
 
+
+    # Resolves AMQP connection configuration from config or Application config.
+    #
+    # ### Parameters
+    #     - config: map. Handler configuration
+    #
+    # ### Returns
+    #     - keyword. AMQP connection config
     defp get_amqp_config(config) do
         case Map.get(config, :amqp_config) do
             nil ->
@@ -661,6 +833,13 @@ defmodule ForcedLoad.Handler do
     end
 
 
+
+    # Sends a notification using custom function or default implementation.
+    #
+    # ### Parameters
+    #     - config: map. Handler configuration (may contain :notification_fn)
+    #     - message: String. Message to send
+    #     - level: atom. Log level (:info, :error, :warning, :debug)
     defp notify(config, message, level) do
         case Map.get(config, :notification_fn) do
             nil -> default_notify(config, message, level)
@@ -669,6 +848,13 @@ defmodule ForcedLoad.Handler do
     end
 
 
+
+    # Default notification implementation: logs message and optionally sends to Slack.
+    #
+    # ### Parameters
+    #     - config: map. Handler configuration with optional :slack_notification_url, :slack_notification_headers, :environment
+    #     - message: String. Message to send
+    #     - level: atom. Log level (:info, :error, :warning, :debug)
     defp default_notify(config, message, level) do
         webhook_url = Map.get(config, :slack_notification_url)
         headers = Map.get(config, :slack_notification_headers)
