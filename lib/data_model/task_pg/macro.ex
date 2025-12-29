@@ -34,9 +34,9 @@ defmodule DataModel.TaskPg.Macro do
 
         task_config(
             app: :my_app,
-            table_name_path: [:postgres, :tables],  # Resolved at runtime
+            table_name_path: [:postgres, :tables],
             group_by_keys: [@contentref, @name],
-            value_type_path: [:postgres, :register_type, :task],  # Resolved at runtime
+            value_type_path: [:postgres, :register_type, :task],
             elapsed_time_config: %{
                 start_date_attr: @start_date,
                 end_date_attr: @end_date,
@@ -130,7 +130,6 @@ defmodule DataModel.TaskPg.Macro do
 
             @doc """
             Returns the PostgreSQL table name.
-            Resolves at runtime if table_name_path is configured.
 
             ### Returns:
                 - String. The table name.
@@ -151,7 +150,6 @@ defmodule DataModel.TaskPg.Macro do
 
             @doc """
             Returns the value for the 'tipo' field in records.
-            Resolves at runtime if value_type_path is configured.
 
             ### Returns:
                 - String. The type value.
@@ -211,7 +209,6 @@ defmodule DataModel.TaskPg.Macro do
 
             @doc """
             Returns the environment name for Slack notifications.
-            Reads from environment variable at runtime if slack_env_var is configured.
             """
             def slack_env() do
                 case @task_config[:slack_env_var] do

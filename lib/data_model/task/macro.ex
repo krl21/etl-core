@@ -152,7 +152,6 @@ defmodule DataModel.Task.Macro do
 
             @doc """
             Returns the Slack webhook URL for error notifications.
-            Resolves at runtime if slack_webhook_url_path is configured.
             """
             def slack_webhook_url() do
                 case @task_config[:slack_webhook_url_path] do
@@ -165,7 +164,6 @@ defmodule DataModel.Task.Macro do
 
             @doc """
             Returns the environment name for Slack notifications.
-            Reads from environment variable at runtime if slack_env_var is configured.
             """
             def slack_env() do
                 case @task_config[:slack_env_var] do
@@ -265,7 +263,6 @@ defmodule DataModel.Task.Macro do
 
             @doc """
             Returns the identifier of the table in BigQuery.
-            Resolves at runtime if table_key_path is configured.
             """
             def table_id() do
                 case @task_config[:table_key_path] do
@@ -498,7 +495,6 @@ defmodule DataModel.Task.Macro do
 
                 Logger.error(msg)
 
-                # Send to Slack if webhook is configured
                 case slack_webhook_url() do
                     nil -> :ok
                     url when is_binary(url) and url != "" ->
