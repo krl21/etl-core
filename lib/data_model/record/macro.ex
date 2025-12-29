@@ -60,10 +60,13 @@ defmodule DataModel.Record.Macro do
     ### Parameters:
     - `opts`: Keyword list with:
         - `app`: Atom. Application name (for config)
-        - `table_key`: Atom. Key to obtain the table name
+        - `table_key`: Atom. Key to obtain the table name from [:bigquery, :table, table_key] (static)
+        - `table_key_path`: List. Path to resolve table from config at runtime (e.g. [:bigquery, :table, :record])
         - `batch_size_key`: Atom. Key to obtain the batch size
         - `unique_id`: InfoAttr. Attribute that uniquely identifies the record
         - `timestamp`: InfoAttr. Timestamp attribute (optional)
+        - `slack_webhook_url_path`: List. Path to resolve Slack webhook URL from config at runtime (optional)
+        - `slack_env_var`: String. Environment variable name to read at runtime for slack_env (optional)
     """
     defmacro entity_config(opts) do
         quote do
@@ -73,8 +76,8 @@ defmodule DataModel.Record.Macro do
                 raise "entity_config requires :app option"
             end
 
-            unless Keyword.has_key?(opts, :table_key) do
-                raise "entity_config requires :table_key option"
+            unless Keyword.has_key?(opts, :table_key) or Keyword.has_key?(opts, :table_key_path) do
+                raise "entity_config requires :table_key or :table_key_path option"
             end
 
             unless Keyword.has_key?(opts, :batch_size_key) do
@@ -121,6 +124,23 @@ defmodule DataModel.Record.Macro do
             def application_name(), do: @entity_config[:app]
 
             @doc """
+            Returns the BigQuery table identifier.
+            Resolves at runtime if table_key_path is configured.
+
+            ### Returns:
+                - String. The full table name.
+            """
+            def table_id() do
+                case @entity_config[:table_key_path] do
+                    nil ->
+                        # Legacy: use table_key to access [:bigquery, :table, table_key]
+                        Application.get_env(@entity_config[:app], :bigquery)[:table][@entity_config[:table_key]]
+                    path when is_list(path) ->
+                        get_in(Application.get_env(@entity_config[:app], hd(path)) || %{}, tl(path))
+                end
+            end
+
+            @doc """
             Returns the batch size for chunking insert operations.
 
             Gets the value from `Application.get_env/2` using the application name
@@ -138,7 +158,33 @@ defmodule DataModel.Record.Macro do
                 Application.get_env(
                     @entity_config[:app],
                     @entity_config[:batch_size_key]
-                )
+                ) || 100
+            end
+
+            @doc """
+            Returns the Slack webhook URL for error notifications.
+            Resolves at runtime if slack_webhook_url_path is configured.
+            """
+            def slack_webhook_url() do
+                case @entity_config[:slack_webhook_url_path] do
+                    nil ->
+                        @entity_config[:slack_webhook_url]
+                    path when is_list(path) ->
+                        get_in(Application.get_env(@entity_config[:app], hd(path)) || %{}, tl(path))
+                end
+            end
+
+            @doc """
+            Returns the environment name for Slack notifications.
+            Reads from environment variable at runtime if slack_env_var is configured.
+            """
+            def slack_env() do
+                case @entity_config[:slack_env_var] do
+                    nil ->
+                        @entity_config[:slack_env] || "unknown"
+                    var_name when is_binary(var_name) ->
+                        System.get_env(var_name) || @entity_config[:slack_env] || "unknown"
+                end
             end
         end
     end
@@ -482,7 +528,7 @@ defmodule DataModel.Record.Macro do
 
             @doc """
             Handles errors during record processing.
-            Override to implement custom error handling (e.g., Slack notifications).
+            Logs the error and sends a Slack notification if webhook is configured.
 
             ### Parameters:
                 - `batch_id`: Batch identifier
@@ -494,14 +540,28 @@ defmodule DataModel.Record.Macro do
                 require Logger
 
                 msg = """
-                Module: #{inspect(context[:module] || __MODULE__)}.
-                Function: #{inspect(context[:function])}.
-                Record Id: #{inspect(unique_id)}.
-                Batch Id: #{inspect(batch_id)}.
+                [#{__MODULE__} Error]
+                Module: #{inspect(context[:module] || __MODULE__)}
+                Function: #{inspect(context[:function])}
+                Record Id: #{inspect(unique_id)}
+                Batch Id: #{inspect(batch_id)}
                 Error: #{inspect(error)}
                 """
 
                 Logger.error(msg)
+
+                # Send to Slack if webhook is configured
+                case slack_webhook_url() do
+                    nil -> :ok
+                    url when is_binary(url) and url != "" ->
+                        Notification.Notify.notify_slack(
+                            url,
+                            [{"Content-Type", "application/json"}],
+                            slack_env(),
+                            msg
+                        )
+                    _ -> :ok
+                end
             end
             defoverridable handle_processing_error: 4
 

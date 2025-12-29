@@ -82,7 +82,8 @@ defmodule DataModel.Task.Macro do
     ### Parameters:
     - `opts`: Keyword list with:
         - `app`: Atom. Application name (for config)
-        - `table_key`: Atom. Key to obtain the table name from config
+        - `table_key`: Atom. Key to obtain the table name from [:bigquery, :table, table_key] (static)
+        - `table_key_path`: List. Path to resolve table from config at runtime (e.g. [:bigquery, :table, :task])
         - `group_by_keys`: List of InfoAttr. Attributes to group payloads by (e.g., [@contentref, @name])
         - `timestamp`: InfoAttr. Timestamp attribute (optional, defaults to basic timestamp)
         - `elapsed_time_config`: Map with elapsed time configuration (optional):
@@ -90,6 +91,8 @@ defmodule DataModel.Task.Macro do
             - `end_date_attr`: InfoAttr for end date
             - `target_attr`: InfoAttr for the computed elapsed time field
             - `business`: Atom. Business type for working time calculation
+        - `slack_webhook_url_path`: List. Path to resolve Slack webhook URL from config at runtime (optional)
+        - `slack_env_var`: String. Environment variable name to read at runtime for slack_env (optional)
     """
     defmacro task_config(opts) do
         quote do
@@ -99,8 +102,8 @@ defmodule DataModel.Task.Macro do
                 raise "task_config requires :app option"
             end
 
-            unless Keyword.has_key?(opts, :table_key) do
-                raise "task_config requires :table_key option"
+            unless Keyword.has_key?(opts, :table_key) or Keyword.has_key?(opts, :table_key_path) do
+                raise "task_config requires :table_key or :table_key_path option"
             end
 
             unless Keyword.has_key?(opts, :group_by_keys) do
@@ -146,6 +149,32 @@ defmodule DataModel.Task.Macro do
             """
             @spec elapsed_time_config() :: map() | nil
             def elapsed_time_config(), do: @task_config[:elapsed_time_config]
+
+            @doc """
+            Returns the Slack webhook URL for error notifications.
+            Resolves at runtime if slack_webhook_url_path is configured.
+            """
+            def slack_webhook_url() do
+                case @task_config[:slack_webhook_url_path] do
+                    nil ->
+                        @task_config[:slack_webhook_url]
+                    path when is_list(path) ->
+                        get_in(Application.get_env(@task_config[:app], hd(path)) || %{}, tl(path))
+                end
+            end
+
+            @doc """
+            Returns the environment name for Slack notifications.
+            Reads from environment variable at runtime if slack_env_var is configured.
+            """
+            def slack_env() do
+                case @task_config[:slack_env_var] do
+                    nil ->
+                        @task_config[:slack_env] || "unknown"
+                    var_name when is_binary(var_name) ->
+                        System.get_env(var_name) || @task_config[:slack_env] || "unknown"
+                end
+            end
         end
     end
 
@@ -235,10 +264,17 @@ defmodule DataModel.Task.Macro do
             end
 
             @doc """
-            Returns the identifier of the table in BigQuery
+            Returns the identifier of the table in BigQuery.
+            Resolves at runtime if table_key_path is configured.
             """
             def table_id() do
-                Application.get_env(application_name(), :bigquery)[:table][@task_config[:table_key]]
+                case @task_config[:table_key_path] do
+                    nil ->
+                        # Legacy: use table_key to access [:bigquery, :table, table_key]
+                        Application.get_env(application_name(), :bigquery)[:table][@task_config[:table_key]]
+                    path when is_list(path) ->
+                        get_in(Application.get_env(@task_config[:app], hd(path)) || %{}, tl(path))
+                end
             end
 
             # ============================================
@@ -437,7 +473,7 @@ defmodule DataModel.Task.Macro do
 
             @doc """
             Handles errors during task processing.
-            Override to implement custom error handling (e.g., Slack notifications).
+            Logs the error and sends a Slack notification if webhook is configured.
 
             ### Parameters:
                 - `batch_id`: String. Batch identifier
@@ -451,15 +487,29 @@ defmodule DataModel.Task.Macro do
                 {contentref, name} = parse_composite_key(composite_key)
 
                 msg = """
-                Module: #{inspect(context[:module] || __MODULE__)}.
-                Function: #{inspect(context[:function])}.
-                #{if contentref, do: "Contentref: #{inspect(contentref)}.", else: ""}
-                #{if name, do: "Name: #{inspect(name)}.", else: ""}
-                Batch Id: #{inspect(batch_id)}.
+                [#{__MODULE__} Error]
+                Module: #{inspect(context[:module] || __MODULE__)}
+                Function: #{inspect(context[:function])}
+                #{if contentref, do: "Contentref: #{inspect(contentref)}", else: ""}
+                #{if name, do: "Name: #{inspect(name)}", else: ""}
+                Batch Id: #{inspect(batch_id)}
                 Error: #{inspect(error)}
                 """
 
                 Logger.error(msg)
+
+                # Send to Slack if webhook is configured
+                case slack_webhook_url() do
+                    nil -> :ok
+                    url when is_binary(url) and url != "" ->
+                        Notification.Notify.notify_slack(
+                            url,
+                            [{"Content-Type", "application/json"}],
+                            slack_env(),
+                            msg
+                        )
+                    _ -> :ok
+                end
             end
             defoverridable handle_processing_error: 4
 

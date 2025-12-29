@@ -53,13 +53,17 @@ defmodule DataModel.RecordPg.Macro do
     ### Parameters
         - opts (Keyword) - Configuration options:
             - app (Atom) - Application name for config lookup
-            - table_name (String) - PostgreSQL table name
+            - table_name (String) - PostgreSQL table name (static value)
+            - table_name_path (List) - Path to resolve table name from config at runtime (e.g. [:postgres, :tables]). Use this instead of table_name for releases where env vars are set at runtime.
             - batch_size_key (Atom) - Key to obtain batch size from config
             - unique_id (InfoAttr) - Attribute that uniquely identifies the record
             - timestamp (InfoAttr, optional) - Timestamp attribute
-            - value_type (String, optional) - Value for the 'tipo' field in records. Defaults to table_name if not provided.
+            - value_type (String) - Value for the 'tipo' field in records (static value)
+            - value_type_path (List) - Path to resolve value_type from config at runtime
             - slack_webhook_url (String, optional) - Slack webhook URL for error notifications
+            - slack_webhook_url_path (List, optional) - Path to resolve Slack webhook URL from config at runtime
             - slack_env (String, optional) - Environment name for Slack notifications. Defaults to "unknown"
+            - slack_env_var (String, optional) - Environment variable name to read at runtime for slack_env
     """
     defmacro entity_config(opts) do
         quote do
@@ -69,8 +73,8 @@ defmodule DataModel.RecordPg.Macro do
                 raise "entity_config requires :app option"
             end
 
-            unless Keyword.has_key?(opts, :table_name) do
-                raise "entity_config requires :table_name option"
+            unless Keyword.has_key?(opts, :table_name) or Keyword.has_key?(opts, :table_name_path) do
+                raise "entity_config requires :table_name or :table_name_path option"
             end
 
             unless Keyword.has_key?(opts, :batch_size_key) do
@@ -102,26 +106,59 @@ defmodule DataModel.RecordPg.Macro do
 
             @doc """
             Returns the PostgreSQL table name.
+            Resolves at runtime if table_name_path is configured.
             """
-            def table_name(), do: @entity_config[:table_name]
+            def table_name() do
+                case @entity_config[:table_name_path] do
+                    nil ->
+                        @entity_config[:table_name]
+                    path when is_list(path) ->
+                        get_in(Application.get_env(@entity_config[:app], hd(path)) || %{}, tl(path))
+                        |> case do
+                            list when is_list(list) -> List.first(list)
+                            value -> value
+                        end
+                end
+            end
 
             @doc """
             Returns the value for the 'tipo' field in records.
-            Defaults to table_name if not explicitly configured.
+            Resolves at runtime if value_type_path is configured.
             """
-            def value_type(), do: @entity_config[:value_type] || @entity_config[:table_name]
+            def value_type() do
+                case @entity_config[:value_type_path] do
+                    nil ->
+                        @entity_config[:value_type] || table_name()
+                    path when is_list(path) ->
+                        get_in(Application.get_env(@entity_config[:app], hd(path)) || %{}, tl(path)) || table_name()
+                end
+            end
 
             @doc """
             Returns the Slack webhook URL for error notifications.
-            Returns nil if not configured.
+            Resolves at runtime if slack_webhook_url_path is configured.
             """
-            def slack_webhook_url(), do: @entity_config[:slack_webhook_url]
+            def slack_webhook_url() do
+                case @entity_config[:slack_webhook_url_path] do
+                    nil ->
+                        @entity_config[:slack_webhook_url]
+                    path when is_list(path) ->
+                        get_in(Application.get_env(@entity_config[:app], hd(path)) || %{}, tl(path))
+                end
+            end
 
             @doc """
             Returns the environment name for Slack notifications.
-            Defaults to "unknown" if not configured.
+            Reads from environment variable at runtime if slack_env_var is configured.
             """
-            def slack_env(), do: @entity_config[:slack_env] || "unknown"
+            def slack_env() do
+                case @entity_config[:slack_env_var] do
+                    nil ->
+                        @entity_config[:slack_env] || "unknown"
+                    var_name when is_binary(var_name) ->
+                        System.get_env(var_name) || @entity_config[:slack_env] || "unknown"
+                end
+            end
 
             @doc """
             Returns the batch size for chunking insert operations.

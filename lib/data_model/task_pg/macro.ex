@@ -34,9 +34,9 @@ defmodule DataModel.TaskPg.Macro do
 
         task_config(
             app: :my_app,
-            table_name: "tasks",
+            table_name_path: [:postgres, :tables],  # Resolved at runtime
             group_by_keys: [@contentref, @name],
-            value_type: "tarea",
+            value_type_path: [:postgres, :register_type, :task],  # Resolved at runtime
             elapsed_time_config: %{
                 start_date_attr: @start_date,
                 end_date_attr: @end_date,
@@ -44,7 +44,7 @@ defmodule DataModel.TaskPg.Macro do
                 business: :my_business
             },
             slack_webhook_url_path: [:notification, :slack_webhook, :url, :bug],
-            slack_env_var: System.get_env("ENVIRONMENT")
+            slack_env_var: "ENVIRONMENT"  # Name of env var, resolved at runtime
         )
 
         own_attributes [
@@ -87,17 +87,19 @@ defmodule DataModel.TaskPg.Macro do
     ### Parameters:
     - `opts`: Keyword list with:
         - `app`: Atom. Application name (for config)
-        - `table_name`: String. PostgreSQL table name
+        - `table_name`: String. PostgreSQL table name (static value)
+        - `table_name_path`: List. Path to resolve table name from config at runtime (e.g. [:postgres, :tables])
         - `group_by_keys`: List of InfoAttr. Attributes to group payloads by (e.g., [@contentref, @name])
         - `timestamp`: InfoAttr. Timestamp attribute (optional, defaults to basic timestamp)
-        - `value_type`: String. Value for 'tipo' field (optional, defaults to table_name)
+        - `value_type`: String. Value for 'tipo' field (static value, optional, defaults to table_name)
+        - `value_type_path`: List. Path to resolve value_type from config at runtime
         - `elapsed_time_config`: Map with elapsed time configuration (optional):
             - `start_date_attr`: InfoAttr for start date
             - `end_date_attr`: InfoAttr for end date
             - `target_attr`: InfoAttr for the computed elapsed time field
             - `business`: Atom. Business type for working time calculation
         - `slack_webhook_url_path`: List. Path to get Slack webhook URL from config (optional)
-        - `slack_env_var`: String. Environment variable for Slack notifications (optional)
+        - `slack_env_var`: String. Environment variable name for Slack notifications (optional)
     """
     defmacro task_config(opts) do
         quote do
@@ -107,8 +109,8 @@ defmodule DataModel.TaskPg.Macro do
                 raise "task_config requires :app option"
             end
 
-            unless Keyword.has_key?(opts, :table_name) do
-                raise "task_config requires :table_name option"
+            unless Keyword.has_key?(opts, :table_name) or Keyword.has_key?(opts, :table_name_path) do
+                raise "task_config requires :table_name or :table_name_path option"
             end
 
             unless Keyword.has_key?(opts, :group_by_keys) do
@@ -128,22 +130,41 @@ defmodule DataModel.TaskPg.Macro do
 
             @doc """
             Returns the PostgreSQL table name.
+            Resolves at runtime if table_name_path is configured.
 
             ### Returns:
                 - String. The table name.
             """
             @spec table_name() :: String.t()
-            def table_name(), do: @task_config[:table_name]
+            def table_name() do
+                case @task_config[:table_name_path] do
+                    nil ->
+                        @task_config[:table_name]
+                    path when is_list(path) ->
+                        get_in(Application.get_env(@task_config[:app], hd(path)) || %{}, tl(path))
+                        |> case do
+                            list when is_list(list) -> List.last(list)
+                            value -> value
+                        end
+                end
+            end
 
             @doc """
             Returns the value for the 'tipo' field in records.
-            Defaults to table_name if not explicitly configured.
+            Resolves at runtime if value_type_path is configured.
 
             ### Returns:
                 - String. The type value.
             """
             @spec value_type() :: String.t()
-            def value_type(), do: @task_config[:value_type] || @task_config[:table_name]
+            def value_type() do
+                case @task_config[:value_type_path] do
+                    nil ->
+                        @task_config[:value_type] || table_name()
+                    path when is_list(path) ->
+                        get_in(Application.get_env(@task_config[:app], hd(path)) || %{}, tl(path)) || table_name()
+                end
+            end
 
             @doc """
             Returns the list of attributes used for grouping payloads.
@@ -190,9 +211,16 @@ defmodule DataModel.TaskPg.Macro do
 
             @doc """
             Returns the environment name for Slack notifications.
-            Defaults to "unknown" if not configured.
+            Reads from environment variable at runtime if slack_env_var is configured.
             """
-            def slack_env(), do: @task_config[:slack_env_var] || "unknown"
+            def slack_env() do
+                case @task_config[:slack_env_var] do
+                    nil ->
+                        @task_config[:slack_env] || "unknown"
+                    var_name when is_binary(var_name) ->
+                        System.get_env(var_name) || @task_config[:slack_env] || "unknown"
+                end
+            end
         end
     end
 
