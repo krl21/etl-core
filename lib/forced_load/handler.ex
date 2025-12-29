@@ -106,12 +106,12 @@ defmodule ForcedLoad.Handler do
     """
 
     require Logger
-    alias Connection.Ticket
     alias Connection.ElasticSearch
     alias Connection.NodeService
     alias Connection.WorkflowService
     alias Connection.Odbc
     alias Statement.Sql
+    alias ForcedLoad.Helpers
     import Time.Timem, only: [by_intervals: 3]
 
 
@@ -176,7 +176,7 @@ defmodule ForcedLoad.Handler do
 
         business_name = Map.get(config, :business_name, "UNKNOWN")
 
-        notify(config,
+        Helpers.notify(config,
             """
             *-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*
             FORCED LOAD. #{business_name}
@@ -191,13 +191,13 @@ defmodule ForcedLoad.Handler do
         {:ok, intervals} = by_intervals(start_date, end_date, step)
 
         # Open AMQP connection
-        amqp_config = get_amqp_config(config)
+        amqp_config = Helpers.get_amqp_config(config)
         {:ok, connection} = AMQP.Connection.open(amqp_config)
         {:ok, channel} = AMQP.Channel.open(connection)
 
         bq_pid = unless Map.get(config, :skip_bigquery, false) do
-            bq_config = get_bigquery_config(config)
-            notify(config, "Opening BigQuery connection...", :info)
+            bq_config = Helpers.get_bigquery_config(config)
+            Helpers.notify(config, "Opening BigQuery connection...", :info)
             Odbc.connect(bq_config)
         end
 
@@ -215,7 +215,7 @@ defmodule ForcedLoad.Handler do
                 )
             end)
 
-            notify(config,
+            Helpers.notify(config,
                 """
                 *-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*
                 FORCED LOAD. #{business_name}
@@ -228,7 +228,7 @@ defmodule ForcedLoad.Handler do
             :ok
         after
             if bq_pid do
-                notify(config, "Closing BigQuery connection...", :info)
+                Helpers.notify(config, "Closing BigQuery connection...", :info)
                 Odbc.disconnect(bq_pid)
             end
             # Close AMQP connection
@@ -241,7 +241,7 @@ defmodule ForcedLoad.Handler do
     # INTERVAL PROCESSING
     # ============================================
 
-
+    #
     # Processes a single time interval: fetches IDs, splits into batches, and loads records/tasks.
     #
     # ### Parameters
@@ -252,8 +252,9 @@ defmodule ForcedLoad.Handler do
     #     - includes_record: boolean. Whether to load records
     #     - includes_task: boolean. Whether to load tasks
     #     - config: map. Configuration options
+    #
     defp process_interval(start_date, end_date, channel, bq_pid, includes_record, includes_task, config) do
-        notify(config,
+        Helpers.notify(config,
             "Start of forced charge between #{to_string(start_date)} and #{to_string(end_date)}",
             :info
         )
@@ -266,25 +267,25 @@ defmodule ForcedLoad.Handler do
         batches = Enum.chunk_every(ids, batch_size)
         total_batches = length(batches)
 
-        notify(config, "Total IDs to process: #{length(ids)} in #{total_batches} batches", :info)
+        Helpers.notify(config, "Total IDs to process: #{length(ids)} in #{total_batches} batches", :info)
 
         batches
         |> Enum.with_index(1)
         |> Enum.each(fn {batch, batch_number} ->
-            notify(config, "Batch #{batch_number}/#{total_batches} - Processing #{length(batch)} IDs", :info)
+            Helpers.notify(config, "Batch #{batch_number}/#{total_batches} - Processing #{length(batch)} IDs", :info)
 
             # Callback: on_batch_start
             if callback = Map.get(config, :on_batch_start) do
                 callback.(batch, batch_number)
             end
 
-            ticket = get_ticket(config)
+            ticket = Helpers.get_ticket(config)
 
             # Load records
             records_loaded = if includes_record do
-                notify(config, "\tLoading records...", :info)
+                Helpers.notify(config, "\tLoading records...", :info)
                 count = load_records(batch, ticket, channel, true, config)
-                notify(config, "\tRecords loaded: #{count}/#{length(batch)}", :info)
+                Helpers.notify(config, "\tRecords loaded: #{count}/#{length(batch)}", :info)
                 count
             else
                 0
@@ -292,9 +293,9 @@ defmodule ForcedLoad.Handler do
 
             # Load tasks
             tasks_loaded = if includes_task do
-                notify(config, "\tLoading tasks...", :info)
+                Helpers.notify(config, "\tLoading tasks...", :info)
                 count = load_tasks(batch, ticket, channel, true, config)
-                notify(config, "\tTasks loaded: #{count}/#{length(batch)}", :info)
+                Helpers.notify(config, "\tTasks loaded: #{count}/#{length(batch)}", :info)
                 count
             else
                 0
@@ -307,12 +308,12 @@ defmodule ForcedLoad.Handler do
                 callback.(batch, batch_number, results)
             end
 
-            notify(config, "Batch #{batch_number}/#{total_batches} - Completed", :info)
+            Helpers.notify(config, "Batch #{batch_number}/#{total_batches} - Completed", :info)
 
             if batch_delay > 0, do: :timer.sleep(batch_delay)
         end)
 
-        notify(config,
+        Helpers.notify(config,
             "End of forced charge between #{to_string(start_date)} and #{to_string(end_date)}. Number of records processed: #{length(ids)}",
             :info
         )
@@ -324,6 +325,7 @@ defmodule ForcedLoad.Handler do
     # ============================================
 
 
+    #
     # Fetches unique IDs from both BigQuery and ElasticSearch, applies optional filter.
     #
     # ### Parameters
@@ -334,6 +336,7 @@ defmodule ForcedLoad.Handler do
     #
     # ### Returns
     #     - list. Unique IDs from both sources, optionally filtered
+    #
     defp fetch_all_ids(start_date, end_date, bq_pid, config) do
         bq_ids = fetch_ids_from_bigquery(start_date, end_date, bq_pid, config)
         es_ids = fetch_ids_from_elasticsearch(start_date, end_date, config)
@@ -348,13 +351,21 @@ defmodule ForcedLoad.Handler do
     end
 
 
-
+    #
     # Fetches IDs from BigQuery using the provided connection or custom function.
-    # Returns empty list if bq_pid is nil (BigQuery skipped).
+    #
+    # ### Parameters
+    #     - start_date: DateTime. Start of date range
+    #     - end_date: DateTime. End of date range
+    #     - bq_pid: pid. BigQuery ODBC connection process
+    #     - config: map. Configuration options
+    #
+    # ### Returns
+    #     - list. List of unique IDs from BigQuery
+    #
     defp fetch_ids_from_bigquery(_start_date, _end_date, nil, _config), do: []
 
     defp fetch_ids_from_bigquery(start_date, end_date, bq_pid, config) do
-        # Use custom function if provided
         case Map.get(config, :get_ids_fn) do
             nil -> default_get_ids_bq(start_date, end_date, bq_pid, config)
             custom_fn -> custom_fn.(start_date, end_date, bq_pid, config)
@@ -362,14 +373,23 @@ defmodule ForcedLoad.Handler do
     end
 
 
-
-    # Fetches IDs from ElasticSearch based on date range.
-    # Returns empty list if :skip_elasticsearch is true in config.
+    #
+    # Fetches IDs from BigQuery using the provided connection or custom function.
+    # Returns empty list if bq_pid is nil (BigQuery skipped).
+    #
+    # ### Parameters
+    #     - start_date: DateTime. Start of date range
+    #     - end_date: DateTime. End of date range
+    #     - bq_pid: pid. BigQuery ODBC connection process
+    #     - config: map. Configuration options
+    #
+    # ### Returns
+    #     - list. List of unique IDs from BigQuery
+    #
     defp fetch_ids_from_elasticsearch(start_date, end_date, config) do
         if Map.get(config, :skip_elasticsearch, false) do
             []
         else
-            # Use custom function if provided
             case Map.get(config, :get_ids_es_fn) do
                 nil -> default_get_ids_es(start_date, end_date, config)
                 custom_fn -> custom_fn.(start_date, end_date, config)
@@ -378,7 +398,7 @@ defmodule ForcedLoad.Handler do
     end
 
 
-
+    #
     # Default implementation for fetching IDs from BigQuery.
     # Builds SQL SELECT query and executes against BigQuery via ODBC.
     #
@@ -390,6 +410,7 @@ defmodule ForcedLoad.Handler do
     #
     # ### Returns
     #     - list. List of unique IDs from BigQuery
+    #
     defp default_get_ids_bq(start_date, end_date, bq_pid, config) do
         bigquery_table = Map.fetch!(config, :bigquery_table)
         unique_id_field = Map.fetch!(config, :unique_id_field)
@@ -420,13 +441,13 @@ defmodule ForcedLoad.Handler do
             |> Enum.map(fn [{_, id}] -> id end)
         rescue
             error ->
-                notify(config, "Error fetching IDs from BigQuery: #{inspect(error)}", :error)
+                Helpers.notify(config, "Error fetching IDs from BigQuery: #{inspect(error)}", :error)
                 []
         end
     end
 
 
-
+    #
     # Default implementation for fetching IDs from ElasticSearch.
     # Queries ElasticSearch for documents within the date range.
     #
@@ -437,11 +458,12 @@ defmodule ForcedLoad.Handler do
     #
     # ### Returns
     #     - list. List of unique IDs from ElasticSearch
+    #
     defp default_get_ids_es(start_date, end_date, config) do
         documentary_type = Map.fetch!(config, :documentary_type)
         unique_id_payload_field = Map.fetch!(config, :unique_id_payload_field)
         last_update_payload_field = Map.fetch!(config, :last_update_payload_field)
-        es_config = get_elasticsearch_config(config)
+        es_config = Helpers.get_elasticsearch_config(config)
 
         ElasticSearch.get_from_range(
             es_config.url,
@@ -456,7 +478,7 @@ defmodule ForcedLoad.Handler do
         |> case do
             {:ok, list} -> list
             {:error, error} ->
-                notify(config, "Error fetching IDs from ElasticSearch: #{inspect(error)}", :error)
+                Helpers.notify(config, "Error fetching IDs from ElasticSearch: #{inspect(error)}", :error)
                 []
         end
     end
@@ -466,7 +488,7 @@ defmodule ForcedLoad.Handler do
     # RECORD LOADING
     # ============================================
 
-
+    #
     # Loads records for a batch of IDs and publishes them to AMQP queue.
     #
     # ### Parameters
@@ -478,10 +500,10 @@ defmodule ForcedLoad.Handler do
     #
     # ### Returns
     #     - integer. Number of records successfully loaded
+    #
     defp load_records(_ids, _ticket, _channel, false, _config), do: 0
 
     defp load_records(ids, ticket, channel, true, config) do
-        # Use custom function if provided
         load_fn = Map.get(config, :load_record_fn, &default_load_record/4)
 
         ids
@@ -494,7 +516,7 @@ defmodule ForcedLoad.Handler do
     end
 
 
-
+    #
     # Default implementation for loading a single record.
     # Fetches record from NodeService and publishes to AMQP queue.
     #
@@ -507,9 +529,10 @@ defmodule ForcedLoad.Handler do
     # ### Returns
     #     - :ok on success
     #     - {:error, reason} on failure
+    #
     defp default_load_record(unique_id, ticket, channel, config) do
         record_queue = Map.fetch!(config, :record_queue)
-        ns_config = get_nodeservice_config(config)
+        ns_config = Helpers.get_nodeservice_config(config)
 
         try do
             NodeService.get_details(unique_id, ns_config.url, ns_config.headers, ticket)
@@ -518,7 +541,7 @@ defmodule ForcedLoad.Handler do
                     if callback = Map.get(config, :on_record_error) do
                         callback.(unique_id, error)
                     else
-                        notify(config, "Error getting record #{unique_id} from NodeService: #{inspect(error)}", :error)
+                        Helpers.notify(config, "Error getting record #{unique_id} from NodeService: #{inspect(error)}", :error)
                     end
                     {:error, error}
 
@@ -545,7 +568,7 @@ defmodule ForcedLoad.Handler do
             end
         rescue
             error ->
-                notify(config, "Error loading record #{unique_id} from NodeService: #{inspect(error)}", :error)
+                Helpers.notify(config, "Error loading record #{unique_id} from NodeService: #{inspect(error)}", :error)
                 {:error, error}
         end
     end
@@ -555,7 +578,7 @@ defmodule ForcedLoad.Handler do
     # TASK LOADING
     # ============================================
 
-
+    #
     # Loads tasks for a batch of content references and publishes them to AMQP queue.
     #
     # ### Parameters
@@ -567,10 +590,10 @@ defmodule ForcedLoad.Handler do
     #
     # ### Returns
     #     - integer. Number of content references with tasks successfully loaded
+    #
     defp load_tasks(_ids, _ticket, _channel, false, _config), do: 0
 
     defp load_tasks(ids, ticket, channel, true, config) do
-        # Use custom function if provided
         load_fn = Map.get(config, :load_task_fn, &default_load_task/4)
 
         ids
@@ -583,7 +606,7 @@ defmodule ForcedLoad.Handler do
     end
 
 
-
+    #
     # Default implementation for loading tasks for a single content reference.
     # Fetches tasks from WorkflowService and publishes each to AMQP queue.
     #
@@ -596,10 +619,11 @@ defmodule ForcedLoad.Handler do
     # ### Returns
     #     - :ok on success
     #     - {:error, reason} on failure
+    #
     defp default_load_task(contentref, ticket, channel, config) do
         task_queue = Map.fetch!(config, :task_queue)
         documentary_type = Map.fetch!(config, :documentary_type)
-        ws_config = get_workflowservice_config(config)
+        ws_config = Helpers.get_workflowservice_config(config)
 
         try do
             WorkflowService.get_details(ws_config.url, ws_config.headers, documentary_type, contentref, ticket)
@@ -608,7 +632,7 @@ defmodule ForcedLoad.Handler do
                     if callback = Map.get(config, :on_task_error) do
                         callback.(contentref, error)
                     else
-                        notify(config, "Error getting tasks for #{contentref} from WorkflowService: #{inspect(error)}", :error)
+                        Helpers.notify(config, "Error getting tasks for #{contentref} from WorkflowService: #{inspect(error)}", :error)
                     end
                     {:error, error}
 
@@ -639,236 +663,8 @@ defmodule ForcedLoad.Handler do
             end
         rescue
             error ->
-                notify(config, "Error loading tasks for #{contentref} from WorkflowService: #{inspect(error)}", :error)
+                Helpers.notify(config, "Error loading tasks for #{contentref} from WorkflowService: #{inspect(error)}", :error)
                 {:error, error}
-        end
-    end
-
-
-    # ============================================
-    # HELPER FUNCTIONS
-    # ============================================
-
-
-    # Obtains an authentication ticket from the Ticket service.
-    #
-    # ### Parameters
-    #     - config: map. Configuration with ticket service credentials
-    #
-    # ### Returns
-    #     - String. Authentication ticket on success
-    #     - nil on failure
-    defp get_ticket(config) do
-        ticket_config = get_ticket_config(config)
-
-        try do
-            Ticket.get(ticket_config.url, ticket_config.headers, ticket_config.username, ticket_config.password)
-            |> case do
-                {:ok, ticket} -> ticket
-                {:error, error} ->
-                    notify(config, "Failed to get ticket: #{inspect(error)}", :error)
-                    nil
-            end
-        rescue
-            error ->
-                notify(config, "Error getting ticket: #{inspect(error)}", :error)
-                nil
-        end
-    end
-
-
-    # ============================================
-    # CONFIG RESOLVERS
-    # ============================================
-
-
-    # Generic helper to get a value from Application config using a path of atoms.
-    #
-    # ### Parameters
-    #     - app_name: atom. Application name
-    #     - path: list. List of atoms representing the config path
-    #
-    # ### Returns
-    #     - The resolved value from Application config
-    #
-    # ### Example
-    #     get_from_app_config(:my_app, [:nodeservice, :url])
-    #     => Application.get_env(:my_app, :nodeservice)[:url]
-    defp get_from_app_config(app_name, path) when is_list(path) do
-        [key | rest] = path
-        app_config = Application.get_env(app_name, key)
-
-        case rest do
-            [] -> app_config
-            _ -> get_in(app_config, rest)
-        end
-    end
-
-
-
-    # Resolves ticket service configuration from config or Application config.
-    #
-    # ### Parameters
-    #     - config: map. Handler configuration
-    #
-    # ### Returns
-    #     - map. Ticket config with :url, :headers, :username, :password
-    defp get_ticket_config(config) do
-        case Map.get(config, :ticket_config) do
-            nil ->
-                app_name = Map.fetch!(config, :app_name)
-                %{
-                    url: get_from_app_config(app_name, Map.get(config, :ticket_url_path, [:ticket, :url])),
-                    headers: get_from_app_config(app_name, Map.get(config, :ticket_headers_path, [:ticket, :headers])),
-                    username: get_from_app_config(app_name, Map.get(config, :ticket_username_path, [:user, :totalcheck, :username])),
-                    password: get_from_app_config(app_name, Map.get(config, :ticket_password_path, [:user, :totalcheck, :password]))
-                }
-            ticket_config ->
-                ticket_config
-        end
-    end
-
-
-
-    # Resolves NodeService configuration from config or Application config.
-    #
-    # ### Parameters
-    #     - config: map. Handler configuration
-    #
-    # ### Returns
-    #     - map. NodeService config with :url and :headers
-    defp get_nodeservice_config(config) do
-        case Map.get(config, :nodeservice_config) do
-            nil ->
-                app_name = Map.fetch!(config, :app_name)
-                %{
-                    url: get_from_app_config(app_name, Map.get(config, :nodeservice_url_path, [:nodeservice, :url])),
-                    headers: get_from_app_config(app_name, Map.get(config, :nodeservice_headers_path, [:nodeservice, :headers]))
-                }
-            ns_config ->
-                ns_config
-        end
-    end
-
-
-
-    # Resolves WorkflowService configuration from config or Application config.
-    #
-    # ### Parameters
-    #     - config: map. Handler configuration
-    #
-    # ### Returns
-    #     - map. WorkflowService config with :url and :headers
-    defp get_workflowservice_config(config) do
-        case Map.get(config, :workflowservice_config) do
-            nil ->
-                app_name = Map.fetch!(config, :app_name)
-                %{
-                    url: get_from_app_config(app_name, Map.get(config, :workflowservice_url_path, [:workflowservice, :url])),
-                    headers: get_from_app_config(app_name, Map.get(config, :workflowservice_headers_path, [:workflowservice, :headers]))
-                }
-            ws_config ->
-                ws_config
-        end
-    end
-
-
-
-    # Resolves ElasticSearch configuration from config or Application config.
-    #
-    # ### Parameters
-    #     - config: map. Handler configuration
-    #
-    # ### Returns
-    #     - map. ElasticSearch config with :url and :headers
-    defp get_elasticsearch_config(config) do
-        case Map.get(config, :elasticsearch_config) do
-            nil ->
-                app_name = Map.fetch!(config, :app_name)
-                %{
-                    url: get_from_app_config(app_name, Map.get(config, :elasticsearch_url_path, [:elasticsearch, :url])),
-                    headers: get_from_app_config(app_name, Map.get(config, :elasticsearch_headers_path, [:elasticsearch, :headers]))
-                }
-            es_config ->
-                es_config
-        end
-    end
-
-
-
-    # Resolves BigQuery ODBC configuration from config or Application config.
-    #
-    # ### Parameters
-    #     - config: map. Handler configuration
-    #
-    # ### Returns
-    #     - keyword. BigQuery ODBC connection config
-    defp get_bigquery_config(config) do
-        case Map.get(config, :bigquery_config) do
-            nil ->
-                app_name = Map.fetch!(config, :app_name)
-                get_from_app_config(app_name, Map.get(config, :bigquery_path, [:bigquery]))
-            bq_config ->
-                bq_config
-        end
-    end
-
-
-
-    # Resolves AMQP connection configuration from config or Application config.
-    #
-    # ### Parameters
-    #     - config: map. Handler configuration
-    #
-    # ### Returns
-    #     - keyword. AMQP connection config
-    defp get_amqp_config(config) do
-        case Map.get(config, :amqp_config) do
-            nil ->
-                app_name = Map.fetch!(config, :app_name)
-                get_from_app_config(app_name, Map.get(config, :amqp_path, [:my_amqp_client, :connection]))
-            amqp_config ->
-                amqp_config
-        end
-    end
-
-
-
-    # Sends a notification using custom function or default implementation.
-    #
-    # ### Parameters
-    #     - config: map. Handler configuration (may contain :notification_fn)
-    #     - message: String. Message to send
-    #     - level: atom. Log level (:info, :error, :warning, :debug)
-    defp notify(config, message, level) do
-        case Map.get(config, :notification_fn) do
-            nil -> default_notify(config, message, level)
-            custom_fn -> custom_fn.(message, level)
-        end
-    end
-
-
-
-    # Default notification implementation: logs message and optionally sends to Slack.
-    #
-    # ### Parameters
-    #     - config: map. Handler configuration with optional :slack_notification_url, :slack_notification_headers, :environment
-    #     - message: String. Message to send
-    #     - level: atom. Log level (:info, :error, :warning, :debug)
-    defp default_notify(config, message, level) do
-        webhook_url = Map.get(config, :slack_notification_url)
-        headers = Map.get(config, :slack_notification_headers)
-        environment = Map.get(config, :environment)
-
-        if webhook_url && headers do
-            Notification.Notify.notify_slack(webhook_url, headers, environment, message)
-        end
-
-        case level do
-            :info -> Logger.info(message)
-            :error -> Logger.error(message)
-            :warning -> Logger.warning(message)
-            _ -> Logger.debug(message)
         end
     end
 
