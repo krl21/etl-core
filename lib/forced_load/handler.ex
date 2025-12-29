@@ -24,14 +24,30 @@ defmodule ForcedLoad.Handler do
         - `:last_update_field` - Atom. Field name for last update timestamp in BigQuery (e.g., :ultima_actualizacion)
         - `:last_update_payload_field` - String. Field name for last update in ElasticSearch (e.g., "lastUpdate")
 
-    ### Optional - Data Sources (resolved from paths or provided directly)
+    ### Optional - Data Sources
+        You can provide the config directly or customize the path to resolve from Application config.
+
+        Direct config (takes precedence):
         - `:bigquery_config` - Keyword list. BigQuery ODBC config
-        - `:elasticsearch_url` - String. ElasticSearch URL
-        - `:elasticsearch_headers` - List. ElasticSearch headers
+        - `:elasticsearch_config` - Map with :url and :headers
         - `:amqp_config` - Keyword list. AMQP connection config
-        - `:ticket_config` - Map. Custom ticket config with :url, :headers, :username, :password
-        - `:nodeservice_config` - Map. Custom NodeService config with :url and :headers
-        - `:workflowservice_config` - Map. Custom WorkflowService config with :url and :headers
+        - `:ticket_config` - Map with :url, :headers, :username, :password
+        - `:nodeservice_config` - Map with :url and :headers
+        - `:workflowservice_config` - Map with :url and :headers
+
+        Path customization (list of atoms to index into Application config):
+        - `:bigquery_path` - Default: [:bigquery]
+        - `:elasticsearch_url_path` - Default: [:elasticsearch, :url]
+        - `:elasticsearch_headers_path` - Default: [:elasticsearch, :headers]
+        - `:amqp_path` - Default: [:my_amqp_client, :connection]
+        - `:ticket_url_path` - Default: [:ticket, :url]
+        - `:ticket_headers_path` - Default: [:ticket, :headers]
+        - `:ticket_username_path` - Default: [:user, :totalcheck, :username]
+        - `:ticket_password_path` - Default: [:user, :totalcheck, :password]
+        - `:nodeservice_url_path` - Default: [:nodeservice, :url]
+        - `:nodeservice_headers_path` - Default: [:nodeservice, :headers]
+        - `:workflowservice_url_path` - Default: [:workflowservice, :url]
+        - `:workflowservice_headers_path` - Default: [:workflowservice, :headers]
 
     ### Optional - Filters
         - `:id_filter` - Function. `(list_of_ids) -> filtered_list`. Filter IDs after fetching
@@ -122,6 +138,7 @@ defmodule ForcedLoad.Handler do
     def run(business, params, config) do
         case business do
             :record ->
+                IO.inspect(params, label: "params")
                 run_record_load(params, config)
 
             other ->
@@ -201,7 +218,6 @@ defmodule ForcedLoad.Handler do
                 """,
                 :info
             )
-
             :ok
         after
             # Close AMQP connection
@@ -225,29 +241,52 @@ defmodule ForcedLoad.Handler do
         batch_size = Map.get(config, :batch_size, @default_batch_size)
         batch_delay = Map.get(config, :batch_delay, @default_batch_delay)
 
-        ids
-        |> Enum.chunk_every(batch_size)
+        batches = Enum.chunk_every(ids, batch_size)
+        total_batches = length(batches)
+
+        notify(config, "Total IDs to process: #{length(ids)} in #{total_batches} batches", :info)
+
+        batches
         |> Enum.with_index(1)
         |> Enum.each(fn {batch, batch_number} ->
+            notify(config, "Batch #{batch_number}/#{total_batches} - Processing #{length(batch)} IDs", :info)
+
             # Callback: on_batch_start
             if callback = Map.get(config, :on_batch_start) do
                 callback.(batch, batch_number)
             end
 
-            # Get ticket for this batch
             ticket = get_ticket(config)
 
-            results = %{
-                records_loaded: load_records(batch, ticket, channel, includes_record, config),
-                tasks_loaded: load_tasks(batch, ticket, channel, includes_task, config)
-            }
+            # Load records
+            records_loaded = if includes_record do
+                notify(config, "\tLoading records...", :info)
+                count = load_records(batch, ticket, channel, true, config)
+                notify(config, "\tRecords loaded: #{count}/#{length(batch)}", :info)
+                count
+            else
+                0
+            end
+
+            # Load tasks
+            tasks_loaded = if includes_task do
+                notify(config, "\tLoading tasks...", :info)
+                count = load_tasks(batch, ticket, channel, true, config)
+                notify(config, "\tTasks loaded: #{count}/#{length(batch)}", :info)
+                count
+            else
+                0
+            end
+
+            results = %{records_loaded: records_loaded, tasks_loaded: tasks_loaded}
 
             # Callback: on_batch_end
             if callback = Map.get(config, :on_batch_end) do
                 callback.(batch, batch_number, results)
             end
 
-            # Delay between batches if configured
+            notify(config, "Batch #{batch_number}/#{total_batches} - Completed", :info)
+
             if batch_delay > 0, do: :timer.sleep(batch_delay)
         end)
 
@@ -303,13 +342,10 @@ defmodule ForcedLoad.Handler do
 
 
     defp default_get_ids_bq(start_date, end_date, config) do
-        app_name = Map.fetch!(config, :app_name)
         bigquery_table = Map.fetch!(config, :bigquery_table)
         unique_id_field = Map.fetch!(config, :unique_id_field)
         last_update_field = Map.fetch!(config, :last_update_field)
-
-        bq_config = Map.get(config, :bigquery_config) ||
-            Application.get_env(app_name, :bigquery)[:configuration]
+        bq_config = get_bigquery_config(config)
 
         statement = Sql.select(
             bigquery_table,
@@ -347,20 +383,14 @@ defmodule ForcedLoad.Handler do
 
 
     defp default_get_ids_es(start_date, end_date, config) do
-        app_name = Map.fetch!(config, :app_name)
         documentary_type = Map.fetch!(config, :documentary_type)
         unique_id_payload_field = Map.fetch!(config, :unique_id_payload_field)
         last_update_payload_field = Map.fetch!(config, :last_update_payload_field)
-
-        es_url = Map.get(config, :elasticsearch_url) ||
-            Application.get_env(app_name, :elasticsearch)[:url]
-
-        es_headers = Map.get(config, :elasticsearch_headers) ||
-            Application.get_env(app_name, :elasticsearch)[:headers]
+        es_config = get_elasticsearch_config(config)
 
         ElasticSearch.get_from_range(
-            es_url,
-            es_headers,
+            es_config.url,
+            es_config.headers,
             documentary_type,
             ElasticSearch.mode(),
             start_date |> Poison.encode!() |> Poison.decode!(),
@@ -398,13 +428,8 @@ defmodule ForcedLoad.Handler do
 
 
     defp default_load_record(unique_id, ticket, channel, config) do
-        app_name = Map.fetch!(config, :app_name)
         record_queue = Map.fetch!(config, :record_queue)
-
-        ns_config = Map.get(config, :nodeservice_config) || %{
-            url: Application.get_env(app_name, :nodeservice)[:url],
-            headers: Application.get_env(app_name, :nodeservice)[:headers]
-        }
+        ns_config = get_nodeservice_config(config)
 
         try do
             NodeService.get_details(unique_id, ns_config.url, ns_config.headers, ticket)
@@ -465,16 +490,10 @@ defmodule ForcedLoad.Handler do
         end)
     end
 
-
     defp default_load_task(contentref, ticket, channel, config) do
-        app_name = Map.fetch!(config, :app_name)
         task_queue = Map.fetch!(config, :task_queue)
         documentary_type = Map.fetch!(config, :documentary_type)
-
-        ws_config = Map.get(config, :workflowservice_config) || %{
-            url: Application.get_env(app_name, :workflowservice)[:url],
-            headers: Application.get_env(app_name, :workflowservice)[:headers]
-        }
+        ws_config = get_workflowservice_config(config)
 
         try do
             WorkflowService.get_details(ws_config.url, ws_config.headers, documentary_type, contentref, ticket)
@@ -524,26 +543,8 @@ defmodule ForcedLoad.Handler do
     # HELPER FUNCTIONS
     # ============================================
 
-    defp get_amqp_config(config) do
-        case Map.get(config, :amqp_config) do
-            nil ->
-                app_name = Map.fetch!(config, :app_name)
-                Application.get_env(app_name, :my_amqp_client)[:connection]
-            amqp_config ->
-                amqp_config
-        end
-    end
-
-
     defp get_ticket(config) do
-        app_name = Map.fetch!(config, :app_name)
-
-        ticket_config = Map.get(config, :ticket_config) || %{
-            url: Application.get_env(app_name, :ticket)[:url],
-            headers: Application.get_env(app_name, :ticket)[:headers],
-            username: Application.get_env(app_name, :user)[:totalcheck][:username],
-            password: Application.get_env(app_name, :user)[:totalcheck][:password]
-        }
+        ticket_config = get_ticket_config(config)
 
         try do
             Ticket.get(ticket_config.url, ticket_config.headers, ticket_config.username, ticket_config.password)
@@ -561,6 +562,105 @@ defmodule ForcedLoad.Handler do
     end
 
 
+    # ============================================
+    # CONFIG RESOLVERS
+    # ============================================
+
+    @doc false
+    # Generic helper to get a value from Application config using a path of atoms.
+    # Example: get_from_app_config(:my_app, [:nodeservice, :url])
+    #          => Application.get_env(:my_app, :nodeservice)[:url]
+    defp get_from_app_config(app_name, path) when is_list(path) do
+        [key | rest] = path
+        app_config = Application.get_env(app_name, key)
+
+        case rest do
+            [] -> app_config
+            _ -> get_in(app_config, rest)
+        end
+    end
+
+
+    defp get_ticket_config(config) do
+        case Map.get(config, :ticket_config) do
+            nil ->
+                app_name = Map.fetch!(config, :app_name)
+                %{
+                    url: get_from_app_config(app_name, Map.get(config, :ticket_url_path, [:ticket, :url])),
+                    headers: get_from_app_config(app_name, Map.get(config, :ticket_headers_path, [:ticket, :headers])),
+                    username: get_from_app_config(app_name, Map.get(config, :ticket_username_path, [:user, :totalcheck, :username])),
+                    password: get_from_app_config(app_name, Map.get(config, :ticket_password_path, [:user, :totalcheck, :password]))
+                }
+            ticket_config ->
+                ticket_config
+        end
+    end
+
+
+    defp get_nodeservice_config(config) do
+        case Map.get(config, :nodeservice_config) do
+            nil ->
+                app_name = Map.fetch!(config, :app_name)
+                %{
+                    url: get_from_app_config(app_name, Map.get(config, :nodeservice_url_path, [:nodeservice, :url])),
+                    headers: get_from_app_config(app_name, Map.get(config, :nodeservice_headers_path, [:nodeservice, :headers]))
+                }
+            ns_config ->
+                ns_config
+        end
+    end
+
+
+    defp get_workflowservice_config(config) do
+        case Map.get(config, :workflowservice_config) do
+            nil ->
+                app_name = Map.fetch!(config, :app_name)
+                %{
+                    url: get_from_app_config(app_name, Map.get(config, :workflowservice_url_path, [:workflowservice, :url])),
+                    headers: get_from_app_config(app_name, Map.get(config, :workflowservice_headers_path, [:workflowservice, :headers]))
+                }
+            ws_config ->
+                ws_config
+        end
+    end
+
+
+    defp get_elasticsearch_config(config) do
+        case Map.get(config, :elasticsearch_config) do
+            nil ->
+                app_name = Map.fetch!(config, :app_name)
+                %{
+                    url: get_from_app_config(app_name, Map.get(config, :elasticsearch_url_path, [:elasticsearch, :url])),
+                    headers: get_from_app_config(app_name, Map.get(config, :elasticsearch_headers_path, [:elasticsearch, :headers]))
+                }
+            es_config ->
+                es_config
+        end
+    end
+
+
+    defp get_bigquery_config(config) do
+        case Map.get(config, :bigquery_config) do
+            nil ->
+                app_name = Map.fetch!(config, :app_name)
+                get_from_app_config(app_name, Map.get(config, :bigquery_path, [:bigquery]))
+            bq_config ->
+                bq_config
+        end
+    end
+
+
+    defp get_amqp_config(config) do
+        case Map.get(config, :amqp_config) do
+            nil ->
+                app_name = Map.fetch!(config, :app_name)
+                get_from_app_config(app_name, Map.get(config, :amqp_path, [:my_amqp_client, :connection]))
+            amqp_config ->
+                amqp_config
+        end
+    end
+
+
     defp notify(config, message, level) do
         case Map.get(config, :notification_fn) do
             nil -> default_notify(config, message, level)
@@ -570,17 +670,9 @@ defmodule ForcedLoad.Handler do
 
 
     defp default_notify(config, message, level) do
-        app_name = Map.get(config, :app_name)
-
-        webhook_url = if app_name do
-            Application.get_env(app_name, :notification)[:slack_webhook][:url][:notification]
-        end
-
-        headers = if app_name do
-            Application.get_env(app_name, :notification)[:slack_webhook][:headers]
-        end
-
-        environment = System.get_env("ENVIRONMENT")
+        webhook_url = Map.get(config, :slack_notification_url)
+        headers = Map.get(config, :slack_notification_headers)
+        environment = Map.get(config, :environment)
 
         if webhook_url && headers do
             Notification.Notify.notify_slack(webhook_url, headers, environment, message)
