@@ -181,6 +181,72 @@ defmodule ForcedLoad.Config do
     """
     @callback amqp_config_path() :: [atom()] | nil
 
+    @doc """
+    Returns the path to resolve Slack notification webhook URL from Application config.
+    Example: [:notification, :slack_webhook, :url, :notification]
+    """
+    @callback slack_notification_url_path() :: [atom()] | nil
+
+    @doc """
+    Returns the path to resolve Slack notification headers from Application config.
+    Example: [:notification, :slack_webhook, :headers]
+    """
+    @callback slack_notification_headers_path() :: [atom()] | nil
+
+    @doc """
+    Returns the environment variable name to read for environment identifier.
+    Example: "ENVIRONMENT"
+    """
+    @callback environment_var() :: String.t() | nil
+
+    @doc """
+    Returns the path to resolve NodeService URL from Application config.
+    Example: [:nodeservice, :url]
+    """
+    @callback nodeservice_url_path() :: [atom()] | nil
+
+    @doc """
+    Returns the path to resolve NodeService headers from Application config.
+    Example: [:nodeservice, :headers]
+    """
+    @callback nodeservice_headers_path() :: [atom()] | nil
+
+    @doc """
+    Returns the path to resolve WorkflowService URL from Application config.
+    Example: [:workflowservice, :url]
+    """
+    @callback workflowservice_url_path() :: [atom()] | nil
+
+    @doc """
+    Returns the path to resolve WorkflowService headers from Application config.
+    Example: [:workflowservice, :headers]
+    """
+    @callback workflowservice_headers_path() :: [atom()] | nil
+
+    @doc """
+    Returns the path to resolve Ticket URL from Application config.
+    Example: [:ticket, :url]
+    """
+    @callback ticket_url_path() :: [atom()] | nil
+
+    @doc """
+    Returns the path to resolve Ticket headers from Application config.
+    Example: [:ticket, :headers]
+    """
+    @callback ticket_headers_path() :: [atom()] | nil
+
+    @doc """
+    Returns the path to resolve Ticket username from Application config.
+    Example: [:user, :totalcheck, :username]
+    """
+    @callback ticket_username_path() :: [atom()] | nil
+
+    @doc """
+    Returns the path to resolve Ticket password from Application config.
+    Example: [:user, :totalcheck, :password]
+    """
+    @callback ticket_password_path() :: [atom()] | nil
+
 
     @optional_callbacks [
         time_step: 0,
@@ -196,7 +262,18 @@ defmodule ForcedLoad.Config do
         bigquery_config_path: 0,
         elasticsearch_url_path: 0,
         elasticsearch_headers_path: 0,
-        amqp_config_path: 0
+        amqp_config_path: 0,
+        slack_notification_url_path: 0,
+        slack_notification_headers_path: 0,
+        environment_var: 0,
+        nodeservice_url_path: 0,
+        nodeservice_headers_path: 0,
+        workflowservice_url_path: 0,
+        workflowservice_headers_path: 0,
+        ticket_url_path: 0,
+        ticket_headers_path: 0,
+        ticket_username_path: 0,
+        ticket_password_path: 0
     ]
 
 
@@ -219,6 +296,17 @@ defmodule ForcedLoad.Config do
             def elasticsearch_url_path, do: [:elasticsearch, :url]
             def elasticsearch_headers_path, do: [:elasticsearch, :headers]
             def amqp_config_path, do: [:my_amqp_client, :connection]
+            def slack_notification_url_path, do: [:notification, :slack_webhook, :url, :notification]
+            def slack_notification_headers_path, do: [:notification, :slack_webhook, :headers]
+            def environment_var, do: "ENVIRONMENT"
+            def nodeservice_url_path, do: [:nodeservice, :url]
+            def nodeservice_headers_path, do: [:nodeservice, :headers]
+            def workflowservice_url_path, do: [:workflowservice, :url]
+            def workflowservice_headers_path, do: [:workflowservice, :headers]
+            def ticket_url_path, do: [:ticket, :url]
+            def ticket_headers_path, do: [:ticket, :headers]
+            def ticket_username_path, do: [:user, :totalcheck, :username]
+            def ticket_password_path, do: [:user, :totalcheck, :password]
 
             defoverridable [
                 time_step: 0,
@@ -234,7 +322,18 @@ defmodule ForcedLoad.Config do
                 bigquery_config_path: 0,
                 elasticsearch_url_path: 0,
                 elasticsearch_headers_path: 0,
-                amqp_config_path: 0
+                amqp_config_path: 0,
+                slack_notification_url_path: 0,
+                slack_notification_headers_path: 0,
+                environment_var: 0,
+                nodeservice_url_path: 0,
+                nodeservice_headers_path: 0,
+                workflowservice_url_path: 0,
+                workflowservice_headers_path: 0,
+                ticket_url_path: 0,
+                ticket_headers_path: 0,
+                ticket_username_path: 0,
+                ticket_password_path: 0
             ]
 
             @doc """
@@ -294,12 +393,29 @@ defmodule ForcedLoad.Config do
                     {:notification_fn, notification_fn()},
                     {:webhook_url, resolve_config_path(webhook_url_path())},
                     {:bigquery_config, resolve_config_path(bigquery_config_path())},
-                    {:elasticsearch_url, resolve_config_path(elasticsearch_url_path())},
-                    {:elasticsearch_headers, resolve_config_path(elasticsearch_headers_path())},
-                    {:amqp_config, resolve_config_path(amqp_config_path())}
+                    {:amqp_config, resolve_config_path(amqp_config_path())},
+                    {:slack_notification_url, resolve_config_path(slack_notification_url_path())},
+                    {:slack_notification_headers, resolve_config_path(slack_notification_headers_path())},
+                    {:environment, if(env_var = environment_var(), do: System.get_env(env_var), else: nil)}
                 ]
                 |> Enum.reject(fn {_key, value} -> is_nil(value) end)
                 |> Enum.into(%{})
+
+                # Add path-based configs for Handler resolvers
+                path_configs = %{
+                    elasticsearch_url_path: elasticsearch_url_path(),
+                    elasticsearch_headers_path: elasticsearch_headers_path(),
+                    nodeservice_url_path: nodeservice_url_path(),
+                    nodeservice_headers_path: nodeservice_headers_path(),
+                    workflowservice_url_path: workflowservice_url_path(),
+                    workflowservice_headers_path: workflowservice_headers_path(),
+                    ticket_url_path: ticket_url_path(),
+                    ticket_headers_path: ticket_headers_path(),
+                    ticket_username_path: ticket_username_path(),
+                    ticket_password_path: ticket_password_path(),
+                    bigquery_path: bigquery_config_path(),
+                    amqp_path: amqp_config_path()
+                }
 
                 # Add boolean flags
                 boolean_configs = %{
@@ -309,6 +425,7 @@ defmodule ForcedLoad.Config do
 
                 base_config
                 |> Map.merge(optional_configs)
+                |> Map.merge(path_configs)
                 |> Map.merge(boolean_configs)
                 |> Map.merge(overrides)
             end
