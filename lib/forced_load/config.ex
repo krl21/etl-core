@@ -56,11 +56,9 @@ defmodule ForcedLoad.Config do
     Then in application.ex:
 
     ```elixir
-    # Using default time_step from config
+    # params only contains start_date and end_date
+    # time_step, includes_record, includes_task are read from config
     {Genserver.ForcedLoad, {:record, [start_date, end_date], MyApp.ForcedLoadConfig.build_config()}}
-
-    # Or override time_step
-    {Genserver.ForcedLoad, {:record, [start_date, end_date, 14], MyApp.ForcedLoadConfig.build_config()}}
     ```
     """
 
@@ -127,6 +125,12 @@ defmodule ForcedLoad.Config do
 
     @doc "Returns the batch delay in milliseconds (default: 0)"
     @callback batch_delay() :: integer()
+
+    @doc "Returns whether to load records (default: true)"
+    @callback includes_record() :: boolean()
+
+    @doc "Returns whether to load tasks (default: true)"
+    @callback includes_task() :: boolean()
 
     @doc "Returns a function to filter IDs after fetching, or nil"
     @callback id_filter() :: (list() -> list()) | nil
@@ -252,6 +256,8 @@ defmodule ForcedLoad.Config do
         time_step: 0,
         batch_size: 0,
         batch_delay: 0,
+        includes_record: 0,
+        includes_task: 0,
         id_filter: 0,
         record_filter: 0,
         task_name_filter: 0,
@@ -285,6 +291,8 @@ defmodule ForcedLoad.Config do
             def time_step, do: 7
             def batch_size, do: 200
             def batch_delay, do: 0
+            def includes_record, do: true
+            def includes_task, do: true
             def id_filter, do: nil
             def record_filter, do: nil
             def task_name_filter, do: nil
@@ -312,6 +320,8 @@ defmodule ForcedLoad.Config do
                 time_step: 0,
                 batch_size: 0,
                 batch_delay: 0,
+                includes_record: 0,
+                includes_task: 0,
                 id_filter: 0,
                 record_filter: 0,
                 task_name_filter: 0,
@@ -382,7 +392,9 @@ defmodule ForcedLoad.Config do
                     # Time and batch settings
                     time_step: time_step(),
                     batch_size: batch_size(),
-                    batch_delay: batch_delay()
+                    batch_delay: batch_delay(),
+                    includes_record: includes_record(),
+                    includes_task: includes_task()
                 }
 
                 # Add optional configs if they return non-nil
@@ -436,20 +448,12 @@ defmodule ForcedLoad.Config do
             ### Parameters
                 - start_date: DateTime or String. Start date for the load
                 - end_date: DateTime or String. End date for the load
-                - opts: Keyword list with optional keys:
-                    - :includes_record - Boolean. Load records (default: true)
-                    - :includes_task - Boolean. Load tasks (default: true)
-                    - :time_step - Integer. Override time step in days
 
             ### Returns
-                - List. [start_date, end_date, step, includes_record, includes_task]
+                - List. [start_date, end_date]
             """
-            def build_params(start_date, end_date, opts \\ []) do
-                includes_record = Keyword.get(opts, :includes_record, true)
-                includes_task = Keyword.get(opts, :includes_task, true)
-                step = Keyword.get(opts, :time_step, time_step())
-
-                [start_date, end_date, step, includes_record, includes_task]
+            def build_params(start_date, end_date) do
+                [start_date, end_date]
             end
         end
     end

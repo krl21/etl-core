@@ -51,7 +51,6 @@ defmodule ForcedLoad.Handler do
 
     ### Optional - Filters
         - `:id_filter` - Function. `(list_of_ids) -> filtered_list`. Filter IDs after fetching
-        - `:tenant_filter` - String | nil. Filter by tenant field value
         - `:task_name_filter` - List of Strings | nil. Filter tasks by name
         - `:record_filter` - Function. `(record_payload) -> boolean`. Filter individual records
 
@@ -72,8 +71,11 @@ defmodule ForcedLoad.Handler do
         - `:build_task_message_fn` - Function. `(task) -> map`. Custom task message builder
 
     ### Optional - Behavior
+        - `:time_step` - Integer. Days per interval for splitting date range (default: 7)
         - `:batch_size` - Integer. Records per batch (default: 200)
         - `:batch_delay` - Integer. Milliseconds to wait between batches (default: 0)
+        - `:includes_record` - Boolean. Load records (default: true)
+        - `:includes_task` - Boolean. Load tasks (default: true)
         - `:skip_elasticsearch` - Boolean. Skip ElasticSearch queries (default: false)
         - `:skip_bigquery` - Boolean. Skip BigQuery queries (default: false)
         - `:notification_fn` - Function. `(message, level) -> :ok`. Custom notification function
@@ -95,13 +97,18 @@ defmodule ForcedLoad.Handler do
         last_update_field: :ultima_actualizacion,
         last_update_payload_field: "lastUpdate",
 
+        # Time and loading settings
+        time_step: 7,
+        includes_record: true,
+        includes_task: true,
+
         # Optional filters
-        tenant_filter: "tenant_abc",
         task_name_filter: ["task_1", "task_2"],
         batch_size: 100
     }
 
-    ForcedLoad.Handler.run(:record, params, config)
+    # params only contains [start_date, end_date]
+    ForcedLoad.Handler.run(:record, [start_date, end_date], config)
     ```
     """
 
@@ -128,8 +135,11 @@ defmodule ForcedLoad.Handler do
 
     ### Parameters
         - business: Atom. Business type (e.g., :record)
-        - params: List. [start_date, end_date, step, includes_record, includes_task]
+        - params: List. [start_date, end_date]
         - config: Map. Configuration options (see module docs)
+            - :time_step - Integer. Days per interval (default: 7)
+            - :includes_record - Boolean. Load records (default: true)
+            - :includes_task - Boolean. Load tasks (default: true)
 
     ### Returns
         - :ok on success
@@ -138,7 +148,6 @@ defmodule ForcedLoad.Handler do
     def run(business, params, config) do
         case business do
             :record ->
-                IO.inspect(params, label: "params")
                 run_record_load(params, config)
 
             other ->
@@ -152,27 +161,22 @@ defmodule ForcedLoad.Handler do
     Runs record/task forced load with the given parameters and configuration.
 
     ### Parameters
-        - params: List. Accepts multiple formats:
-            - [start_date, end_date] - uses time_step from config, loads both records and tasks
-            - [start_date, end_date, step] - uses provided step, loads both records and tasks
-            - [start_date, end_date, step, includes_record, includes_task] - full control
-        - config: Map. Configuration options
+        - params: List. [start_date, end_date]
+        - config: Map. Configuration options with:
+            - :time_step - Integer. Days per interval (default: 7)
+            - :includes_record - Boolean. Load records (default: true)
+            - :includes_task - Boolean. Load tasks (default: true)
 
     ### Returns
         - :ok on success
     """
     def run_record_load([start_date, end_date], config) do
-        step = Map.get(config, :time_step, 7)
-        run_record_load([start_date, end_date, step, true, true], config)
-    end
-
-    def run_record_load([start_date, end_date, step], config) do
-        run_record_load([start_date, end_date, step, true, true], config)
-    end
-
-    def run_record_load([start_date, end_date, step, includes_record, includes_task], config) do
         start_date = Timex.to_datetime(start_date)
         end_date = Timex.to_datetime(end_date)
+
+        step = Map.get(config, :time_step, 7)
+        includes_record = Map.get(config, :includes_record, true)
+        includes_task = Map.get(config, :includes_task, true)
 
         business_name = Map.get(config, :business_name, "UNKNOWN")
 
