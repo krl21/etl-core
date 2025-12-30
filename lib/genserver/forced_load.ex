@@ -57,11 +57,26 @@ defmodule Genserver.ForcedLoad do
     See `ForcedLoad.Handler` for all available configuration options.
     """
 
-    use GenServer
+    use GenServer, restart: :temporary
     require Logger
     alias Genserver.Monitor
     alias ForcedLoad.Handler, as: ForcedLoadHandler
     alias Connection.Http
+
+
+    @doc """
+    Child specification for the supervisor.
+
+    Uses `restart: :temporary` so the process won't be restarted after it terminates.
+    """
+    def child_spec(arg) do
+        %{
+            id: __MODULE__,
+            start: {__MODULE__, :start_link, [arg]},
+            restart: :temporary,
+            type: :worker
+        }
+    end
 
 
     @doc """
