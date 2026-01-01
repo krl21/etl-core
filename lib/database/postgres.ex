@@ -353,37 +353,47 @@ defmodule Database.Postgres do
         if Enum.empty?(records) do
             {:ok, 0}
         else
-            write_conn = get_write_conn(conn)
-            sanitized_name = Helpers.sanitize_identifier(table_name)
+            try do
+                write_conn = get_write_conn(conn)
+                sanitized_name = Helpers.sanitize_identifier(table_name)
 
-            {values_sql, params, _} =
-                records
-                |> Enum.reduce({"", [], 1}, fn record, {sql, params, idx} ->
-                    id_nodo = Map.fetch!(record, :id_nodo)
-                    tipo = Map.get(record, :tipo)
-                    informacion = Helpers.to_json(Map.fetch!(record, :informacion))
-                    fecha_creado = DateTime.utc_now()
-                    estado_analisis = @unanalyzed_state
+                {values_sql, params, _} =
+                    records
+                    |> Enum.reduce({"", [], 1}, fn record, {sql, params, idx} ->
+                        id_nodo = Map.fetch!(record, :id_nodo)
+                        tipo = Map.get(record, :tipo)
+                        informacion = Helpers.to_json(Map.fetch!(record, :informacion))
+                        fecha_creado = DateTime.utc_now()
+                        estado_analisis = @unanalyzed_state
 
-                    value_sql = "($#{idx}, $#{idx + 1}, $#{idx + 2}::jsonb, $#{idx + 3}, $#{idx + 4})"
-                    new_sql = if sql == "", do: value_sql, else: "#{sql}, #{value_sql}"
+                        value_sql = "($#{idx}, $#{idx + 1}, $#{idx + 2}::jsonb, $#{idx + 3}, $#{idx + 4})"
+                        new_sql = if sql == "", do: value_sql, else: "#{sql}, #{value_sql}"
 
-                    {new_sql, params ++ [id_nodo, tipo, informacion, fecha_creado, estado_analisis], idx + 5}
-                end)
+                        {new_sql, params ++ [id_nodo, tipo, informacion, fecha_creado, estado_analisis], idx + 5}
+                    end)
 
-            query = """
-            INSERT INTO #{sanitized_name} (id_nodo, tipo, informacion, fecha_creado, estado_analisis)
-            VALUES #{values_sql};
-            """
+                query = """
+                INSERT INTO #{sanitized_name} (id_nodo, tipo, informacion, fecha_creado, estado_analisis)
+                VALUES #{values_sql};
+                """
 
-            Postgrex.query(write_conn, query, params)
-            |> case do
-                {:ok, %{num_rows: count}} ->
-                    {:ok, count}
+                Postgrex.query(write_conn, query, params)
+                |> case do
+                    {:ok, %{num_rows: count}} ->
+                        {:ok, count}
 
-                {:error, reason} = error ->
-                    Logger.error("Error inserting multiple records into #{table_name}: #{inspect(reason)}")
-                    error
+                    {:error, reason} = error ->
+                        Logger.error("Error inserting multiple records into #{table_name}: #{inspect(reason)}")
+                        error
+                end
+            rescue
+                error in ArgumentError ->
+                    Logger.error("Error inserting records: #{inspect(error)}")
+                    {:error, error}
+
+                error ->
+                    Logger.error("Unexpected error inserting records: #{inspect(error)}")
+                    {:error, error}
             end
         end
     end

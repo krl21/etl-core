@@ -362,7 +362,9 @@ defmodule DataModel.RecordPg.Macro do
                     |> Enum.reduce({:ok, 0}, fn chunk, acc ->
                         case acc do
                             {:ok, total} ->
-                                case Database.Postgres.insert_many(pg_conn, table_name(), chunk) do
+                                IO.puts("------1------")
+                                Database.Postgres.insert_many(pg_conn, table_name(), chunk)
+                                |> case do
                                     {:ok, count} ->
                                         {:ok, total + count}
 
@@ -398,7 +400,10 @@ defmodule DataModel.RecordPg.Macro do
             def execute_insert_with_retry([], _pg_conn, _batch_id), do: {:ok, 0}
 
             def execute_insert_with_retry(records, pg_conn, batch_id) do
-                case Database.Postgres.insert_many(pg_conn, table_name(), records) do
+
+                IO.puts("------2------")
+                Database.Postgres.insert_many(pg_conn, table_name(), records)
+                |> case do
                     {:ok, count} ->
                         {:ok, count}
 
