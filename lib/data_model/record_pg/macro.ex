@@ -407,7 +407,7 @@ defmodule DataModel.RecordPg.Macro do
                     {:error, reason} when length(records) == 1 ->
                         # Single record failed, log and skip
                         [record] = records
-                        handle_processing_error(batch_id, record.id_nodo, "reason", %{
+                        handle_processing_error(batch_id, record.id_nodo, reason, %{
                             function: :execute_insert_with_retry,
                             module: __MODULE__
                         })
