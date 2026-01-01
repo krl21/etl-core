@@ -362,7 +362,6 @@ defmodule DataModel.RecordPg.Macro do
                     |> Enum.reduce({:ok, 0}, fn chunk, acc ->
                         case acc do
                             {:ok, total} ->
-                                IO.puts("------1------")
                                 Database.Postgres.insert_many(pg_conn, table_name(), chunk)
                                 |> case do
                                     {:ok, count} ->
@@ -400,17 +399,15 @@ defmodule DataModel.RecordPg.Macro do
             def execute_insert_with_retry([], _pg_conn, _batch_id), do: {:ok, 0}
 
             def execute_insert_with_retry(records, pg_conn, batch_id) do
-
-                IO.puts("------2------")
                 Database.Postgres.insert_many(pg_conn, table_name(), records)
                 |> case do
                     {:ok, count} ->
                         {:ok, count}
 
-                    {:error, _reason} when length(records) == 1 ->
+                    {:error, reason} when length(records) == 1 ->
                         # Single record failed, log and skip
                         [record] = records
-                        handle_processing_error(batch_id, record.id_nodo, "Insert failed", %{
+                        handle_processing_error(batch_id, record.id_nodo, "reason", %{
                             function: :execute_insert_with_retry,
                             module: __MODULE__
                         })
