@@ -112,22 +112,32 @@ defmodule Genserver.Cleaning do
         opts = if webhook_url, do: [webhook_url: webhook_url], else: []
 
         # Clean BigQuery
-        case business do
-            :all ->
-                Cleaner.run_all(pid_odbc, opts)
+        try do
+            case business do
+                :all ->
+                    Cleaner.run_all(pid_odbc, opts)
 
-            business_key ->
-                Cleaner.run(business_key, pid_odbc, opts)
+                business_key ->
+                    Cleaner.run(business_key, pid_odbc, opts)
+            end
+        rescue
+            error ->
+                Logger.error("#{to_string(__MODULE__)}. Error en limpieza de BigQuery (business: #{inspect(business)}): #{inspect(error)}")
         end
 
         # Clean PostgreSQL (if connection exists)
         if pid_pg do
-            case business do
-                :all ->
-                    Cleaner.run_all_postgres(pid_pg, opts)
+            try do
+                case business do
+                    :all ->
+                        Cleaner.run_all_postgres(pid_pg, opts)
 
-                business_key ->
-                    Cleaner.run_postgres(business_key, pid_pg, opts)
+                    business_key ->
+                        Cleaner.run_postgres(business_key, pid_pg, opts)
+                end
+            rescue
+                error ->
+                    Logger.error("#{to_string(__MODULE__)}. Error en limpieza de PostgreSQL (business: #{inspect(business)}): #{inspect(error)}")
             end
         end
 
