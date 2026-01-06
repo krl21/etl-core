@@ -1,5 +1,5 @@
 
-defmodule Database.Helpers do
+defmodule Connection.PostgresHelpers do
     @moduledoc """
     Helper functions for database operations.
     """

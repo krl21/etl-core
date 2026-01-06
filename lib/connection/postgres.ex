@@ -1,5 +1,5 @@
 
-defmodule Database.Postgres do
+defmodule Connection.Postgres do
     @moduledoc """
     Module for working with PostgreSQL databases.
 
@@ -30,7 +30,7 @@ defmodule Database.Postgres do
     @state_with_problems "con_problemas"
 
     require Logger
-    alias Database.Helpers
+    alias Connection.PostgresHelpers
 
 
     ############
@@ -78,7 +78,7 @@ defmodule Database.Postgres do
     # Establishes a connection to a single PostgreSQL server.
     #
     defp connect_single(config) do
-        opts = Helpers.build_connection_opts(config, Map.fetch!(config, :hostname))
+        opts = PostgresHelpers.build_connection_opts(config, Map.fetch!(config, :hostname))
 
         case Postgrex.start_link(opts) do
             {:ok, conn} ->
@@ -98,8 +98,8 @@ defmodule Database.Postgres do
         write_hostname = Map.fetch!(config, :write_hostname)
         read_hostname = Map.fetch!(config, :read_hostname)
 
-        write_opts = Helpers.build_connection_opts(config, write_hostname)
-        read_opts = Helpers.build_connection_opts(config, read_hostname)
+        write_opts = PostgresHelpers.build_connection_opts(config, write_hostname)
+        read_opts = PostgresHelpers.build_connection_opts(config, read_hostname)
 
         with {:ok, write_conn} <- Postgrex.start_link(write_opts),
              {:ok, read_conn} <- Postgrex.start_link(read_opts) do
@@ -200,7 +200,7 @@ defmodule Database.Postgres do
         - {:error, reason} - Creation error
     """
     def create_table_if_not_exists(conn, table_name) do
-        create_table_if_not_exists(conn, table_name, Helpers.default_column_comments())
+        create_table_if_not_exists(conn, table_name, PostgresHelpers.default_column_comments())
     end
 
     @doc """
@@ -217,7 +217,7 @@ defmodule Database.Postgres do
     """
     def create_table_if_not_exists(conn, table_name, column_comments) do
         write_conn = get_write_conn(conn)
-        sanitized_name = Helpers.sanitize_identifier(table_name)
+        sanitized_name = PostgresHelpers.sanitize_identifier(table_name)
 
         query = """
         CREATE TABLE IF NOT EXISTS #{sanitized_name} (
@@ -271,7 +271,7 @@ defmodule Database.Postgres do
         results =
             comments
             |> Enum.map(fn {column, description} ->
-                escaped = Helpers.escape_sql_string(description)
+                escaped = PostgresHelpers.escape_sql_string(description)
                 comment_query = "COMMENT ON COLUMN #{table_name}.#{column} IS '#{escaped}';"
                 Postgrex.query(conn, comment_query, [])
             end)
@@ -297,7 +297,7 @@ defmodule Database.Postgres do
     """
     def drop_table(conn, table_name) do
         write_conn = get_write_conn(conn)
-        sanitized_name = Helpers.sanitize_identifier(table_name)
+        sanitized_name = PostgresHelpers.sanitize_identifier(table_name)
 
         query = "DROP TABLE IF EXISTS #{sanitized_name};"
 
@@ -355,14 +355,14 @@ defmodule Database.Postgres do
         else
             try do
                 write_conn = get_write_conn(conn)
-                sanitized_name = Helpers.sanitize_identifier(table_name)
+                sanitized_name = PostgresHelpers.sanitize_identifier(table_name)
 
                 {values_sql, params, _} =
                     records
                     |> Enum.reduce({"", [], 1}, fn record, {sql, params, idx} ->
                         id_nodo = Map.fetch!(record, :id_nodo)
                         tipo = Map.get(record, :tipo)
-                        informacion = Helpers.to_json(Map.fetch!(record, :informacion))
+                        informacion = PostgresHelpers.to_json(Map.fetch!(record, :informacion))
                         fecha_creado = DateTime.utc_now()
                         estado_analisis = @unanalyzed_state
 
@@ -417,7 +417,7 @@ defmodule Database.Postgres do
     """
     def get_pending_bq(conn, table_name, register_type \\ nil) do
         read_conn = get_read_conn(conn)
-        sanitized_name = Helpers.sanitize_identifier(table_name)
+        sanitized_name = PostgresHelpers.sanitize_identifier(table_name)
 
         {query, params} =
             register_type
@@ -442,7 +442,7 @@ defmodule Database.Postgres do
         Postgrex.query(read_conn, query, params)
         |> case do
             {:ok, result} ->
-                {:ok, Helpers.parse_query_result(result)}
+                {:ok, PostgresHelpers.parse_query_result(result)}
 
             {:error, reason} = error ->
                 Logger.error("Error al obtener registros pendientes de #{table_name}: #{inspect(reason)}")
@@ -464,7 +464,7 @@ defmodule Database.Postgres do
     """
     def get_all(conn, table_name, limit \\ nil) do
         read_conn = get_read_conn(conn)
-        sanitized_name = Helpers.sanitize_identifier(table_name)
+        sanitized_name = PostgresHelpers.sanitize_identifier(table_name)
 
         query =
             case limit do
@@ -487,7 +487,7 @@ defmodule Database.Postgres do
         Postgrex.query(read_conn, query, [])
         |> case do
             {:ok, result} ->
-                {:ok, Helpers.parse_query_result(result)}
+                {:ok, PostgresHelpers.parse_query_result(result)}
 
             {:error, reason} = error ->
                 Logger.error("Error al obtener registros de #{table_name}: #{inspect(reason)}")
@@ -516,8 +516,8 @@ defmodule Database.Postgres do
             {:ok, 0}
         else
             write_conn = get_write_conn(conn)
-            sanitized_name = Helpers.sanitize_identifier(table_name)
-            placeholders = Helpers.build_placeholders(length(ids))
+            sanitized_name = PostgresHelpers.sanitize_identifier(table_name)
+            placeholders = PostgresHelpers.build_placeholders(length(ids))
 
             query = """
             DELETE FROM #{sanitized_name}
@@ -554,8 +554,8 @@ defmodule Database.Postgres do
             {:ok, 0}
         else
             write_conn = get_write_conn(conn)
-            sanitized_name = Helpers.sanitize_identifier(table_name)
-            placeholders = Helpers.build_placeholders(length(ids))
+            sanitized_name = PostgresHelpers.sanitize_identifier(table_name)
+            placeholders = PostgresHelpers.build_placeholders(length(ids))
 
             query = """
             UPDATE #{sanitized_name}
@@ -592,8 +592,8 @@ defmodule Database.Postgres do
             {:ok, 0}
         else
             write_conn = get_write_conn(conn)
-            sanitized_name = Helpers.sanitize_identifier(table_name)
-            placeholders = Helpers.build_placeholders(length(ids))
+            sanitized_name = PostgresHelpers.sanitize_identifier(table_name)
+            placeholders = PostgresHelpers.build_placeholders(length(ids))
 
             query = """
             UPDATE #{sanitized_name}
@@ -630,7 +630,7 @@ defmodule Database.Postgres do
     """
     def delete_analyzed_records(conn, table_name, opts \\ []) do
         write_conn = get_write_conn(conn)
-        sanitized_name = Helpers.sanitize_identifier(table_name)
+        sanitized_name = PostgresHelpers.sanitize_identifier(table_name)
 
         include_with_problems = Keyword.get(opts, :include_with_problems, true)
         register_type = Keyword.get(opts, :register_type, nil)
@@ -749,7 +749,7 @@ defmodule Database.Postgres do
              :ok <- validate_where_conditions(where_conditions) do
 
             read_conn = get_read_conn(conn)
-            sanitized_name = Helpers.sanitize_identifier(table_name)
+            sanitized_name = PostgresHelpers.sanitize_identifier(table_name)
 
             {select_sql, has_distinct} = build_select_clause(select_fields)
             {where_sql, params} = build_where_clause(where_conditions)
