@@ -3,7 +3,7 @@ defmodule DataModel.RecordPg.Macro do
     @moduledoc """
     Macros for configuring and using DataModel.RecordPg.Base.
 
-    Similar to `DataModel.Record.Macro` but uses `Database.Postgres`
+    Similar to `DataModel.Record.Macro` but uses `Connection.Postgres`
     instead of BigQuery for storage.
 
     ## Available Macros
@@ -362,7 +362,7 @@ defmodule DataModel.RecordPg.Macro do
                     |> Enum.reduce({:ok, 0}, fn chunk, acc ->
                         case acc do
                             {:ok, total} ->
-                                Database.Postgres.insert_many(pg_conn, table_name(), chunk)
+                                Connection.Postgres.insert_many(pg_conn, table_name(), chunk)
                                 |> case do
                                     {:ok, count} ->
                                         {:ok, total + count}
@@ -399,7 +399,7 @@ defmodule DataModel.RecordPg.Macro do
             def execute_insert_with_retry([], _pg_conn, _batch_id), do: {:ok, 0}
 
             def execute_insert_with_retry(records, pg_conn, batch_id) do
-                Database.Postgres.insert_many(pg_conn, table_name(), records)
+                Connection.Postgres.insert_many(pg_conn, table_name(), records)
                 |> case do
                     {:ok, count} ->
                         {:ok, count}

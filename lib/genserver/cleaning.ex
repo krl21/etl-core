@@ -33,7 +33,7 @@ defmodule Genserver.Cleaning do
     import Connection.Odbc, only: [connect: 1, disconnect: 1]
     alias Genserver.Monitor
     alias Cleaning.Cleaner
-    alias Database.Postgres
+    alias Connection.Postgres
 
 
     @doc """

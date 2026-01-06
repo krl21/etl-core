@@ -3,7 +3,7 @@ defmodule DataModel.TaskPg.Macro do
     @moduledoc """
     Macros for configuring and using DataModel.TaskPg.Base.
 
-    Similar to `DataModel.Task.Macro` but uses `Database.Postgres`
+    Similar to `DataModel.Task.Macro` but uses `Connection.Postgres`
     instead of BigQuery for storage.
 
     ## Philosophy
@@ -460,7 +460,7 @@ defmodule DataModel.TaskPg.Macro do
             def execute_insert([], _pg_conn, _batch_id), do: {:ok, 0}
 
             def execute_insert(records, pg_conn, batch_id) do
-                case Database.Postgres.insert_many(pg_conn, table_name(), records) do
+                case Connection.Postgres.insert_many(pg_conn, table_name(), records) do
                     {:ok, count} ->
                         {:ok, count}
 
@@ -490,7 +490,7 @@ defmodule DataModel.TaskPg.Macro do
             def execute_insert_with_retry([], _pg_conn, _batch_id), do: {:ok, 0}
 
             def execute_insert_with_retry(records, pg_conn, batch_id) do
-                case Database.Postgres.insert_many(pg_conn, table_name(), records) do
+                case Connection.Postgres.insert_many(pg_conn, table_name(), records) do
                     {:ok, count} ->
                         {:ok, count}
 

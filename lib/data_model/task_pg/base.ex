@@ -3,7 +3,7 @@ defmodule DataModel.TaskPg.Base do
     @moduledoc """
     Base module for Task entities that store data in PostgreSQL.
 
-    Similar to `DataModel.Task.Base` but uses `Database.Postgres`
+    Similar to `DataModel.Task.Base` but uses `Connection.Postgres`
     instead of BigQuery for storage.
 
     ## Usage example:
@@ -172,7 +172,7 @@ defmodule DataModel.TaskPg.Base do
         quote do
             alias Struct.InfoAttr
             alias Common.Payload
-            alias Database.Postgres
+            alias Connection.Postgres
             alias Notification.Notify
             alias Timex
 

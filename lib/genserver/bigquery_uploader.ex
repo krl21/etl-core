@@ -9,7 +9,7 @@ defmodule Genserver.BigqueryUploader do
     require Logger
     alias Genserver.Monitor
     alias Genserver.Handlers.Bigquery
-    alias Database.Postgres
+    alias Connection.Postgres
     alias Connection.Odbc
     import Time.Timem, only: [notification_frequency: 1]
     import Stuff, only: [random_string_generate: 1]

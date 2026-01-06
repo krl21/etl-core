@@ -1097,7 +1097,7 @@ defmodule MiEtl.Application do
   require Logger
   import Time.Timem, only: [notification_frequency: 1]
   import Notification.Notify, only: [notify_slack: 4]
-  alias Database.Postgres
+  alias Connection.Postgres
   alias Impl.Genserver.ForcedLoadConfig
 
   @impl true

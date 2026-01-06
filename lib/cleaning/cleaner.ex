@@ -8,7 +8,7 @@ defmodule Cleaning.Cleaner do
     require Logger
     import Connection.Odbc, only: [select: 2, delete: 2]
     alias Statement.Sql
-    alias Database.Postgres
+    alias Connection.Postgres
     alias Type.Type
     alias Notification.Notify
     import Stuff, only: [convert_seconds_to_humans: 1]

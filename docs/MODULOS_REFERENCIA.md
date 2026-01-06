@@ -300,7 +300,7 @@ Connection.Odbc.disconnect(pid)
 
 ---
 
-### `Database.Postgres`
+### `Connection.Postgres`
 
 Conexión y operaciones con PostgreSQL.
 
@@ -310,7 +310,7 @@ Conexión y operaciones con PostgreSQL.
 
 ```elixir
 # Conexión simple
-{:ok, conn} = Database.Postgres.connect(%{
+{:ok, conn} = Connection.Postgres.connect(%{
   hostname: "localhost",
   port: 5432,
   database: "mi_db",
@@ -319,7 +319,7 @@ Conexión y operaciones con PostgreSQL.
 })
 
 # Conexión dual
-{:ok, conn} = Database.Postgres.connect(%{
+{:ok, conn} = Connection.Postgres.connect(%{
   write_hostname: "primary.db",
   read_hostname: "replica.db",
   # ... resto de configuración
@@ -329,16 +329,16 @@ Conexión y operaciones con PostgreSQL.
 **Operaciones principales:**
 ```elixir
 # Insertar registros
-Database.Postgres.insert_many(conn, "tabla", [%{id_nodo: "uuid", tipo: "tipo", informacion: %{...}}])
+Connection.Postgres.insert_many(conn, "tabla", [%{id_nodo: "uuid", tipo: "tipo", informacion: %{...}}])
 
 # Obtener pendientes de BQ
-Database.Postgres.get_pending_bq(conn, "tabla", "tipo_registro")
+Connection.Postgres.get_pending_bq(conn, "tabla", "tipo_registro")
 
 # Marcar como enviados
-Database.Postgres.mark_as_sent_to_bq(conn, "tabla", [id1, id2])
+Connection.Postgres.mark_as_sent_to_bq(conn, "tabla", [id1, id2])
 
 # Eliminar analizados
-Database.Postgres.delete_analyzed_records(conn, "tabla", register_type: "expediente")
+Connection.Postgres.delete_analyzed_records(conn, "tabla", register_type: "expediente")
 ```
 
 **Estructura de tabla:**

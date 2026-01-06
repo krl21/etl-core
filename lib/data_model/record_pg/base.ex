@@ -3,7 +3,7 @@ defmodule DataModel.RecordPg.Base do
     @moduledoc """
     Base module for entities that process and store data in PostgreSQL.
 
-    Similar to `DataModel.Record.Base` but uses `EtlCore.Database.Postgres`
+    Similar to `DataModel.Record.Base` but uses `EtlCore.Connection.Postgres`
     instead of BigQuery for storage.
 
     ## Usage
@@ -73,7 +73,7 @@ defmodule DataModel.RecordPg.Base do
 
             alias Struct.InfoAttr
             alias Common.Payload
-            alias Database.Postgres
+            alias Connection.Postgres
             alias Notification.Notify
             alias Timex
 

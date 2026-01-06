@@ -7,7 +7,7 @@ defmodule Genserver.Handlers.Bigquery do
     """
 
     require Logger
-    alias Database.Postgres
+    alias Connection.Postgres
     alias Statement.Sql
     alias Connection.Odbc
     alias Notification.Notify
