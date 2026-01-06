@@ -18,7 +18,7 @@ defmodule Genserver.RabbitConsumer do
     def init({%{business: business, config: %{queue: queue} = queue_info}, configuration_amqp, info}) do
         Monitor.register(self(), to_string(__MODULE__) <> "." <> to_string(business) <> "." <> to_string(queue))
 
-        Logger.info("#{to_string(__MODULE__)}. Initializing. Associated queue: ---#{to_string(queue)}---")
+        Logger.info("#{to_string(__MODULE__)}. Inicializando. Cola asociada: ---#{to_string(queue)}---")
 
         {:ok, connection} = configuration_amqp |> AMQP.Connection.open()
         {:ok, channel} = AMQP.Channel.open(connection)
@@ -34,13 +34,13 @@ defmodule Genserver.RabbitConsumer do
 
     # Confirmation sent by the broker after registering this process as a consumer
     def handle_info({:basic_consume_ok, %{consumer_tag: consumer_tag}}, state) do
-        Logger.info("#{to_string(__MODULE__)}. Consumer registered with tag: #{consumer_tag}")
+        Logger.info("#{to_string(__MODULE__)}. Consumidor registrado con tag: #{consumer_tag}")
         {:noreply, state}
     end
 
     # Sent by the broker when the consumer is unexpectedly cancelled
     def handle_info({:basic_cancel, %{consumer_tag: consumer_tag}}, {_channel, queue, _business, info} = state) do
-        message = "#{to_string(__MODULE__)}. Consumer cancelled unexpectedly: #{consumer_tag}. Queue: #{queue}"
+        message = "#{to_string(__MODULE__)}. Consumidor cancelado inesperadamente: #{consumer_tag}. Cola: #{queue}"
         Logger.error(message)
         notify_error(info, message)
         {:stop, :consumer_cancelled, state}
@@ -48,7 +48,7 @@ defmodule Genserver.RabbitConsumer do
 
     # Confirmation sent by the broker to the consumer process after a Basic.cancel
     def handle_info({:basic_cancel_ok, %{consumer_tag: consumer_tag}}, state) do
-        Logger.info("#{to_string(__MODULE__)}. Consumer cancel confirmed: #{consumer_tag}")
+        Logger.info("#{to_string(__MODULE__)}. Cancelación de consumidor confirmada: #{consumer_tag}")
         {:noreply, state}
     end
 
@@ -70,7 +70,7 @@ defmodule Genserver.RabbitConsumer do
                 AMQP.Basic.ack(channel, delivery_tag)
 
             {:error, reason} ->
-                message = "#{to_string(__MODULE__)}. Failed to decode message: #{inspect(reason)}. Queue: #{queue}"
+                message = "#{to_string(__MODULE__)}. Error al decodificar mensaje: #{inspect(reason)}. Cola: #{queue}"
                 Logger.error(message)
                 notify_error(info, message)
                 AMQP.Basic.reject(channel, delivery_tag, requeue: false)
@@ -88,12 +88,12 @@ defmodule Genserver.RabbitConsumer do
     #     - queue: Map. Queue definition.
     #
     defp setup_queue(channel, %{queue: queue, exchange: exchange, queue_error: queue_error, queue_arguments: queue_arguments, listen: listen}) do
-        Logger.info("#{to_string(__MODULE__)}. Configuring the queue ---#{to_string(queue)}---")
+        Logger.info("#{to_string(__MODULE__)}. Configurando la cola ---#{to_string(queue)}---")
 
         {:ok, _} = AMQP.Queue.declare(channel, queue_error, durable: true)
         {:ok, info} = AMQP.Queue.declare(channel, queue, durable: true, arguments: queue_arguments)
 
-        Logger.debug("#{to_string(__MODULE__)}. State: #{inspect(info)}")
+        Logger.debug("#{to_string(__MODULE__)}. Estado: #{inspect(info)}")
 
         :ok = AMQP.Exchange.fanout(channel, exchange, durable: true)
         :ok = AMQP.Queue.bind(channel, queue, exchange)

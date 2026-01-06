@@ -107,9 +107,9 @@ defmodule Genserver.ForcedLoad do
     def init(%{business: business, config: config} = state) do
         Monitor.register(self(), to_string(__MODULE__) <> "." <> to_string(business))
 
-        Logger.info("#{to_string(__MODULE__)}. FORCED LOAD: Initializing. Business: ---#{to_string(business)}---")
+        Logger.info("#{to_string(__MODULE__)}. CARGA FORZADA: Inicializando. Negocio: ---#{to_string(business)}---")
 
-        notify_webhook(get_webhook_url(config), business, "started", "Forced load process initialized")
+        notify_webhook(get_webhook_url(config), business, "started", "Proceso de carga forzada inicializado")
 
         :erlang.send_after(10_000, self(), :update)
         {:ok, state}
@@ -118,7 +118,7 @@ defmodule Genserver.ForcedLoad do
 
     @impl true
     def handle_info(:update, %{business: business, params: params, config: nil} = state) do
-        Logger.info("#{to_string(__MODULE__)}. Starting forced load in ---#{business}--- (using protocol)")
+        Logger.info("#{to_string(__MODULE__)}. Iniciando carga forzada en ---#{business}--- (usando protocolo)")
 
         try do
             Genserver.Protocols.PForcedLoad.run(business, params)
@@ -127,40 +127,40 @@ defmodule Genserver.ForcedLoad do
                 reraise error, __STACKTRACE__
         end
 
-        Logger.info("#{to_string(__MODULE__)}. Forced load completed. Terminating ---#{business}---")
+        Logger.info("#{to_string(__MODULE__)}. Carga forzada completada. Terminando ---#{business}---")
         {:stop, :normal, state}
     end
 
     def handle_info(:update, %{business: business, params: params, config: config} = state) do
         webhook_url = get_webhook_url(config)
-        Logger.info("#{to_string(__MODULE__)}. Starting forced load in ---#{business}--- (using handler)")
-        notify_webhook(webhook_url, business, "in_progress", "Forced load started (using handler)")
+        Logger.info("#{to_string(__MODULE__)}. Iniciando carga forzada en ---#{business}--- (usando handler)")
+        notify_webhook(webhook_url, business, "in_progress", "Carga forzada iniciada (usando handler)")
 
         try do
             ForcedLoadHandler.run(business, params, config)
-            notify_webhook(webhook_url, business, "completed", "Forced load completed successfully")
+            notify_webhook(webhook_url, business, "completed", "Carga forzada completada exitosamente")
         rescue
             error ->
-                notify_webhook(webhook_url, business, "error", "Forced load failed: #{inspect(error)}")
+                notify_webhook(webhook_url, business, "error", "Carga forzada fallida: #{inspect(error)}")
                 reraise error, __STACKTRACE__
         end
 
-        Logger.info("#{to_string(__MODULE__)}. Forced load completed. Terminating ---#{business}---")
+        Logger.info("#{to_string(__MODULE__)}. Carga forzada completada. Terminando ---#{business}---")
         {:stop, :normal, state}
     end
 
 
     @impl true
     def terminate(:normal, %{business: business}) do
-        Logger.info("#{to_string(__MODULE__)}. Process terminated normally. Business: ---#{business}---")
+        Logger.info("#{to_string(__MODULE__)}. Proceso terminado normalmente. Negocio: ---#{business}---")
         :ok
     end
 
     def terminate(reason, %{business: business, config: config}) do
-        Logger.warning("#{to_string(__MODULE__)}. Process terminated with reason: #{inspect(reason)}. Business: ---#{business}---")
+        Logger.warning("#{to_string(__MODULE__)}. Proceso terminado con razón: #{inspect(reason)}. Negocio: ---#{business}---")
 
         if reason != :normal do
-            notify_webhook(get_webhook_url(config), business, "error", "Process terminated unexpectedly: #{inspect(reason)}")
+            notify_webhook(get_webhook_url(config), business, "error", "Proceso terminado inesperadamente: #{inspect(reason)}")
         end
 
         :ok
@@ -187,12 +187,12 @@ defmodule Genserver.ForcedLoad do
                 {:ok, body} ->
                     case Http.post(body, webhook_url, [{"Content-Type", "application/json"}]) do
                         {:ok, _response} ->
-                            Logger.debug("#{__MODULE__}. Webhook notification sent: #{status}")
+                            Logger.debug("#{__MODULE__}. Notificación webhook enviada: #{status}")
                         {:error, error} ->
-                            Logger.warning("#{__MODULE__}. Failed to send webhook notification: #{inspect(error)}")
+                            Logger.warning("#{__MODULE__}. Error al enviar notificación webhook: #{inspect(error)}")
                     end
                 {:error, error} ->
-                    Logger.warning("#{__MODULE__}. Failed to encode webhook payload: #{inspect(error)}")
+                    Logger.warning("#{__MODULE__}. Error al codificar payload del webhook: #{inspect(error)}")
             end
         end)
 

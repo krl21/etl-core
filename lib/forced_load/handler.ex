@@ -151,7 +151,7 @@ defmodule ForcedLoad.Handler do
                 run_record_load(params, config)
 
             other ->
-                Logger.warning("Unknown business type for forced load: #{inspect(other)}")
+                Logger.warning("Tipo de negocio desconocido para carga forzada: #{inspect(other)}")
                 {:error, :unknown_business}
         end
     end
@@ -183,10 +183,10 @@ defmodule ForcedLoad.Handler do
         Helpers.notify(config,
             """
             *-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*
-            FORCED LOAD. #{business_name}
-            Period: #{to_string(start_date)} - #{to_string(end_date)}
-            Record upload: #{to_string(includes_record)}
-            Loading of tasks associated to the records: #{to_string(includes_task)}
+            CARGA FORZADA. #{business_name}
+            Período: #{to_string(start_date)} - #{to_string(end_date)}
+            Carga de expedientes: #{to_string(includes_record)}
+            Carga de tareas asociadas a los expedientes: #{to_string(includes_task)}
             *-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*
             """,
             :info
@@ -201,7 +201,7 @@ defmodule ForcedLoad.Handler do
 
         bq_pid = unless Map.get(config, :skip_bigquery, false) do
             bq_config = Helpers.get_bigquery_config(config)
-            Helpers.notify(config, "Opening BigQuery connection...", :info)
+            Helpers.notify(config, "Abriendo conexión a BigQuery...", :info)
             Odbc.connect(bq_config)
         end
 
@@ -222,9 +222,9 @@ defmodule ForcedLoad.Handler do
             Helpers.notify(config,
                 """
                 *-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*
-                FORCED LOAD. #{business_name}
-                Period: #{to_string(start_date)} - #{to_string(end_date)}.
-                END!!!
+                CARGA FORZADA. #{business_name}
+                Período: #{to_string(start_date)} - #{to_string(end_date)}.
+                FIN!!!
                 *-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*
                 """,
                 :info
@@ -232,7 +232,7 @@ defmodule ForcedLoad.Handler do
             :ok
         after
             if bq_pid do
-                Helpers.notify(config, "Closing BigQuery connection...", :info)
+                Helpers.notify(config, "Cerrando conexión a BigQuery...", :info)
                 Odbc.disconnect(bq_pid)
             end
             # Close AMQP connection
@@ -259,7 +259,7 @@ defmodule ForcedLoad.Handler do
     #
     defp process_interval(start_date, end_date, channel, bq_pid, includes_record, includes_task, config) do
         Helpers.notify(config,
-            "Start of forced charge between #{to_string(start_date)} and #{to_string(end_date)}",
+            "Inicio de carga forzada entre #{to_string(start_date)} y #{to_string(end_date)}",
             :info
         )
 
@@ -271,12 +271,12 @@ defmodule ForcedLoad.Handler do
         batches = Enum.chunk_every(ids, batch_size)
         total_batches = length(batches)
 
-        Helpers.notify(config, "Total IDs to process: #{length(ids)} in #{total_batches} batches", :info)
+        Helpers.notify(config, "Total de IDs a procesar: #{length(ids)} en #{total_batches} lotes", :info)
 
         batches
         |> Enum.with_index(1)
         |> Enum.each(fn {batch, batch_number} ->
-            Helpers.notify(config, "Batch #{batch_number}/#{total_batches} - Processing #{length(batch)} IDs", :info)
+            Helpers.notify(config, "Lote #{batch_number}/#{total_batches} - Procesando #{length(batch)} IDs", :info)
 
             # Callback: on_batch_start
             if callback = Map.get(config, :on_batch_start) do
@@ -287,9 +287,9 @@ defmodule ForcedLoad.Handler do
 
             # Load records
             records_loaded = if includes_record do
-                Helpers.notify(config, "\tLoading records...", :info)
+                Helpers.notify(config, "\tCargando expedientes...", :info)
                 count = load_records(batch, ticket, channel, true, config)
-                Helpers.notify(config, "\tRecords loaded: #{count}/#{length(batch)}", :info)
+                Helpers.notify(config, "\tExpedientes cargados: #{count}/#{length(batch)}", :info)
                 count
             else
                 0
@@ -297,9 +297,9 @@ defmodule ForcedLoad.Handler do
 
             # Load tasks
             tasks_loaded = if includes_task do
-                Helpers.notify(config, "\tLoading tasks...", :info)
+                Helpers.notify(config, "\tCargando tareas...", :info)
                 count = load_tasks(batch, ticket, channel, true, config)
-                Helpers.notify(config, "\tTasks loaded: #{count}/#{length(batch)}", :info)
+                Helpers.notify(config, "\tTareas cargadas: #{count}/#{length(batch)}", :info)
                 count
             else
                 0
@@ -312,13 +312,13 @@ defmodule ForcedLoad.Handler do
                 callback.(batch, batch_number, results)
             end
 
-            Helpers.notify(config, "Batch #{batch_number}/#{total_batches} - Completed", :info)
+            Helpers.notify(config, "Lote #{batch_number}/#{total_batches} - Completado", :info)
 
             if batch_delay > 0, do: :timer.sleep(batch_delay)
         end)
 
         Helpers.notify(config,
-            "End of forced charge between #{to_string(start_date)} and #{to_string(end_date)}. Number of records processed: #{length(ids)}",
+            "Fin de carga forzada entre #{to_string(start_date)} y #{to_string(end_date)}. Número de registros procesados: #{length(ids)}",
             :info
         )
     end
@@ -445,7 +445,7 @@ defmodule ForcedLoad.Handler do
             |> Enum.map(fn [{_, id}] -> id end)
         rescue
             error ->
-                Helpers.notify(config, "Error fetching IDs from BigQuery: #{inspect(error)}", :error)
+                Helpers.notify(config, "Error al obtener IDs de BigQuery: #{inspect(error)}", :error)
                 []
         end
     end
@@ -482,7 +482,7 @@ defmodule ForcedLoad.Handler do
         |> case do
             {:ok, list} -> list
             {:error, error} ->
-                Helpers.notify(config, "Error fetching IDs from ElasticSearch: #{inspect(error)}", :error)
+                Helpers.notify(config, "Error al obtener IDs de ElasticSearch: #{inspect(error)}", :error)
                 []
         end
     end
@@ -545,7 +545,7 @@ defmodule ForcedLoad.Handler do
                     if callback = Map.get(config, :on_record_error) do
                         callback.(unique_id, error)
                     else
-                        Helpers.notify(config, "Error getting record #{unique_id} from NodeService: #{inspect(error)}", :error)
+                        Helpers.notify(config, "Error al obtener expediente #{unique_id} de NodeService: #{inspect(error)}", :error)
                     end
                     {:error, error}
 
@@ -572,7 +572,7 @@ defmodule ForcedLoad.Handler do
             end
         rescue
             error ->
-                Helpers.notify(config, "Error loading record #{unique_id} from NodeService: #{inspect(error)}", :error)
+                Helpers.notify(config, "Error al cargar expediente #{unique_id} de NodeService: #{inspect(error)}", :error)
                 {:error, error}
         end
     end
@@ -636,7 +636,7 @@ defmodule ForcedLoad.Handler do
                     if callback = Map.get(config, :on_task_error) do
                         callback.(contentref, error)
                     else
-                        Helpers.notify(config, "Error getting tasks for #{contentref} from WorkflowService: #{inspect(error)}", :error)
+                        Helpers.notify(config, "Error al obtener tareas para #{contentref} de WorkflowService: #{inspect(error)}", :error)
                     end
                     {:error, error}
 
@@ -667,7 +667,7 @@ defmodule ForcedLoad.Handler do
             end
         rescue
             error ->
-                Helpers.notify(config, "Error loading tasks for #{contentref} from WorkflowService: #{inspect(error)}", :error)
+                Helpers.notify(config, "Error al cargar tareas para #{contentref} de WorkflowService: #{inspect(error)}", :error)
                 {:error, error}
         end
     end

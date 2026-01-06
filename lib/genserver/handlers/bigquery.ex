@@ -75,7 +75,7 @@ defmodule Genserver.Handlers.Bigquery do
                 {:ok, uploaded_count}
 
             {:error, reason} ->
-                Logger.error("Error getting pending records from #{pg_table}: #{inspect(reason)}")
+                Logger.error("Error al obtener registros pendientes de #{pg_table}: #{inspect(reason)}")
                 {:error, reason}
         end
     end
@@ -301,7 +301,7 @@ defmodule Genserver.Handlers.Bigquery do
                 end)
 
             {true, _} ->
-                Logger.info("Insert batch failed, splitting data in half and retrying...")
+                Logger.info("Inserción de lote fallida, dividiendo datos a la mitad y reintentando...")
 
                 mid = div(length(data), 2)
                 {first_half, second_half} = Enum.split(data, mid)

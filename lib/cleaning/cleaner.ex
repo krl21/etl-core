@@ -29,7 +29,7 @@ defmodule Cleaning.Cleaner do
     def run(business_key, pid, opts \\ []) when is_atom(business_key) do
         case Cleaning.CleanableTableRegistry.get(business_key) do
             nil ->
-                Logger.warning("No CleanableTable registered for business_key: #{inspect(business_key)}")
+                Logger.warning("No hay CleanableTable registrada para la llave: #{inspect(business_key)}")
                 {:error, :not_registered}
 
             module ->
@@ -57,7 +57,7 @@ defmodule Cleaning.Cleaner do
             end)
 
         total_time = Timex.diff(Timex.now(), start, :second)
-        Logger.info("Finished cleaning all tables. Duration: #{convert_seconds_to_humans(total_time)}")
+        Logger.info("Limpieza de todas las tablas finalizada. Duración: #{convert_seconds_to_humans(total_time)}")
 
         results
     end
@@ -80,14 +80,14 @@ defmodule Cleaning.Cleaner do
             bq_config = module.bigquery_config()
 
             if is_nil(bq_config) do
-                Logger.debug("Skipping BigQuery cleanup for #{inspect(module)} - no bigquery_config defined")
+                Logger.debug("Omitiendo limpieza de BigQuery para #{inspect(module)} - no hay definida bigquery_config")
                 {:ok, 0}
             else
                 run_bigquery_cleanup(module, bq_config, pid, webhook_url)
             end
         rescue
             error ->
-                message = "Error cleaning BigQuery #{inspect(module)}: #{inspect(error)}"
+                message = "Error en limpieza de BigQuery #{inspect(module)}: #{inspect(error)}"
                 Logger.error(message)
                 notify_error(webhook_url, message)
                 {:error, error}
@@ -98,7 +98,7 @@ defmodule Cleaning.Cleaner do
         start = Timex.now()
         business_key = module.business_key()
 
-        Logger.debug("Starting cleanup for #{inspect(business_key)} - Table: #{bq_config.table}")
+        Logger.debug("Iniciando limpieza para #{inspect(business_key)} - Tabla: #{bq_config.table}")
 
         count =
             get_duplicate_ids(pid, bq_config)
@@ -111,7 +111,7 @@ defmodule Cleaning.Cleaner do
             end)
 
         duration = Timex.diff(Timex.now(), start, :second)
-        Logger.debug("Finished cleaning #{inspect(business_key)}. Rows removed: #{count}. Duration: #{convert_seconds_to_humans(duration)}")
+        Logger.debug("Limpieza de #{inspect(business_key)} finalizada. Filas eliminadas: #{count}. Duración: #{convert_seconds_to_humans(duration)}")
 
         {:ok, count}
     end
@@ -136,7 +136,7 @@ defmodule Cleaning.Cleaner do
     def run_postgres(business_key, pid_pg, opts \\ []) when is_atom(business_key) do
         case Cleaning.CleanableTableRegistry.get(business_key) do
             nil ->
-                Logger.warning("CleanableTable registered for business_key: #{inspect(business_key)}")
+                Logger.warning("No hay CleanableTable registrada para la llave: #{inspect(business_key)}")
                 {:error, :not_registered}
 
             module ->
@@ -173,7 +173,7 @@ defmodule Cleaning.Cleaner do
         total_time = Timex.diff(Timex.now(), start, :second)
         total_count = :counters.get(total_deleted, 1)
 
-        Logger.info("PostgreSQL cleanup completed. Total records deleted: #{total_count}. Duration: #{convert_seconds_to_humans(total_time)}")
+        Logger.info("Limpieza de PostgreSQL completada. Total de registros eliminados: #{total_count}. Duración: #{convert_seconds_to_humans(total_time)}")
 
         results
     end
@@ -196,14 +196,14 @@ defmodule Cleaning.Cleaner do
             pg_config = module.postgres_config()
 
             if is_nil(pg_config) do
-                Logger.debug("Skipping PostgreSQL cleanup for #{inspect(module)} - no postgres_config defined")
+                Logger.debug("Omitiendo limpieza de PostgreSQL para #{inspect(module)} - no hay definida postgres_config")
                 {:ok, 0}
             else
                 run_postgres_cleanup(module, pg_config, pid_pg, webhook_url)
             end
         rescue
             error ->
-                message = "Error cleaning PostgreSQL for #{inspect(module)}: #{inspect(error)}"
+                message = "Error en limpieza de PostgreSQL para #{inspect(module)}: #{inspect(error)}"
                 Logger.error(message)
                 notify_error(webhook_url, message)
                 {:error, error}
@@ -215,18 +215,18 @@ defmodule Cleaning.Cleaner do
         table_name = pg_config.table
         register_type = Map.get(pg_config, :register_type, nil)
 
-        Logger.debug("Starting PostgreSQL cleanup for #{inspect(business_key)} - Table: #{table_name}, Type: #{inspect(register_type)}")
+        Logger.debug("Iniciando limpieza de PostgreSQL para #{inspect(business_key)} - Tabla: #{table_name}, Tipo: #{inspect(register_type)}")
 
         delete_opts = if register_type, do: [register_type: register_type], else: []
 
         Postgres.delete_analyzed_records(pid_pg, table_name, delete_opts)
         |> case do
             {:ok, count} ->
-                Logger.info("PostgreSQL cleanup for #{inspect(business_key)}: #{count} records deleted from #{table_name}")
+                Logger.info("Limpieza de PostgreSQL para #{inspect(business_key)}: #{count} registros eliminados de #{table_name}")
                 {:ok, count}
 
             {:error, reason} = error ->
-                message = "Error cleaning PostgreSQL table #{table_name}: #{inspect(reason)}"
+                message = "Error al limpiar tabla de PostgreSQL #{table_name}: #{inspect(reason)}"
                 Logger.error(message)
                 notify_error(webhook_url, message)
                 error

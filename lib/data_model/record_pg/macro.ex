@@ -416,7 +416,7 @@ defmodule DataModel.RecordPg.Macro do
                     {:error, _reason} ->
                         # Split and retry
                         require Logger
-                        Logger.info("Insert batch failed, splitting data in half and retrying...")
+                        Logger.info("Inserción de lote fallida, dividiendo datos a la mitad y reintentando...")
 
                         mid = div(length(records), 2)
                         {first_half, second_half} = Enum.split(records, mid)

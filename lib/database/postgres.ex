@@ -86,7 +86,7 @@ defmodule Database.Postgres do
                 {:ok, conn}
 
             {:error, reason} = error ->
-                Logger.error("Error connecting to PostgreSQL: #{inspect(reason)}")
+                Logger.error("Error al conectar a PostgreSQL: #{inspect(reason)}")
                 error
         end
     end
@@ -108,7 +108,7 @@ defmodule Database.Postgres do
             {:ok, %{read: read_conn, write: write_conn, mode: :dual}}
         else
             {:error, reason} = error ->
-                Logger.error("Error connecting to PostgreSQL in dual mode: #{inspect(reason)}")
+                Logger.error("Error al conectar a PostgreSQL en modo dual: #{inspect(reason)}")
                 error
         end
     end
@@ -125,7 +125,7 @@ defmodule Database.Postgres do
     def disconnect(%{mode: :dual, read: read_conn, write: write_conn}) do
         GenServer.stop(read_conn)
         GenServer.stop(write_conn)
-        Logger.info("Dual connections closed")
+        Logger.info("Conexiones duales cerradas")
         :ok
     end
 
@@ -183,7 +183,7 @@ defmodule Database.Postgres do
                 {:ok, exists}
 
             {:error, reason} = error ->
-                Logger.error("Error verifying table #{table_name}: #{inspect(reason)}")
+                Logger.error("Error al verificar tabla #{table_name}: #{inspect(reason)}")
                 error
         end
     end
@@ -246,11 +246,11 @@ defmodule Database.Postgres do
             {:ok, _} <- Postgrex.query(write_conn, estado_index_query, []),
             :ok <- add_column_comments(write_conn, sanitized_name, column_comments) do
 
-            Logger.info("Table #{table_name} created/verified successfully")
+            Logger.info("Tabla #{table_name} creada/verificada exitosamente")
             :ok
         else
             {:error, reason} = error ->
-                Logger.error("Error creating table #{table_name}: #{inspect(reason)}")
+                Logger.error("Error al crear tabla #{table_name}: #{inspect(reason)}")
                 error
         end
     end
@@ -308,7 +308,7 @@ defmodule Database.Postgres do
                 :ok
 
             {:error, reason} = error ->
-                Logger.error("Error dropping table #{table_name}: #{inspect(reason)}")
+                Logger.error("Error al eliminar tabla #{table_name}: #{inspect(reason)}")
                 error
         end
     end
@@ -383,16 +383,16 @@ defmodule Database.Postgres do
                         {:ok, count}
 
                     {:error, reason} = error ->
-                        Logger.error("Error inserting multiple records into #{table_name}: #{inspect(reason)}")
+                        Logger.error("Error al insertar múltiples registros en #{table_name}: #{inspect(reason)}")
                         error
                 end
             rescue
                 error in ArgumentError ->
-                    Logger.error("Error inserting records: #{inspect(error)}")
+                    Logger.error("Error al insertar registros: #{inspect(error)}")
                     {:error, error}
 
                 error ->
-                    Logger.error("Unexpected error inserting records: #{inspect(error)}")
+                    Logger.error("Error inesperado al insertar registros: #{inspect(error)}")
                     {:error, error}
             end
         end
@@ -445,7 +445,7 @@ defmodule Database.Postgres do
                 {:ok, Helpers.parse_query_result(result)}
 
             {:error, reason} = error ->
-                Logger.error("Error getting pending records from #{table_name}: #{inspect(reason)}")
+                Logger.error("Error al obtener registros pendientes de #{table_name}: #{inspect(reason)}")
                 error
         end
     end
@@ -490,7 +490,7 @@ defmodule Database.Postgres do
                 {:ok, Helpers.parse_query_result(result)}
 
             {:error, reason} = error ->
-                Logger.error("Error getting records from #{table_name}: #{inspect(reason)}")
+                Logger.error("Error al obtener registros de #{table_name}: #{inspect(reason)}")
                 error
         end
     end
@@ -531,7 +531,7 @@ defmodule Database.Postgres do
                     {:ok, count}
 
                 {:error, reason} = error ->
-                    Logger.error("Error deleting records from #{table_name}: #{inspect(reason)}")
+                    Logger.error("Error al eliminar registros de #{table_name}: #{inspect(reason)}")
                     error
             end
         end
@@ -569,7 +569,7 @@ defmodule Database.Postgres do
                     {:ok, count}
 
                 {:error, reason} = error ->
-                    Logger.error("Error updating estado_analisis in #{table_name}: #{inspect(reason)}")
+                    Logger.error("Error al actualizar estado_analisis en #{table_name}: #{inspect(reason)}")
                     error
             end
         end
@@ -604,11 +604,11 @@ defmodule Database.Postgres do
             Postgrex.query(write_conn, query, ids)
             |> case do
                 {:ok, %{num_rows: count}} ->
-                    Logger.warning("Marked #{count} records as problematic in #{table_name}")
+                    Logger.warning("#{count} registros marcados como error (con problema) en #{table_name}")
                     {:ok, count}
 
                 {:error, reason} = error ->
-                    Logger.error("Error marking records as problematic in #{table_name}: #{inspect(reason)}")
+                    Logger.error("Error al marcar registros como error (con problema) en #{table_name}: #{inspect(reason)}")
                     error
             end
         end
@@ -661,7 +661,7 @@ defmodule Database.Postgres do
                 {:ok, count}
 
             {:error, reason} = error ->
-                Logger.error("Error deleting analyzed records from #{table_name}: #{inspect(reason)}")
+                Logger.error("Error al eliminar registros analizados de #{table_name}: #{inspect(reason)}")
                 error
         end
     end
@@ -767,7 +767,7 @@ defmodule Database.Postgres do
                     {:ok, rows}
 
                 {:error, reason} = error ->
-                    Logger.error("Error in flexible query on #{table_name}: #{inspect(reason)}")
+                    Logger.error("Error en consulta flexible en #{table_name}: #{inspect(reason)}")
                     error
             end
         end

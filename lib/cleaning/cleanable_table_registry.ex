@@ -156,10 +156,10 @@ defmodule Cleaning.CleanableTableRegistry do
     def handle_call({:register, module}, _from, state) do
         if implements_behaviour?(module) do
             :ets.insert(@table_name, {module, true})
-            Logger.debug("Registered cleanable table: #{inspect(module)}")
+            Logger.debug("Tabla para limpiar registrada: #{inspect(module)}")
             {:reply, :ok, state}
         else
-            Logger.warning("Module #{inspect(module)} does not implement CleanableTable behaviour")
+            Logger.warning("El módulo #{inspect(module)} no implementa el behaviour CleanableTable")
             {:reply, {:error, :not_cleanable_table}, state}
         end
     end

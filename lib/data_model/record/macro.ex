@@ -509,7 +509,7 @@ defmodule DataModel.Record.Macro do
 
                     {true, _} ->
                         require Logger
-                        Logger.info("Insert batch failed, splitting data in half and retrying...")
+                        Logger.info("Inserción de lote fallida, dividiendo datos a la mitad y reintentando...")
 
                         mid = div(length(data), 2)
                         {first_half, second_half} = Enum.split(data, mid)

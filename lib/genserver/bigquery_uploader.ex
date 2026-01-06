@@ -61,13 +61,13 @@ defmodule Genserver.BigqueryUploader do
     def init(%{business: business, data_source: data_source, pg_config: pg_config, info: info, periodicity: periodicity, batch_size: batch_size, webhook_url: webhook_url}) do
         Monitor.register(self(), to_string(__MODULE__) <> "." <> to_string(business))
 
-        Logger.info("#{to_string(__MODULE__)}. Initializing. Business: ---#{to_string(business)}---")
+        Logger.info("#{to_string(__MODULE__)}. Inicializando. Negocio: ---#{to_string(business)}---")
 
         {:ok, pg_conn} = Postgres.connect(pg_config)
-        Logger.info("#{to_string(__MODULE__)}. PostgreSQL connection established for business: #{to_string(business)}")
+        Logger.info("#{to_string(__MODULE__)}. Conexión a PostgreSQL establecida para negocio: #{to_string(business)}")
 
         bq_conn = Odbc.connect(data_source)
-        Logger.info("#{to_string(__MODULE__)}. BigQuery ODBC connection established for business: #{to_string(business)}")
+        Logger.info("#{to_string(__MODULE__)}. Conexión ODBC a BigQuery establecida para negocio: #{to_string(business)}")
 
         milliseconds_timeout = notification_frequency(periodicity)
 
@@ -108,7 +108,7 @@ defmodule Genserver.BigqueryUploader do
             webhook_url: webhook_url
         } = state
 
-        Logger.info("#{to_string(__MODULE__)}. Starting BigQuery upload cycle for business: #{to_string(business)}")
+        Logger.info("#{to_string(__MODULE__)}. Iniciando ciclo de carga a BigQuery para negocio: #{to_string(business)}")
 
         Enum.each(info, fn table_config ->
             batch_id = random_string_generate(15)
@@ -120,7 +120,7 @@ defmodule Genserver.BigqueryUploader do
             Bigquery.run(business, bq_conn, pg_conn, pg_table, bq_table, tipo, batch_id, batch_size, webhook_url)
         end)
 
-        Logger.info("#{to_string(__MODULE__)}. Finished BigQuery upload cycle for business: #{to_string(business)}")
+        Logger.info("#{to_string(__MODULE__)}. Ciclo de carga a BigQuery finalizado para negocio: #{to_string(business)}")
 
         variable_wait(:later, milliseconds_timeout)
         {:noreply, state}
@@ -145,16 +145,16 @@ defmodule Genserver.BigqueryUploader do
 
     @impl true
     def terminate(reason, %{pg_conn: pg_conn, bq_conn: bq_conn, business: business}) do
-        Logger.info("#{to_string(__MODULE__)}. Terminating for business: #{to_string(business)}. Reason: #{inspect(reason)}")
+        Logger.info("#{to_string(__MODULE__)}. Terminando para negocio: #{to_string(business)}. Razón: #{inspect(reason)}")
 
         if pg_conn do
             Postgres.disconnect(pg_conn)
-            Logger.debug("#{to_string(__MODULE__)}. PostgreSQL connection closed")
+            Logger.debug("#{to_string(__MODULE__)}. Conexión a PostgreSQL cerrada")
         end
 
         if bq_conn do
             Odbc.disconnect(bq_conn)
-            Logger.debug("#{to_string(__MODULE__)}. BigQuery ODBC connection closed")
+            Logger.debug("#{to_string(__MODULE__)}. Conexión ODBC a BigQuery cerrada")
         end
 
         :ok

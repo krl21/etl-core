@@ -72,13 +72,13 @@ defmodule Genserver.Cleaning do
     def init(%{business: business, bq_config: bq_config, periodicity: periodicity} = config) do
         Monitor.register(self(), to_string(__MODULE__) <> "." <> to_string(business))
 
-        Logger.info("#{to_string(__MODULE__)}. Initializing. Business: ---#{to_string(business)}---")
+        Logger.info("#{to_string(__MODULE__)}. Inicializando. Negocio: ---#{to_string(business)}---")
 
         pg_config = Map.get(config, :pg_config)
         webhook_url = Map.get(config, :webhook_url)
 
         # Open BigQuery connection
-        Logger.debug("#{to_string(__MODULE__)}. Opening BigQuery ODBC connection")
+        Logger.debug("#{to_string(__MODULE__)}. Abriendo conexión ODBC a BigQuery")
         pid_odbc = connect(bq_config)
 
         # Open PostgreSQL connection if configured
@@ -107,7 +107,7 @@ defmodule Genserver.Cleaning do
     """
     @impl true
     def handle_info(:update, %{business: business, pid_odbc: pid_odbc, pid_pg: pid_pg, periodicity: periodicity, webhook_url: webhook_url} = state) do
-        Logger.debug("#{to_string(__MODULE__)}. Applying duplicate/stale row cleanup in ---#{to_string(business)}---")
+        Logger.debug("#{to_string(__MODULE__)}. Aplicando limpieza de filas duplicadas/obsoletas en ---#{to_string(business)}---")
 
         opts = if webhook_url, do: [webhook_url: webhook_url], else: []
 
@@ -151,17 +151,17 @@ defmodule Genserver.Cleaning do
     """
     @impl true
     def terminate(reason, %{pid_odbc: pid_odbc, pid_pg: pid_pg, business: business}) do
-        Logger.info("#{to_string(__MODULE__)}. Terminating (#{inspect(reason)}). Business: ---#{to_string(business)}---")
+        Logger.info("#{to_string(__MODULE__)}. Terminando (#{inspect(reason)}). Negocio: ---#{to_string(business)}---")
 
         # Close BigQuery connection
         if pid_odbc do
-            Logger.debug("#{to_string(__MODULE__)}. Closing BigQuery ODBC connection")
+            Logger.debug("#{to_string(__MODULE__)}. Cerrando conexión ODBC a BigQuery")
             disconnect(pid_odbc)
         end
 
         # Close PostgreSQL connection
         if pid_pg do
-            Logger.debug("#{to_string(__MODULE__)}. Closing PostgreSQL connection")
+            Logger.debug("#{to_string(__MODULE__)}. Cerrando conexión a PostgreSQL")
             Postgres.disconnect(pid_pg)
         end
 
@@ -183,20 +183,20 @@ defmodule Genserver.Cleaning do
     #     - pid | Map | nil
     #
     defp open_postgres_connection(nil) do
-        Logger.debug("#{to_string(__MODULE__)}. No PostgreSQL configuration provided, skipping PG cleaning")
+        Logger.debug("#{to_string(__MODULE__)}. No se proporcionó configuración de PostgreSQL, omitiendo limpieza")
         nil
     end
 
     defp open_postgres_connection(pg_config) do
-        Logger.debug("#{to_string(__MODULE__)}. Opening PostgreSQL connection")
+        Logger.debug("#{to_string(__MODULE__)}. Abriendo conexión a PostgreSQL")
 
         case Postgres.connect(pg_config) do
             {:ok, conn} ->
-                Logger.info("#{to_string(__MODULE__)}. PostgreSQL connection established")
+                Logger.info("#{to_string(__MODULE__)}. Conexión a PostgreSQL establecida")
                 conn
 
             {:error, reason} ->
-                Logger.error("#{to_string(__MODULE__)}. Failed to connect to PostgreSQL: #{inspect(reason)}")
+                Logger.error("#{to_string(__MODULE__)}. Error al conectar a PostgreSQL: #{inspect(reason)}")
                 nil
         end
     end
