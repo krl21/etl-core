@@ -98,6 +98,7 @@ defmodule DataModel.TaskPg.Macro do
             - `end_date_attr`: InfoAttr for end date
             - `target_attr`: InfoAttr for the computed elapsed time field
             - `business`: Atom. Business type for working time calculation
+            - `change_timezone`: Boolean. Whether to convert dates to business timezone (default: false)
         - `slack_webhook_url_path`: List. Path to get Slack webhook URL from config (optional)
         - `slack_env_var`: String. Environment variable name for Slack notifications (optional)
     """
@@ -379,6 +380,7 @@ defmodule DataModel.TaskPg.Macro do
                     target_id = config.target_attr.id
                     default_value = config.target_attr.default_value || -1
                     business = config.business
+                    change_timezone = Map.get(config, :change_timezone, false)
 
                     start_date = List.keyfind(values, start_date_id, 0, {0, nil}) |> elem(1)
                     end_date = List.keyfind(values, end_date_id, 0, {0, nil}) |> elem(1)
@@ -387,7 +389,7 @@ defmodule DataModel.TaskPg.Macro do
                         if is_nil(start_date) or is_nil(end_date) do
                             default_value
                         else
-                            case Time.WorkingTime.elapsed_time(start_date, end_date, business, []) do
+                            case Time.WorkingTime.elapsed_time(start_date, end_date, business, [], change_timezone) do
                                 {:ok, value} -> value
                                 {:error, _msg} -> default_value
                             end
