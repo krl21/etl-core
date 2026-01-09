@@ -144,8 +144,6 @@ defmodule Connection.Odbc do
         do
             query = Kernel.to_charlist(statement)
 
-            raise "test"
-
             :odbc.sql_query(pid, query)
             |> case do
                 {:error, error} -> raise("#{inspect(error)}. Statement: #{statement}")
