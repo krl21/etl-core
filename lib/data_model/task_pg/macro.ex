@@ -64,17 +64,24 @@ defmodule DataModel.TaskPg.Macro do
         generate_task_helper_functions()
 
         # Implement your own insert_by_lote using the helpers
-        def insert_by_lote(batch, batch_id, pg_conn) do
+        def insert_by_lote(batch, batch_id, pg_config) do
             # Your custom pipeline using:
             # - group_by_composite_key/1
             # - prepare_record/3
             # - build_data/1
             # - calculate_elapsed_time/1
-            # - execute_insert/3
+            # - execute_insert/3 (creates temp connection internally)
             # - handle_processing_error/4
         end
     end
     ```
+
+    ## Connection Management
+
+    The `execute_insert/3` and `execute_insert_with_retry/3` functions now receive
+    `pg_config` (connection configuration) instead of `pg_conn` (active connection).
+    They create a temporary connection, perform the insert, and close the connection.
+    All operations are wrapped in try-rescue with logging and Slack notifications.
     """
 
     # ============================================
@@ -449,29 +456,63 @@ defmodule DataModel.TaskPg.Macro do
 
             @doc """
             Executes the insert operation in PostgreSQL using insert_many.
+            Creates a temporary connection, inserts, and closes the connection.
 
             ### Parameters:
                 - `records`: List of record maps to insert
-                - `pg_conn`: pid | Map. PostgreSQL connection
+                - `pg_config`: Map. PostgreSQL connection configuration
                 - `batch_id`: String. Batch identifier for logging
 
             ### Returns:
                 - {:ok, count} - Number of records inserted
                 - {:error, reason} - If there's an error
             """
-            def execute_insert([], _pg_conn, _batch_id), do: {:ok, 0}
+            def execute_insert([], _pg_config, _batch_id), do: {:ok, 0}
 
-            def execute_insert(records, pg_conn, batch_id) do
-                case Connection.Postgres.insert_many(pg_conn, table_name(), records) do
-                    {:ok, count} ->
-                        {:ok, count}
+            def execute_insert(records, pg_config, batch_id) do
+                require Logger
 
-                    {:error, reason} = error ->
-                        handle_processing_error(batch_id, Enum.map(records, & &1.id_nodo), reason, %{
+                try do
+                    case Connection.Postgres.connect(pg_config) do
+                        {:ok, pg_conn} ->
+                            try do
+                                result = Connection.Postgres.insert_many(pg_conn, table_name(), records)
+
+                                case result do
+                                    {:ok, count} ->
+                                        {:ok, count}
+
+                                    {:error, reason} = error ->
+                                        handle_processing_error(batch_id, Enum.map(records, & &1.id_nodo), reason, %{
+                                            function: :execute_insert,
+                                            module: __MODULE__
+                                        })
+                                        error
+                                end
+                            after
+                                Connection.Postgres.disconnect(pg_conn)
+                            end
+
+                        {:error, reason} = error ->
+                            msg = "Error al conectar a PostgreSQL en execute_insert: #{inspect(reason)}"
+                            Logger.error("#{__MODULE__}. #{msg}")
+                            handle_processing_error(batch_id, Enum.map(records, & &1.id_nodo), reason, %{
+                                function: :execute_insert,
+                                module: __MODULE__,
+                                step: :connection
+                            })
+                            error
+                    end
+                rescue
+                    error ->
+                        msg = "Excepción en execute_insert: #{inspect(error)}"
+                        Logger.error("#{__MODULE__}. #{msg}")
+                        handle_processing_error(batch_id, Enum.map(records, & &1.id_nodo), error, %{
                             function: :execute_insert,
-                            module: __MODULE__
+                            module: __MODULE__,
+                            step: :rescue
                         })
-                        error
+                        {:error, error}
                 end
             end
             defoverridable execute_insert: 3
@@ -479,48 +520,85 @@ defmodule DataModel.TaskPg.Macro do
             @doc """
             Executes insertion with divide-and-conquer retry strategy.
             If an error occurs, splits the data in half and retries each part.
+            Creates a temporary connection for each attempt.
 
             ### Parameters:
                 - `records`: List of record maps to insert
-                - `pg_conn`: pid | Map. PostgreSQL connection
+                - `pg_config`: Map. PostgreSQL connection configuration
                 - `batch_id`: String. Batch identifier
 
             ### Returns:
                 - {:ok, count} - Total records inserted
                 - {:error, reason} - If all retries fail
             """
-            def execute_insert_with_retry([], _pg_conn, _batch_id), do: {:ok, 0}
+            def execute_insert_with_retry([], _pg_config, _batch_id), do: {:ok, 0}
 
-            def execute_insert_with_retry(records, pg_conn, batch_id) do
-                case Connection.Postgres.insert_many(pg_conn, table_name(), records) do
-                    {:ok, count} ->
-                        {:ok, count}
+            def execute_insert_with_retry(records, pg_config, batch_id) do
+                require Logger
 
-                    {:error, _reason} when length(records) == 1 ->
-                        # Single record failed, log and skip
-                        [record] = records
-                        handle_processing_error(batch_id, record.id_nodo, "Insert failed", %{
+                try do
+                    case Connection.Postgres.connect(pg_config) do
+                        {:ok, pg_conn} ->
+                            try do
+                                case Connection.Postgres.insert_many(pg_conn, table_name(), records) do
+                                    {:ok, count} ->
+                                        {:ok, count}
+
+                                    {:error, _reason} when length(records) == 1 ->
+                                        # Single record failed, log and skip
+                                        [record] = records
+                                        handle_processing_error(batch_id, record.id_nodo, "Insert failed", %{
+                                            function: :execute_insert_with_retry,
+                                            module: __MODULE__
+                                        })
+                                        {:ok, 0}
+
+                                    {:error, _reason} ->
+                                        # Close connection before splitting
+                                        Connection.Postgres.disconnect(pg_conn)
+
+                                        # Split and retry
+                                        Logger.info("#{__MODULE__}. Inserción de lote TaskPg fallida, dividiendo datos a la mitad y reintentando...")
+
+                                        mid = div(length(records), 2)
+                                        {first_half, second_half} = Enum.split(records, mid)
+
+                                        result1 = execute_insert_with_retry(first_half, pg_config, batch_id)
+                                        result2 = execute_insert_with_retry(second_half, pg_config, batch_id)
+
+                                        case {result1, result2} do
+                                            {{:ok, c1}, {:ok, c2}} -> {:ok, c1 + c2}
+                                            {{:error, _} = err, _} -> err
+                                            {_, {:error, _} = err} -> err
+                                        end
+                                end
+                            after
+                                # Only disconnect if we haven't already (in the split case)
+                                if Process.alive?(pg_conn) do
+                                    Connection.Postgres.disconnect(pg_conn)
+                                end
+                            end
+
+                        {:error, reason} = error ->
+                            msg = "Error al conectar a PostgreSQL en execute_insert_with_retry: #{inspect(reason)}"
+                            Logger.error("#{__MODULE__}. #{msg}")
+                            handle_processing_error(batch_id, Enum.map(records, & &1.id_nodo), reason, %{
+                                function: :execute_insert_with_retry,
+                                module: __MODULE__,
+                                step: :connection
+                            })
+                            error
+                    end
+                rescue
+                    error ->
+                        msg = "Excepción en execute_insert_with_retry: #{inspect(error)}"
+                        Logger.error("#{__MODULE__}. #{msg}")
+                        handle_processing_error(batch_id, Enum.map(records, & &1.id_nodo), error, %{
                             function: :execute_insert_with_retry,
-                            module: __MODULE__
+                            module: __MODULE__,
+                            step: :rescue
                         })
-                        {:ok, 0}
-
-                    {:error, _reason} ->
-                        # Split and retry
-                        require Logger
-                        Logger.info("Inserción de lote TaskPg fallida, dividiendo datos a la mitad y reintentando...")
-
-                        mid = div(length(records), 2)
-                        {first_half, second_half} = Enum.split(records, mid)
-
-                        result1 = execute_insert_with_retry(first_half, pg_conn, batch_id)
-                        result2 = execute_insert_with_retry(second_half, pg_conn, batch_id)
-
-                        case {result1, result2} do
-                            {{:ok, c1}, {:ok, c2}} -> {:ok, c1 + c2}
-                            {{:error, _} = err, _} -> err
-                            {_, {:error, _} = err} -> err
-                        end
+                        {:error, error}
                 end
             end
             defoverridable execute_insert_with_retry: 3
@@ -532,12 +610,12 @@ defmodule DataModel.TaskPg.Macro do
             ### Parameters:
                 - `batch`: Original batch of payloads
                 - `batch_id`: String. Batch identifier
-                - `pg_conn`: PostgreSQL connection
+                - `pg_config`: Map. PostgreSQL connection configuration
 
             ### Returns:
                 - any
             """
-            def after_insert(_batch, _batch_id, _pg_conn), do: :ok
+            def after_insert(_batch, _batch_id, _pg_config), do: :ok
             defoverridable after_insert: 3
 
             @doc """
@@ -614,14 +692,14 @@ defmodule DataModel.TaskPg.Macro do
             ### Parameters:
                 - `batch`: List of map. Payloads.
                 - `batch_id`: String. Batch identifier.
-                - `pg_conn`: pid | Map. PostgreSQL connection.
+                - `pg_config`: Map. PostgreSQL connection configuration.
 
             ### Returns:
                 - {:ok, count} | {:error, reason}
             """
-            def insert_by_lote([], _batch_id, _pg_conn), do: {:ok, 0}
+            def insert_by_lote([], _batch_id, _pg_config), do: {:ok, 0}
 
-            def insert_by_lote(batch, batch_id, pg_conn)
+            def insert_by_lote(batch, batch_id, pg_config)
                 when is_list(batch) and is_binary(batch_id) do
 
                 {grouped_by_key, keys} = group_by_composite_key(batch)
@@ -634,9 +712,9 @@ defmodule DataModel.TaskPg.Macro do
                     |> Enum.filter(&match?({:ok, _}, &1))
                     |> Enum.map(fn {:ok, record} -> record end)
 
-                result = execute_insert_with_retry(records, pg_conn, batch_id)
+                result = execute_insert_with_retry(records, pg_config, batch_id)
 
-                after_insert(batch, batch_id, pg_conn)
+                after_insert(batch, batch_id, pg_config)
 
                 result
             end
