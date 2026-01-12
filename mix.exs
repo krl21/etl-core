@@ -41,7 +41,7 @@ defmodule EtlCore.MixProject do
       {:ex_doc, ">= 0.0.0", only: :dev, runtime: false},
       {:amqp, "~> 3.2"},
       {:ecto_sql, "~> 3.9.0"},
-      {:postgrex, "~> 0.15.11"}
+      {:postgrex, "~> 0.16.0"}
     ]
   end
 end
