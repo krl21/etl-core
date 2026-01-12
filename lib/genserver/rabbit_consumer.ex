@@ -9,6 +9,7 @@ defmodule Genserver.RabbitConsumer do
     import Stuff, only: [random_string_generate: 1]
     alias Genserver.Monitor
     alias Notification.Notify
+    alias Connection.Postgres
 
 
     def start_link({%{config: %{queue: queue}} = _queue_info, _configuration_amqp, _info} = args) do
@@ -29,7 +30,10 @@ defmodule Genserver.RabbitConsumer do
 
         {:ok, _consumer_tag} = AMQP.Basic.consume(channel, queue)
 
-        {:ok, {channel, queue, business, info}}
+        pg_conn = open_postgres_connection(info[:pg_config], queue)
+        info_with_conn = Map.put(info, :pg_conn, pg_conn)
+
+        {:ok, {channel, queue, business, info_with_conn}}
     end
 
     # Confirmation sent by the broker after registering this process as a consumer
@@ -116,5 +120,48 @@ defmodule Genserver.RabbitConsumer do
         )
     end
     defp notify_error(_, _), do: :ok
+
+    #
+    # Opens a PostgreSQL connection if configuration is provided.
+    #
+    # ### Parameters
+    #     - pg_config: Map | nil. PostgreSQL connection configuration
+    #     - queue: String. Queue name for logging purposes
+    #
+    # ### Returns
+    #     - pid | Map | nil
+    #
+    defp open_postgres_connection(nil, queue) do
+        Logger.warning("#{to_string(__MODULE__)}. No se proporcionó configuración de PostgreSQL para la cola: #{queue}")
+        nil
+    end
+
+    defp open_postgres_connection(pg_config, queue) do
+        Logger.debug("#{to_string(__MODULE__)}. Abriendo conexión a PostgreSQL para la cola: #{queue}")
+
+        case Postgres.connect(pg_config) do
+            {:ok, conn} ->
+                Logger.info("#{to_string(__MODULE__)}. Conexión a PostgreSQL establecida para la cola: #{queue}")
+                conn
+
+            {:error, reason} ->
+                Logger.error("#{to_string(__MODULE__)}. Error al conectar a PostgreSQL para la cola #{queue}: #{inspect(reason)}")
+                nil
+        end
+    end
+
+    #
+    # Terminates the GenServer and closes the PostgreSQL connection.
+    #
+    def terminate(reason, {_channel, queue, _business, info}) do
+        Logger.info("#{to_string(__MODULE__)}. Terminando (#{inspect(reason)}). Cola: ---#{queue}---")
+
+        if info[:pg_conn] do
+            Logger.debug("#{to_string(__MODULE__)}. Cerrando conexión a PostgreSQL")
+            Postgres.disconnect(info[:pg_conn])
+        end
+
+        :ok
+    end
 
 end
