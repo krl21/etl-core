@@ -40,8 +40,8 @@ defmodule EtlCore.MixProject do
       {:decorator, "~> 1.2"},
       {:ex_doc, ">= 0.0.0", only: :dev, runtime: false},
       {:amqp, "~> 3.2"},
-      {:ecto_sql, "~> 3.10.0"},
-      {:postgrex, "~> 0.17.0"}
+      {:ecto_sql, "~> 3.9.0"},
+      {:postgrex, "~> 0.15.11"}
     ]
   end
 end
