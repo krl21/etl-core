@@ -26,8 +26,6 @@ defmodule Genserver.RabbitConsumer do
 
         setup_queue(channel, queue_info)
 
-        :ok = AMQP.Basic.qos(channel, prefetch_count: 1)
-
         {:ok, _consumer_tag} = AMQP.Basic.consume(channel, queue)
 
         pg_conn = open_postgres_connection(info[:pg_config], queue)
@@ -58,64 +56,12 @@ defmodule Genserver.RabbitConsumer do
 
     # Handle incoming messages from the queue
     def handle_info({:basic_deliver, payload, %{delivery_tag: delivery_tag}}, {channel, queue, business, info} = state) do
-        Logger.debug("#{to_string(__MODULE__)}. Mensaje recibido en cola: #{queue}")
+        # Logger.debug("#{to_string(__MODULE__)}. Message received on queue: #{queue}")
 
-        case ensure_postgres_connection(info, queue) do
-            {:ok, updated_info} ->
-                # Conexión activa, procesar mensaje normalmente
-                process_message(payload, delivery_tag, channel, queue, business, updated_info)
-                {:noreply, {channel, queue, business, updated_info}}
-
-            {:retry, updated_info} ->
-                Logger.warning("#{to_string(__MODULE__)}. Mensaje retenido en proceso hasta que se restablezca conexión a PostgreSQL. Cola: #{queue}")
-                notify_error(info, "Mensaje retenido en proceso hasta que se restablezca conexión a PostgreSQL. Cola: #{queue}")
-                pending_message = %{payload: payload, delivery_tag: delivery_tag}
-                updated_info_with_pending = Map.put(updated_info, :pending_message, pending_message)
-                {:noreply, {channel, queue, business, updated_info_with_pending}}
-        end
-    end
-
-    # Handle retry connection after 20 seconds
-    def handle_info(:retry_postgres_connection, {channel, queue, business, info} = state) do
-        Logger.info("#{to_string(__MODULE__)}. Reintentando conexión a PostgreSQL después de 20 segundos. Cola: #{queue}")
-
-        case reconnect_postgres(info, queue) do
-            {:ok, new_conn} ->
-                Logger.info("#{to_string(__MODULE__)}. Reconexión a PostgreSQL exitosa. Cola: #{queue}")
-                updated_info = Map.put(info, :pg_conn, new_conn)
-
-                # Procesar mensaje pendiente si existe
-                case Map.get(info, :pending_message) do
-                    nil ->
-                        Logger.debug("#{to_string(__MODULE__)}. No hay mensajes pendientes. Cola: #{queue}")
-                        {:noreply, {channel, queue, business, updated_info}}
-
-                    %{payload: payload, delivery_tag: delivery_tag} ->
-                        Logger.info("#{to_string(__MODULE__)}. Procesando mensaje pendiente después de reconexión. Cola: #{queue}")
-                        process_message(payload, delivery_tag, channel, queue, business, updated_info)
-                        updated_info_clean = Map.delete(updated_info, :pending_message)
-                        {:noreply, {channel, queue, business, updated_info_clean}}
-                end
-
-            {:error, reason} ->
-                Logger.error("#{to_string(__MODULE__)}. Fallo en reintento de conexión a PostgreSQL: #{inspect(reason)}. Cola: #{queue}. Programando nuevo reintento en 20 segundos.")
-                notify_error(info, "Fallo en reintento de conexión a PostgreSQL: #{inspect(reason)}. Cola: #{queue}. Programando nuevo reintento en 20 segundos.")
-                schedule_retry_connection()
-                {:noreply, state}
-        end
-    end
-
-    #
-    # Processes a message from the queue.
-    # Decodes the payload, performs the business logic, and acknowledges or rejects the message.
-    #
-    defp process_message(payload, delivery_tag, channel, queue, business, info) do
         payload
         |> Poison.decode()
         |> case do
             {:ok, msg_decode} ->
-                Logger.debug("#{to_string(__MODULE__)}. Procesando mensaje. Cola: #{queue}")
-
                 [msg_decode]
                 |> perform(
                     random_string_generate(15),
@@ -124,7 +70,6 @@ defmodule Genserver.RabbitConsumer do
                 )
 
                 AMQP.Basic.ack(channel, delivery_tag)
-                Logger.debug("#{to_string(__MODULE__)}. Mensaje procesado y confirmado. Cola: #{queue}")
 
             {:error, reason} ->
                 message = "#{to_string(__MODULE__)}. Error al decodificar mensaje: #{inspect(reason)}. Cola: #{queue}"
@@ -132,111 +77,8 @@ defmodule Genserver.RabbitConsumer do
                 notify_error(info, message)
                 AMQP.Basic.reject(channel, delivery_tag, requeue: false)
         end
-    end
 
-    #
-    # Ensures the PostgreSQL connection is active before processing a message.
-    # If not active, attempts to reconnect. If reconnection fails, schedules a retry.
-    #
-    # ### Parameters
-    #     - info: Map. Current info map containing :pg_conn and :pg_config
-    #     - queue: String. Queue name for logging purposes
-    #
-    # ### Returns
-    #     - {:ok, updated_info} - Connection is active or was successfully reconnected
-    #     - {:retry, updated_info} - Reconnection failed, retry scheduled
-    #
-    defp ensure_postgres_connection(%{pg_conn: nil} = info, queue) do
-        Logger.warning("#{to_string(__MODULE__)}. Conexión a PostgreSQL es nil. Intentando reconectar. Cola: #{queue}")
-        attempt_reconnection(info, queue)
-    end
-
-    defp ensure_postgres_connection(%{pg_conn: pg_conn} = info, queue) do
-        if connection_alive?(pg_conn) do
-            Logger.debug("#{to_string(__MODULE__)}. Conexión a PostgreSQL activa. Cola: #{queue}")
-            {:ok, info}
-        else
-            Logger.warning("#{to_string(__MODULE__)}. Conexión a PostgreSQL no está activa. Intentando reconectar. Cola: #{queue}")
-            attempt_reconnection(info, queue)
-        end
-    end
-
-    defp ensure_postgres_connection(info, queue) do
-        Logger.warning("#{to_string(__MODULE__)}. No existe pg_conn en info. Intentando crear conexión. Cola: #{queue}")
-        attempt_reconnection(info, queue)
-    end
-
-    #
-    # Checks if the PostgreSQL connection process is alive.
-    #
-    # ### Parameters
-    #     - conn: pid | Map. PostgreSQL connection (simple or dual mode)
-    #
-    # ### Returns
-    #     - true - Connection is alive
-    #     - false - Connection is dead
-    #
-    defp connection_alive?(%{mode: :dual, read: read_conn, write: write_conn}) do
-        read_alive = Process.alive?(read_conn)
-        write_alive = Process.alive?(write_conn)
-
-        unless read_alive and write_alive do
-            Logger.debug("#{to_string(__MODULE__)}. Estado conexión dual - read: #{read_alive}, write: #{write_alive}")
-        end
-
-        read_alive and write_alive
-    end
-
-    defp connection_alive?(conn) when is_pid(conn) do
-        Process.alive?(conn)
-    end
-
-    defp connection_alive?(_), do: false
-
-    #
-    # Attempts to reconnect to PostgreSQL.
-    # If successful, returns {:ok, updated_info}.
-    # If failed, schedules a retry in 20 seconds and returns {:retry, info}.
-    #
-    # ### Parameters:
-    #     - info: Map. Current info map containing :pg_config
-    #     - queue: String. Queue name for logging purposes
-    #
-    # ### Returns:
-    #     - {:ok, updated_info} - Connection is active or was successfully reconnected
-    #     - {:retry, updated_info} - Reconnection failed, retry scheduled
-    #
-    defp attempt_reconnection(info, queue) do
-        case reconnect_postgres(info, queue) do
-            {:ok, new_conn} ->
-                Logger.info("#{to_string(__MODULE__)}. Reconexión a PostgreSQL exitosa. Cola: #{queue}")
-                {:ok, Map.put(info, :pg_conn, new_conn)}
-
-            {:error, reason} ->
-                Logger.error("#{to_string(__MODULE__)}. Error al reconectar a PostgreSQL: #{inspect(reason)}. Cola: #{queue}. Reintentando en 20 segundos.")
-                schedule_retry_connection()
-                {:retry, info}
-        end
-    end
-
-    #
-    # Reconnects to PostgreSQL using the stored configuration.
-    #
-    defp reconnect_postgres(%{pg_config: pg_config}, queue) when not is_nil(pg_config) do
-        Logger.info("#{to_string(__MODULE__)}. Iniciando reconexión a PostgreSQL. Cola: #{queue}")
-        Postgres.connect(pg_config)
-    end
-
-    defp reconnect_postgres(info, queue) do
-        Logger.error("#{to_string(__MODULE__)}. No hay configuración de PostgreSQL disponible para reconectar. Cola: #{queue}")
-        {:error, :no_pg_config}
-    end
-
-    #
-    # Schedules a retry connection attempt after 20 seconds.
-    #
-    defp schedule_retry_connection do
-        Process.send_after(self(), :retry_postgres_connection, 20_000)
+        {:noreply, state}
     end
 
     #
