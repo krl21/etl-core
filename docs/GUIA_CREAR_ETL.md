@@ -1,24 +1,86 @@
 # Guía para Crear un ETL desde Cero
 
-Esta guía describe paso a paso cómo crear un nuevo proyecto ETL utilizando `etl-core`.
+Esta guía describe paso a paso cómo crear un nuevo proyecto ETL utilizando `etl-core` v2.0.
 
 ---
 
 ## Tabla de Contenidos
 
-1. [Estructura del Proyecto](#estructura-del-proyecto)
-2. [Paso 1: Crear el Proyecto](#paso-1-crear-el-proyecto)
-3. [Paso 2: Configuración de Dependencias](#paso-2-configuración-de-dependencias)
-4. [Paso 3: Configuración de la Aplicación](#paso-3-configuración-de-la-aplicación)
-5. [Paso 4: Definir Entidades](#paso-4-definir-entidades)
-6. [Paso 5: Implementar el Worker](#paso-5-implementar-el-worker)
-7. [Paso 6: Configurar ForcedLoad](#paso-6-configurar-forcedload)
-8. [Paso 7: Configurar Subida a BigQuery](#paso-7-configurar-subida-a-bigquery)
-9. [Paso 8: Configurar Limpieza de Datos](#paso-8-configurar-limpieza-de-datos)
-10. [Paso 9: Implementar Application](#paso-9-implementar-application)
-11. [Paso 10: Configurar el Tipo Documental](#paso-10-configurar-el-tipo-documental)
-12. [Paso 11: Archivos Adicionales](#paso-11-archivos-adicionales)
-13. [Checklist Final](#checklist-final)
+- [Guía para Crear un ETL desde Cero](#guía-para-crear-un-etl-desde-cero)
+  - [Tabla de Contenidos](#tabla-de-contenidos)
+  - [Visión General](#visión-general)
+    - [Componentes Principales](#componentes-principales)
+  - [Estructura del Proyecto](#estructura-del-proyecto)
+  - [Paso 1: Crear el Proyecto](#paso-1-crear-el-proyecto)
+  - [Paso 2: Configuración de Dependencias](#paso-2-configuración-de-dependencias)
+    - [`mix.exs`](#mixexs)
+    - [Instalar dependencias](#instalar-dependencias)
+  - [Paso 3: Archivos de Configuración](#paso-3-archivos-de-configuración)
+    - [3.1 `config/config.exs`](#31-configconfigexs)
+    - [3.2 `config/dev.exs`](#32-configdevexs)
+    - [3.3 `config/prod.exs` y `config/test.exs`](#33-configprodexs-y-configtestexs)
+    - [3.4 `config/runtime.exs` (CRÍTICO)](#34-configruntimeexs-crítico)
+  - [Paso 4: Definir Sub-entidades (Atributos)](#paso-4-definir-sub-entidades-atributos)
+    - [4.1 Atributos Base (OBLIGATORIO)](#41-atributos-base-obligatorio)
+    - [4.2 Sub-entidades Adicionales](#42-sub-entidades-adicionales)
+    - [4.3 Sub-entidad con Post-procesamiento](#43-sub-entidad-con-post-procesamiento)
+  - [Paso 5: Crear la Entidad Record Principal](#paso-5-crear-la-entidad-record-principal)
+  - [Paso 6: Crear la Entidad Task](#paso-6-crear-la-entidad-task)
+  - [Paso 7: Implementar el Worker](#paso-7-implementar-el-worker)
+  - [Paso 8: Configurar ForcedLoad](#paso-8-configurar-forcedload)
+  - [Paso 9: Configurar el Tipo Documental](#paso-9-configurar-el-tipo-documental)
+    - [Configuración de Tiempo Laboral (Opcional)](#configuración-de-tiempo-laboral-opcional)
+  - [Paso 10: Implementar Application](#paso-10-implementar-application)
+  - [Paso 11: Archivos de Deployment](#paso-11-archivos-de-deployment)
+    - [11.1 `k8s/canary/deployment.yml`](#111-k8scanarydeploymentyml)
+    - [11.2 `startup-prod.sh`](#112-startup-prodsh)
+    - [11.3 `Dockerfile`](#113-dockerfile)
+    - [11.4 `rel/env.sh.eex`](#114-relenvsheex)
+  - [Checklist Final](#checklist-final)
+    - [Estructura de Archivos](#estructura-de-archivos)
+    - [Entidades](#entidades)
+    - [Implementaciones](#implementaciones)
+    - [Configuración](#configuración)
+    - [Deployment](#deployment)
+  - [Variables de Entorno Requeridas](#variables-de-entorno-requeridas)
+  - [Consejos y Mejores Prácticas](#consejos-y-mejores-prácticas)
+    - [1. Nombrado de Atributos](#1-nombrado-de-atributos)
+    - [2. Manejo de Errores](#2-manejo-de-errores)
+    - [3. Post-procesamiento](#3-post-procesamiento)
+    - [4. Testing](#4-testing)
+    - [5. Carga Masiva](#5-carga-masiva)
+
+---
+
+## Visión General
+
+El sistema ETL sigue un flujo de datos bien definido:
+
+```
+┌─────────────┐    ┌─────────────┐    ┌─────────────┐    ┌─────────────┐
+│  RabbitMQ   │───►│   Worker    │───►│ PostgreSQL  │───►│  BigQuery   │
+│  (Eventos)  │    │ (Procesa)   │    │  (Buffer)   │    │ (Destino)   │
+└─────────────┘    └─────────────┘    └─────────────┘    └─────────────┘
+                                             │
+                   ┌─────────────────────────┤
+                   │                         │
+                   ▼                         ▼
+            ┌─────────────┐          ┌─────────────┐
+            │ BigQuery    │          │  Cleaning   │
+            │  Uploader   │          │ (Limpieza)  │
+            └─────────────┘          └─────────────┘
+```
+
+### Componentes Principales
+
+| Componente | Descripción |
+|------------|-------------|
+| **RabbitConsumer** | Consume mensajes de colas RabbitMQ en tiempo real |
+| **Worker** | Procesa los mensajes según el tipo de negocio (`:record`, `:task`) |
+| **PostgreSQL** | Buffer intermedio para almacenamiento temporal |
+| **BigqueryUploader** | Sube datos de PostgreSQL a BigQuery periódicamente |
+| **Cleaning** | Elimina duplicados y registros ya procesados |
+| **ForcedLoad** | Carga histórica de datos desde ElasticSearch |
 
 ---
 
@@ -27,35 +89,47 @@ Esta guía describe paso a paso cómo crear un nuevo proyecto ETL utilizando `et
 ```
 mi_etl/
 ├── config/
-│   ├── config.exs          # Configuración del logger
-│   ├── dev.exs             # Configuración de desarrollo
-│   ├── prod.exs            # Configuración de producción
-│   ├── runtime.exs         # Configuración en runtime (variables de entorno)
-│   └── test.exs            # Configuración de tests
+│   ├── config.exs              # Configuración del logger
+│   ├── dev.exs                 # Configuración de desarrollo (PostgreSQL local)
+│   ├── prod.exs                # Configuración de producción
+│   ├── runtime.exs             # Configuración en runtime (IMPORTANTE: variables de entorno)
+│   └── test.exs                # Configuración de tests
+├── k8s/
+│   ├── canary/
+│   │   └── deployment.yml      # Deployment para ambiente Canary/QA
+│   └── production/
+│       └── deployment.yml      # Deployment para Producción
 ├── lib/
-│   ├── mi_etl.ex           # Módulo principal
+│   ├── mi_etl.ex               # Módulo principal (puede estar vacío)
 │   ├── mi_etl/
-│   │   └── application.ex  # Application (supervisor tree)
+│   │   └── application.ex      # Application (supervisor tree) - MUY IMPORTANTE
 │   ├── entity/
 │   │   ├── record/
-│   │   │   ├── record.ex           # Entidad principal Record
+│   │   │   ├── record.ex               # Entidad principal Record
 │   │   │   └── subentities/
-│   │   │       ├── record_base.ex  # Atributos base del record
-│   │   │       ├── buyer.ex        # Sub-entidad Comprador
-│   │   │       └── vehicle.ex      # Sub-entidad Vehículo
+│   │   │       ├── record_base.ex      # Atributos base (unique_id, timestamp, etc.)
+│   │   │       ├── buyer.ex            # Sub-entidad Comprador
+│   │   │       ├── vehicle.ex          # Sub-entidad Vehículo
+│   │   │       └── ...                 # Más sub-entidades según el negocio
 │   │   └── task/
-│   │       └── task.ex             # Entidad Task
+│   │       └── task.ex                 # Entidad Task
 │   ├── impl/
 │   │   ├── genserver/
-│   │   │   ├── worker.ex           # Implementación del Worker
-│   │   │   └── forced_load_config.ex
+│   │   │   ├── worker.ex               # Implementación del protocolo PWorker
+│   │   │   └── forced_load_config.ex   # Configuración para carga forzada
 │   │   ├── time/
-│   │   │   └── my_time.ex          # Configuración de tiempo laboral
+│   │   │   └── my_time.ex              # Configuración de tiempo laboral
 │   │   └── type/
-│   │       └── documentary_type_of.ex
+│   │       └── documentary_type_of.ex  # Mapeo de tipos documentales
 │   └── tools/
-│       └── stuff.ex                # Funciones auxiliares
-└── mix.exs
+│       └── stuff.ex                    # Funciones auxiliares específicas
+├── rel/
+│   ├── env.bat.eex             # Variables para Windows
+│   └── env.sh.eex              # Variables para Unix
+├── Dockerfile                  # Imagen Docker
+├── mix.exs                     # Dependencias y configuración del proyecto
+├── startup-prod.sh             # Script para ejecutar en producción (Okteto)
+└── startup-qa.sh               # Script para ejecutar en QA
 ```
 
 ---
@@ -63,8 +137,21 @@ mi_etl/
 ## Paso 1: Crear el Proyecto
 
 ```bash
+# Crear proyecto con supervisor
 mix new mi_etl --sup
 cd mi_etl
+
+# Crear estructura de directorios
+mkdir -p lib/entity/record/subentities
+mkdir -p lib/entity/task
+mkdir -p lib/impl/genserver
+mkdir -p lib/impl/time
+mkdir -p lib/impl/type
+mkdir -p lib/tools
+mkdir -p config
+mkdir -p k8s/canary
+mkdir -p k8s/production
+mkdir -p rel
 ```
 
 ---
@@ -81,16 +168,17 @@ defmodule MiEtl.MixProject do
     [
       app: :mi_etl,
       version: "0.1.0",
-      elixir: "~> 1.14.0",
+      elixir: "~> 1.14.0-rc.0",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
-      releases: releases()
+      releases: releases(),
+      extras: ["README.md"]
     ]
   end
 
   def application do
     [
-      extra_applications: [:logger],
+      extra_applications: [:logger, :odbc],  # :odbc es necesario para BigQuery
       mod: {MiEtl.Application, []}
     ]
   end
@@ -109,10 +197,10 @@ defmodule MiEtl.MixProject do
 
   defp deps do
     [
-      # ETL Core - Cambiar URL por el repositorio real
-      {:etl_core, git: "https://github.com/krl21/etl-core.git", branch: "vx.x"},
+      # ETL Core v2.0 - Librería base
+      {:etl_core, git: "https://github.com/krl21/etl-core.git", branch: "v2.0"},
       
-      # Logger flexible (opcional)
+      # Logger flexible
       {:flex_logger, "~> 0.2.1"},
       
       # Flow para procesamiento paralelo (opcional)
@@ -126,13 +214,16 @@ end
 
 ```bash
 mix deps.get
+mix compile
 ```
 
 ---
 
-## Paso 3: Configuración de la Aplicación
+## Paso 3: Archivos de Configuración
 
-### `config/config.exs`
+### 3.1 `config/config.exs`
+
+Configuración base del logger:
 
 ```elixir
 import Config
@@ -154,21 +245,57 @@ config :logger,
   handle_otp_reports: false,
   handle_sasl_reports: false
 
+# Importar configuración específica del ambiente
 import_config "#{Mix.env()}.exs"
 ```
 
-### `config/dev.exs`
+### 3.2 `config/dev.exs`
+
+Configuración para desarrollo local:
 
 ```elixir
 import Config
 
 config :logger, :logger_name,
   level_config: [application: :mi_etl, level: :debug]
+
+# PostgreSQL local para desarrollo (opcional)
+config :mi_etl,
+  postgres: %{
+    connection: %{
+      hostname: "localhost",
+      port: 5432,
+      database: "mi_etl_dev",
+      username: "postgres",
+      password: "postgres"
+    },
+    tables: ["mi_etl_records"],
+    register_type: %{
+      record: "expediente",
+      task: "tarea"
+    }
+  }
 ```
 
-### `config/runtime.exs`
+### 3.3 `config/prod.exs` y `config/test.exs`
 
-Este archivo contiene TODA la configuración que depende de variables de entorno:
+```elixir
+# config/prod.exs
+import Config
+
+config :logger, :logger_name,
+  level_config: [application: :mi_etl, level: :info]
+
+# config/test.exs
+import Config
+
+config :logger, :logger_name,
+  level_config: [application: :mi_etl, level: :warning]
+```
+
+### 3.4 `config/runtime.exs` (CRÍTICO)
+
+Este archivo contiene **TODA** la configuración que depende de variables de entorno. Es el archivo más importante de configuración.
 
 ```elixir
 import Config
@@ -180,13 +307,13 @@ config :logger, :logger_name,
   level_config: [application: :mi_etl, level: :debug]
 
 ################
-### Zona horaria
+### Zona horaria para conversiones de fecha
 ################
 config :mi_etl,
   timezone: "America/Santiago"
 
 ################
-### BigQuery
+### Configuración de BigQuery
 ################
 config :mi_etl,
   bigquery: %{
@@ -195,28 +322,27 @@ config :mi_etl,
       warehouse: System.get_env("DATAMART_MI_ETL")
     ],
     table: %{
-      record: "#{System.get_env("DATAMART_MI_ETL")}.#{System.get_env("MI_ETL_RECORDS_TABLE")}",
-      task: "#{System.get_env("DATAMART_MI_ETL")}.#{System.get_env("MI_ETL_TASK_TABLE")}",
-      ...
+      record: "#{System.get_env("DATAMART_MI_ETL")}.#{System.get_env("MI_ETL_SERVICE_TABLE")}",
+      task: "#{System.get_env("DATAMART_MI_ETL")}.#{System.get_env("MI_ETL_TASK_TABLE")}"
     }
   }
 
 ################
-### Notificaciones Slack
+### Configuración de notificaciones Slack
 ################
 config :mi_etl,
   notification: %{
     slack_webhook: %{
       url: %{
-        bug: System.get_env("SLACK_WEBHOOK_FOR_BUGS"),
-        notification: System.get_env("SLACK_WEBHOOK_FOR_NOTIFICATIONS")
+        bug: System.get_env("SLACK_WEBNOOK_FOR_BUGS"),
+        notification: System.get_env("SLACK_WEBNOOK_FOR_NOTIFICATIONS")
       },
       headers: [{"Content-type", "application/json"}]
     }
   }
 
 ################
-### Credenciales de usuario
+### Credenciales de usuario del sistema
 ################
 config :mi_etl,
   user: %{
@@ -227,7 +353,7 @@ config :mi_etl,
   }
 
 ################
-### Servicios externos
+### Servicios externos DOX
 ################
 config :mi_etl,
   # Ticket de autenticación
@@ -241,7 +367,7 @@ config :mi_etl,
     url: "http://#{System.get_env("ELASTICSEARCH_HOST")}:9200/<type_documentary>/<mode>",
     keys: ["<type_documentary>", "<mode>"],
     mode: ["_search"],
-    type_documentary: ["mi_tipo_documental"],
+    type_documentary: ["mi_tipo_documental"],  # Cambiar según el negocio
     headers: [{"Content-type", "application/json"}]
   },
   # NodeService
@@ -258,7 +384,7 @@ config :mi_etl,
   }
 
 ################
-### RabbitMQ
+### Configuración de RabbitMQ
 ################
 config :mi_etl,
   my_amqp_client: %{
@@ -281,9 +407,7 @@ config :mi_etl,
               {"x-dead-letter-routing-key", :longstr, "#{System.get_env("AMQP_RECORD_QUEUE")}_error"}
             ],
             listen: [
-              # Exchanges a los que escuchar, si aplica
-              "on_created_mi_documento",
-              "on_updated_mi_documento"
+              # Exchanges a escuchar (dejar vacío si no aplica)
             ]
           }
         },
@@ -298,11 +422,10 @@ config :mi_etl,
               {"x-dead-letter-routing-key", :longstr, "#{System.get_env("AMQP_TASK_QUEUE")}_error"}
             ],
             listen: [
+              # Lista de eventos de tareas a escuchar
               "on_create_tarea_1",
-              "on_completed_tarea_1",
-              "on_create_tarea_2",
-              "on_completed_tarea_2", 
-              ...
+              "on_completed_tarea_1"
+              # ... agregar más según el negocio
             ]
           }
         }
@@ -314,8 +437,8 @@ config :mi_etl,
 ### Tamaños de batch
 ################
 config :mi_etl,
-  batch_size: 200,
-  batch_size_process: 70
+  batch_size: 200,            # Tamaño de batch para consultas
+  batch_size_process: 70      # Tamaño de batch para procesamiento
 
 ################
 ### Periodicidad de GenServers
@@ -326,15 +449,15 @@ config :mi_etl,
       periodicity: %{day: 0, hour: 0, minute: 2, second: 0}
     },
     cleanup_in_bigquery: %{
-      periodicity: %{day: 0, hour: 1, minute: 30, second: 0}
+      periodicity: %{day: 0, hour: 1, minute: 30, second: 0}  # Cada 90 minutos
     },
     bigquery_uploader: %{
-      periodicity: %{day: 0, hour: 0, minute: 1, second: 0}
+      periodicity: %{day: 0, hour: 0, minute: 1, second: 0}   # Cada 1 minuto
     }
   }
 
 ################
-### PostgreSQL
+### Configuración de PostgreSQL (Buffer)
 ################
 config :mi_etl,
   postgres: %{
@@ -357,90 +480,316 @@ config :mi_etl,
 
 ---
 
-## Paso 4: Definir Entidades
+## Paso 4: Definir Sub-entidades (Atributos)
 
-### 4.1 Sub-entidades (Proveedores de Atributos)
+Las sub-entidades definen los atributos que se extraen del payload JSON.
 
-Las sub-entidades definen los atributos que se extraen del payload. 
+### 4.1 Atributos Base (OBLIGATORIO)
 
-**Importante**: Debe existir al menos un fichero `record_base.ex` que defina los atributos fundamentales:
-- `unique_id` - Identificador único del registro
-- `last_update` - Fecha de última actualización
-- `timestamp` - Marca de tiempo para ordenamiento
+Este archivo **debe existir** y contener al menos: `unique_id`, `last_update` y `timestamp`.
 
-Luego se pueden crear sub-entidades adicionales según la estructura del payload.
+`lib/entity/record/subentities/record_base.ex`
 
 ```elixir
-defmodule Entity.Record.MiSubentidad do
+defmodule Entity.Record.Subentities.RecordBase do
   @moduledoc """
-  Sub-entidad con atributos específicos.
+  Atributos base del expediente. Define unique_id, timestamp y otros campos fundamentales.
   """
   
   use DataModel.Attribute.Provider
+  alias Struct.InfoAttr
 
-  # Definir atributos usando %Struct.InfoAttr{}
-  @campo1 %Struct.InfoAttr{
-    id: :nombre_en_bd,           # Nombre de la columna en BD propia
-    id_payload: "nombrePayload", # Nombre del campo en el JSON
-    type: :string,               # Tipo: :string, :integer, :float, :boolean, :timestamp
-    keys_to_search: ["data"]     # Ruta en el payload (opcional)
+  ################
+  ### Atributos Fundamentales
+  ################
+
+  @unique_id %InfoAttr{
+    id: :unique_id,
+    id_payload: "unique_id",
+    type: :string
   }
 
-  @campo2 %Struct.InfoAttr{
-    id: :otro_campo,
-    id_payload: "otherField",
-    type: :integer,
-    default_value: 0             # Valor por defecto (opcional)
+  @last_update %InfoAttr{
+    id: :ultima_actualizacion,
+    id_payload: "updated_at",
+    type: :string
   }
 
-  # Registrar atributos
+  @inserted_at %InfoAttr{
+    id: :fecha_solicitud,
+    id_payload: "inserted_at",
+    type: :string
+  }
+
+  @inserted_at_timestamp %InfoAttr{
+    id: :fecha_solicitud_,
+    id_payload: "inserted_at",
+    type: :timestamp
+  }
+
+  @is_deleted %InfoAttr{
+    id: :esta_eliminado,
+    id_payload: "deleted",
+    type: :boolean,
+    keys_to_search: ["data"],
+    default_value: false
+  }
+
+  @timestamp %InfoAttr{
+    id: :timestamp,
+    type: :integer
+  }
+
+  @tenant %InfoAttr{
+    id: :tenant,
+    id_payload: "tenant",
+    type: :string
+  }
+
+  ################
+  ### Registrar atributos
+  ################
+
   attr_list [
-    @campo1,
-    @campo2
+    @unique_id,
+    @last_update,
+    @inserted_at,
+    @inserted_at_timestamp,
+    @is_deleted,
+    @timestamp,
+    @tenant
   ]
 
-  # Post-procesamiento opcional
-  def special_post_processing(values, payload) do
-    # Modificar values según lógica de negocio
-    values
+  ################
+  ### Funciones Públicas (Getters)
+  ################
+
+  @doc "Retorna el atributo unique_id"
+  def unique_id, do: @unique_id
+
+  @doc "Retorna el atributo last_update"
+  def last_update, do: @last_update
+
+  @doc "Retorna el atributo timestamp"
+  def timestamp, do: @timestamp
+
+  ################
+  ### Post-procesamiento (Opcional)
+  ################
+
+  @doc """
+  Procesamiento especial después de extraer los datos.
+  Aquí se calcula el timestamp automáticamente.
+  """
+  def special_post_processing(values, _payload) do
+    Keyword.put(values, @timestamp.id, Timex.now() |> Timex.to_unix())
   end
 end
 ```
 
-### 4.2 Entidad Record Principal
+### 4.2 Sub-entidades Adicionales
+
+Crear una sub-entidad por cada grupo lógico de atributos.
+
+`lib/entity/record/subentities/vehicle.ex`
+
+```elixir
+defmodule Entity.Record.Subentities.Vehicle do
+  @moduledoc """
+  Atributos relacionados con el vehículo.
+  """
+
+  use DataModel.Attribute.Provider
+  alias Struct.InfoAttr
+
+  ################
+  ### Atributos del Vehículo
+  ################
+
+  @brand %InfoAttr{
+    id: :marca_vehiculo,
+    id_payload: "marca",
+    type: :string,
+    keys_to_search: ["data", "parser", "vehiculo"]
+  }
+
+  @model %InfoAttr{
+    id: :modelo_vehiculo,
+    id_payload: "modelo",
+    type: :string,
+    keys_to_search: ["data", "parser", "vehiculo"]
+  }
+
+  @year %InfoAttr{
+    id: :anno_vehiculo,
+    id_payload: "anual",
+    type: :integer,
+    keys_to_search: ["data", "parser", "vehiculo"]
+  }
+
+  @license_plate %InfoAttr{
+    id: :patente_vehiculo,
+    id_payload: "placa_patente",
+    type: :string,
+    keys_to_search: ["data"]
+  }
+
+  @color %InfoAttr{
+    id: :color_vehiculo,
+    id_payload: "color",
+    type: :string,
+    keys_to_search: ["data", "parser", "vehiculo"]
+  }
+
+  @vehicle_type %InfoAttr{
+    id: :tipo_vehiculo,
+    id_payload: "tipo_vehiculo",
+    type: :string,
+    keys_to_search: ["data", "parser", "vehiculo"]
+  }
+
+  @vin %InfoAttr{
+    id: :vin_vehiculo,
+    id_payload: "vin",
+    type: :string,
+    keys_to_search: ["data", "parser", "vehiculo"]
+  }
+
+  @chassis %InfoAttr{
+    id: :chassis_vehiculo,
+    id_payload: "chassis",
+    type: :string,
+    keys_to_search: ["data", "parser", "vehiculo"]
+  }
+
+  ################
+  ### Registrar atributos
+  ################
+
+  attr_list [
+    @brand,
+    @model,
+    @year,
+    @license_plate,
+    @color,
+    @vehicle_type,
+    @vin,
+    @chassis
+  ]
+
+  # No necesita special_post_processing si no hay lógica especial
+end
+```
+
+### 4.3 Sub-entidad con Post-procesamiento
+
+`lib/entity/record/subentities/buyer.ex`
+
+```elixir
+defmodule Entity.Record.Subentities.Buyer do
+  @moduledoc """
+  Atributos del comprador con lógica de post-procesamiento.
+  """
+
+  use DataModel.Attribute.Provider
+  alias Struct.InfoAttr
+
+  @buyer_name %InfoAttr{
+    id: :nombre_comprador,
+    id_payload: "comprador_nombre",
+    type: :string,
+    keys_to_search: ["data"]
+  }
+
+  @buyer_rut %InfoAttr{
+    id: :rut_comprador,
+    id_payload: "comprador_rut",
+    type: :string,
+    keys_to_search: ["data"]
+  }
+
+  @buyer_type %InfoAttr{
+    id: :tipo_comprador,
+    id_payload: "comprador_tipo",
+    type: :string,
+    keys_to_search: ["data"]
+  }
+
+  # Campo calculado (no viene del payload directamente)
+  @buyer_full_name %InfoAttr{
+    id: :nombre_completo_comprador,
+    type: :string
+  }
+
+  attr_list [
+    @buyer_name,
+    @buyer_rut,
+    @buyer_type,
+    @buyer_full_name
+  ]
+
+  @doc """
+  Post-procesamiento: combinar razón social con nombre si está disponible.
+  """
+  def special_post_processing(values, payload) do
+    razon_social = get_in(payload, ["data", "comprador_razon_social"])
+    nombre = Keyword.get(values, @buyer_name.id)
+    
+    nombre_completo = 
+      case {razon_social, nombre} do
+        {nil, n} -> n
+        {rs, nil} -> rs
+        {rs, n} -> "#{rs} - #{n}"
+      end
+    
+    Keyword.put(values, @buyer_full_name.id, nombre_completo)
+  end
+end
+```
+
+---
+
+## Paso 5: Crear la Entidad Record Principal
 
 `lib/entity/record/record.ex`
 
 ```elixir
 defmodule Entity.Record.Record do
   @moduledoc """
-  Entidad principal Record.
+  Entidad principal Record. Combina todas las sub-entidades y define la lógica de inserción.
   """
 
   use DataModel.RecordPg.Base
   use Cleaning.CleanableTable
-
   require Logger
   import Stuff, only: [list_subtraction: 2]
-  alias Entity.Record.RecordBase
 
   ################
-  ### Configuración
+  ### Aliases de Sub-entidades
+  ################
+
+  @record_base    Entity.Record.Subentities.RecordBase
+  @vehicle        Entity.Record.Subentities.Vehicle
+  @buyer          Entity.Record.Subentities.Buyer
+  # Agregar más sub-entidades según necesidad
+
+  ################
+  ### Configuración de la Entidad
   ################
 
   entity_config(
     app: :mi_etl,
     table_name_path: [:postgres, :tables],
     batch_size_key: :batch_size_process,
-    unique_id: RecordBase.unique_id(),
-    timestamp: RecordBase.timestamp(),
+    unique_id: @record_base.unique_id(),
+    timestamp: @record_base.timestamp(),
     value_type_path: [:postgres, :register_type, :record],
     slack_webhook_url_path: [:notification, :slack_webhook, :url, :bug],
     slack_env_var: "ENVIRONMENT"
   )
 
   ################
-  ### CleanableTable
+  ### CleanableTable Implementation
   ################
 
   @impl Cleaning.CleanableTable
@@ -450,8 +799,8 @@ defmodule Entity.Record.Record do
   def bigquery_config do
     %{
       table: Application.get_env(:mi_etl, :bigquery)[:table][:record],
-      id_fields: [RecordBase.unique_id()],
-      timestamp_field: RecordBase.timestamp()
+      id_fields: [@record_base.unique_id()],
+      timestamp_field: @record_base.timestamp()
     }
   end
 
@@ -464,53 +813,67 @@ defmodule Entity.Record.Record do
   end
 
   ################
-  ### Subentidades
+  ### Sub-entidades
   ################
 
   subentities [
-    Entity.Record.RecordBase,
-    Entity.Record.Buyer
-    # Agregar más sub-entidades según sea necesario
-  ]
-
-  special_post_processing [
-    Entity.Record.Buyer
-    # Agregar el resto que implementa la función special_post_processing
+    @record_base,
+    @vehicle,
+    @buyer
+    # Agregar más sub-entidades
   ]
 
   ################
-  ### Generar funciones helper
+  ### Entidades con post-procesamiento especial
+  ################
+
+  special_post_processing [
+    @record_base,  # Para calcular timestamp
+    @buyer         # Para calcular nombre completo
+  ]
+
+  ################
+  ### Generar funciones auxiliares
   ################
 
   generate_helper_functions()
 
   ################
-  ### Funciones públicas (opcional)
+  ### Funciones Públicas (Getters)
   ################
 
-  def unique_id(), do: RecordBase.unique_id()
-  def last_update(), do: RecordBase.last_update()
-  def timestamp(), do: RecordBase.timestamp()
+  def unique_id, do: @record_base.unique_id()
+  def last_update, do: @record_base.last_update()
+  def timestamp, do: @record_base.timestamp()
 
   ################
-  ### insert_by_lote
+  ### Función Principal: insert_by_lote
   ################
 
+  @doc """
+  Inserta registros desde un batch. Agrupa por unique_id y mantiene datos actualizados.
+
+  ## Parámetros
+    - `batch`: Lista de payloads
+    - `batch_id`: Identificador del batch
+    - `pg_conn`: Conexión a PostgreSQL
+
+  ## Retorna
+    - `{:ok, count}` - Número de registros insertados
+    - `{:error, reason}` - Si hay error
+  """
   def insert_by_lote([], _batch_id, _pg_conn), do: {:ok, 0}
 
   def insert_by_lote(batch, batch_id, pg_conn)
       when is_list(batch) and is_binary(batch_id) do
 
-    {grouped, keys} =
-      batch
-      |> filter_batch()
-      |> group_by_unique_id()
+    {grouped, keys} = group_by_unique_id(batch)
 
     records =
       keys
       |> Enum.map(fn key ->
         try do
-          prepare_record(key, Map.get(grouped, key), [], [])
+          prepare_record_for_insert(key, Map.get(grouped, key))
         rescue
           error ->
             handle_processing_error(batch_id, key, error, %{
@@ -527,57 +890,84 @@ defmodule Entity.Record.Record do
   end
 
   ################
-  ### Overrides
+  ### Override: build_data
   ################
 
-  def filter_batch(batch) do
-    Enum.filter(batch, fn
-      %{"type" => type_} -> type_ == @documental_type
-      _ -> false
-    end)
-  end
-
-  def build_data(payloads, _stored_data, _additional_info) do
-    update_fields = fn map, fields ->
-      Enum.reduce(fields, map, fn {key, _value} = tuple, acc ->
-        List.keystore(acc, key, 0, tuple)
-      end)
-    end
+  def build_data(payloads, stored_data, _additional_info) do
+    stored_data = if is_list(stored_data), do: stored_data, else: []
 
     payloads
-    |> Enum.reduce([], fn payload, acc ->
+    |> Enum.reduce(stored_data, fn payload, acc ->
       differences =
         payload
         |> Payload.extract_with_format(attr_list(), false)
-        |> apply_post_processing([], payload)
+        |> apply_post_processing(acc, payload)
         |> list_subtraction(acc)
 
-      update_fields.(acc, differences)
+      update_fields(acc, differences)
+    end)
+  end
+
+  ################
+  ### Funciones Privadas
+  ################
+
+  defp prepare_record_for_insert(unique_id, payloads) do
+    data =
+      payloads
+      |> build_data([], unique_id)
+      |> ensure_timestamp()
+
+    informacion_map = Enum.into(data, %{})
+
+    record = %{
+      id_nodo: unique_id,
+      tipo: value_type(),
+      informacion: informacion_map
+    }
+
+    {:ok, record}
+  end
+
+  defp ensure_timestamp(data) do
+    case Keyword.get(data, :timestamp) do
+      nil -> Keyword.put(data, :timestamp, Timex.now() |> Timex.to_unix())
+      _ -> data
+    end
+  end
+
+  defp update_fields(map, fields) do
+    Enum.reduce(fields, map, fn {key, _} = tuple, acc ->
+      List.keystore(acc, key, 0, tuple)
     end)
   end
 end
 ```
 
-### 4.3 Entidad Task
+---
+
+## Paso 6: Crear la Entidad Task
 
 `lib/entity/task/task.ex`
 
 ```elixir
 defmodule Entity.Task.Task do
   @moduledoc """
-  Entidad Task.
+  Entidad Task para procesar tareas del workflow.
   """
 
   use DataModel.TaskPg.Base
   use Cleaning.CleanableTable
+  require Logger
   alias Struct.InfoAttr
+  alias Common.Payload
 
   ################
-  ### Atributos
+  ### Atributos de la Tarea
   ################
 
   @contentref %InfoAttr{
-    id: :expediente_asociado,
+    id: :contentref,
     id_payload: "contentref",
     type: :string
   }
@@ -589,7 +979,7 @@ defmodule Entity.Task.Task do
   }
 
   @start_date %InfoAttr{
-    id: :fecha_inicio,
+    id: :fecha_ini,
     id_payload: "ini",
     type: :timestamp
   }
@@ -600,15 +990,36 @@ defmodule Entity.Task.Task do
     type: :timestamp
   }
 
+  @assigned_id %InfoAttr{
+    id: :id_tareasig,
+    id_payload: "id",
+    type: :integer
+  }
+
   @name %InfoAttr{
     id: :nombre,
     id_payload: "name",
     type: :string
   }
 
+  @last_update %InfoAttr{
+    id: :ultima_actualizacion,
+    id_payload: "updated_at",
+    type: :string
+  }
+
   @status %InfoAttr{
     id: :estado,
     id_payload: "status",
+    type: :string
+  }
+
+  ################
+  ### Atributos Calculados
+  ################
+
+  @type_ %InfoAttr{
+    id: :tipo,
     type: :string
   }
 
@@ -624,22 +1035,16 @@ defmodule Entity.Task.Task do
   }
 
   ################
-  ### Listas de atributos
+  ### Clasificación de Tipos de Tarea (Opcional)
   ################
 
-  own_attributes [
-    @contentref,
-    @executed_by,
-    @start_date,
-    @end_date,
-    @name,
-    @status
-  ]
+  @manual_process_tag "manual"
+  @manual_process ["tarea_manual_1", "tarea_manual_2"]
 
-  computed_attributes [
-    @elapsed_working_time,
-    @timestamp
-  ]
+  @automatic_process_tag "automatico"
+  @automatic_process ["tarea_auto_1", "tarea_auto_2"]
+
+  @unknown_process_tag "desconocido"
 
   ################
   ### Configuración
@@ -662,7 +1067,7 @@ defmodule Entity.Task.Task do
   )
 
   ################
-  ### CleanableTable
+  ### CleanableTable Implementation
   ################
 
   @impl Cleaning.CleanableTable
@@ -680,26 +1085,76 @@ defmodule Entity.Task.Task do
   @impl Cleaning.CleanableTable
   def postgres_config do
     %{
-      table: Application.get_env(:mi_etl, :postgres)[:tables] |> List.last(),
+      table: Application.get_env(:mi_etl, :postgres)[:tables] |> List.first(),
       register_type: Application.get_env(:mi_etl, :postgres)[:register_type][:task]
     }
   end
 
   ################
-  ### Generar funciones
+  ### Listas de Atributos
+  ################
+
+  own_attributes [
+    @contentref,
+    @executed_by,
+    @start_date,
+    @end_date,
+    @assigned_id,
+    @name,
+    @last_update,
+    @status
+  ]
+
+  computed_attributes [
+    @type_,
+    @elapsed_working_time,
+    @timestamp
+  ]
+
+  ################
+  ### Generar funciones auxiliares
   ################
 
   generate_task_helper_functions()
+
+  ################
+  ### Override: build_data
+  ################
+
+  def build_data(payloads) do
+    payload = List.last(payloads)
+
+    name_process = Payload.extract_data(
+      payload,
+      @name.id_payload,
+      @name.keys_to_search
+    )
+
+    payload
+    |> Payload.extract_with_format(@own_attributes, false)
+    |> Enum.concat([{@type_.id, get_type(name_process)}])
+    |> calculate_elapsed_time()
+  end
+
+  ################
+  ### Funciones Privadas
+  ################
+
+  defp get_type(name) do
+    cond do
+      name in @manual_process -> @manual_process_tag
+      name in @automatic_process -> @automatic_process_tag
+      true -> @unknown_process_tag
+    end
+  end
 end
 ```
 
 ---
 
-## Paso 5: Implementar el Worker
+## Paso 7: Implementar el Worker
 
-El Worker implementa el protocolo `Genserver.Protocols.PWorker` y define cómo procesar cada tipo de negocio.
-
-**Se pueden definir tantas implementaciones de `perform/4` como tipos de negocio existan** (`:record`, `:task`, `:otro`, etc.). Cada una recibe el batch y lo procesa según su lógica.
+El Worker procesa los mensajes según el tipo de negocio.
 
 `lib/impl/genserver/worker.ex`
 
@@ -714,59 +1169,75 @@ defimpl Genserver.Protocols.PWorker, for: List do
   alias Entity.Task.Task
   import Notification.Notify, only: [notify_slack: 4]
 
-  # Implementación para :record
+  @doc """
+  Procesa un batch de expedientes (records).
+  """
   def perform(batch, batch_id, :record = business, %{pg_conn: pg_conn} = _info) do
-    batch_id = batch_id || "any"
     Logger.debug("Nuevo batch. Negocio: #{inspect(business)}. Mensajes: #{length(batch)}")
 
     try do
       batch
       |> Enum.map(fn %{"current" => payload} -> payload end)
       |> Record.insert_by_lote(batch_id, pg_conn)
+
+      Logger.debug("Batch procesado. Id: #{inspect(batch_id)}. Negocio: #{inspect(business)}")
     rescue
       error ->
-        Logger.error("Error procesando batch: #{inspect(error)}")
-        notify_slack(...)
+        msg = "Error procesando batch. Batch Id: #{inspect(batch_id)}. Negocio: #{inspect(business)}. Error: #{inspect(error)}"
+        Logger.error(msg)
+        notify_slack(
+          Application.get_env(:mi_etl, :notification)[:slack_webhook][:url][:bug],
+          Application.get_env(:mi_etl, :notification)[:slack_webhook][:headers],
+          System.get_env("ENVIRONMENT"),
+          msg
+        )
     end
   end
 
-  # Implementación para :task
-  def perform(batch, batch_id, :task, %{pg_conn: pg_conn} = _info) do
-    Task.insert_by_lote(batch, batch_id, pg_conn)
+  @doc """
+  Procesa un batch de tareas.
+  """
+  def perform(batch, batch_id, :task = business, %{pg_conn: pg_conn} = _info) do
+    Logger.debug("Nuevo batch. Negocio: #{inspect(business)}. Mensajes: #{length(batch)}")
+
+    try do
+      batch
+      |> Task.insert_by_lote(batch_id, pg_conn)
+
+      Logger.debug("Batch procesado. Id: #{inspect(batch_id)}. Negocio: #{inspect(business)}")
+    rescue
+      error ->
+        msg = "Error procesando batch. Batch Id: #{inspect(batch_id)}. Negocio: #{inspect(business)}. Error: #{inspect(error)}"
+        Logger.error(msg)
+        notify_slack(
+          Application.get_env(:mi_etl, :notification)[:slack_webhook][:url][:bug],
+          Application.get_env(:mi_etl, :notification)[:slack_webhook][:headers],
+          System.get_env("ENVIRONMENT"),
+          msg
+        )
+    end
   end
 
-  # Agregar más implementaciones según sea necesario:
+  # Agregar más implementaciones de perform/4 según necesidad
   # def perform(batch, batch_id, :otro_tipo, info) do ... end
 end
 ```
 
-**Nota**: Cada nuevo tipo de negocio requiere:
-1. Una función `perform/4` con el átomo correspondiente
-2. Una cola RabbitMQ configurada con ese `business`
-3. La entidad correspondiente que procese los datos
-
 ---
 
-## Paso 6: Configurar ForcedLoad
+## Paso 8: Configurar ForcedLoad
 
 `lib/impl/genserver/forced_load_config.ex`
 
 ```elixir
 defmodule Impl.Genserver.ForcedLoadConfig do
   @moduledoc """
-  Configuración para carga forzada.
+  Configuración para operaciones de carga forzada.
   """
 
   use ForcedLoad.Config
   import Type.PDocumentaryTypeOf
-  alias Entity.Record.RecordBase
-
-  @allowed_task_names [
-    "tarea_1",
-    "tarea_2",
-    "tarea_3"
-    # Agregar nombres de tareas permitidas
-  ]
+  alias Entity.Record.Record
 
   @impl true
   def app_name, do: :mi_etl
@@ -787,305 +1258,74 @@ defmodule Impl.Genserver.ForcedLoadConfig do
   def bigquery_table_path, do: [:bigquery, :table, :record]
 
   @impl true
-  def unique_id_field, do: RecordBase.unique_id().id
+  def unique_id_field, do: Record.unique_id().id
 
   @impl true
-  def unique_id_payload_field, do: RecordBase.unique_id().id_payload
+  def unique_id_payload_field, do: Record.unique_id().id_payload
 
   @impl true
-  def last_update_field, do: RecordBase.last_update().id
+  def last_update_field, do: Record.last_update().id
 
   @impl true
-  def last_update_payload_field, do: RecordBase.last_update().id_payload
+  def last_update_payload_field, do: Record.last_update().id_payload
 
   @impl true
-  def time_step, do: 30
+  def time_step, do: 7  # Días por intervalo
 
   @impl true
   def batch_size, do: 400
 
   @impl true
-  def batch_delay, do: 0
+  def batch_delay, do: 0  # Milisegundos entre batches
 
   @impl true
   def webhook_url_path, do: [:notification, :slack_webhook, :url, :notification]
-
-  @impl true
-  def task_name_filter, do: @allowed_task_names
-
-  ################
-  ### Funciones auxiliares
-  ################
-
-  def allowed_task_names, do: @allowed_task_names
-
-  def build_config_with_default_tasks do
-    build_config(%{task_name_filter: @allowed_task_names})
-  end
 end
 ```
 
 ---
 
-## Paso 7: Configurar Subida a BigQuery
+## Paso 9: Configurar el Tipo Documental
 
-El `Genserver.BigqueryUploader` es responsable de tomar los registros almacenados en PostgreSQL (estado `sin_analizar`) y subirlos periódicamente a BigQuery.
-
-### Flujo de Subida
-
-```
-PostgreSQL (sin_analizar) → BigqueryUploader → BigQuery
-                                    ↓
-                          PostgreSQL (analizado_en_bq)
-```
-
-### Configuración en Application
-
-El BigqueryUploader se configura como un child del supervisor:
+`lib/impl/type/documentary_type_of.ex`
 
 ```elixir
-defp child_bigquery_uploader do
-  bq_config = Application.get_env(:mi_etl, :bigquery)
-  pg_config = Application.get_env(:mi_etl, :postgres)
+defimpl Type.PDocumentaryTypeOf, for: Atom do
+  @moduledoc """
+  Mapeo de tipos de negocio a tipos documentales de ElasticSearch.
+  """
 
-  {Genserver.BigqueryUploader, %{
-    # Identificador del negocio
-    business: :mi_negocio,
-    
-    # Configuración ODBC para BigQuery
-    data_source: bq_config[:configuration],
-    
-    # Configuración de conexión PostgreSQL
-    pg_config: pg_config[:connection],
-    
-    # Información de tablas a sincronizar
-    info: [
-      %{
-        bq_table: bq_config[:table][:record],      # Tabla destino en BigQuery
-        tipo: pg_config[:register_type][:record],  # Tipo de registro a filtrar
-        pg_table: List.first(pg_config[:tables])   # Tabla origen en PostgreSQL
-      },
-      %{
-        bq_table: bq_config[:table][:task],
-        tipo: pg_config[:register_type][:task],
-        pg_table: List.last(pg_config[:tables])
-      }
-    ],
-    
-    # Periodicidad de ejecución (cada 1 minuto en este ejemplo)
-    periodicity: Application.get_env(:mi_etl, :activation_time)[:bigquery_uploader][:periodicity],
-    
-    # Cantidad de registros por batch
-    batch_size: Application.get_env(:mi_etl, :batch_size_process),
-    
-    # Webhook para notificaciones de error
-    webhook_url: slack_webhook_url()
-  }}
+  def documentary_type_of(:record), do: "mi_tipo_documental"
+  def documentary_type_of(:task), do: "mi_tipo_documental"
+  def documentary_type_of(_), do: nil
 end
 ```
 
-### Parámetros de Configuración
+### Configuración de Tiempo Laboral (Opcional)
 
-| Parámetro | Descripción | Ejemplo |
-|-----------|-------------|---------|
-| `business` | Identificador único del negocio | `:mi_negocio` |
-| `data_source` | Configuración ODBC para BigQuery | `[dsn: "...", warehouse: "..."]` |
-| `pg_config` | Configuración de conexión PostgreSQL | `%{hostname: "...", ...}` |
-| `info` | Lista de mapas con configuración de tablas | Ver arriba |
-| `periodicity` | Frecuencia de ejecución | `%{day: 0, hour: 0, minute: 1, second: 0}` |
-| `batch_size` | Registros por batch | `70` |
-| `webhook_url` | URL de Slack para errores | `"https://..."` |
-
-### Configuración de Periodicidad en `runtime.exs`
+`lib/impl/time/my_time.ex`
 
 ```elixir
-config :mi_etl,
-  activation_time: %{
-    bigquery_uploader: %{
-      periodicity: %{
-        day: 0,
-        hour: 0,
-        minute: 1,    # Ejecutar cada 1 minuto
-        second: 0
-      }
-    }
-  }
-```
+defimpl Time.PWorkingTimeForBusiness, for: Atom do
+  @moduledoc """
+  Configuración de horario laboral para el negocio.
+  """
 
-### Proceso de Subida
-
-1. **Lectura**: Obtiene registros de PostgreSQL con `estado_analisis = 'sin_analizar'`
-2. **Agrupación**: Agrupa por `id_nodo` y mantiene el más reciente
-3. **Transformación**: Convierte el campo `informacion` (JSONB) a columnas SQL
-4. **Inserción**: Ejecuta INSERT en BigQuery via ODBC
-5. **Actualización**: Marca registros como `analizado_en_bq` en PostgreSQL
-
-### Consideraciones
-
-- **Conexiones persistentes**: El GenServer mantiene conexiones abiertas a PostgreSQL y BigQuery
-- **Retry automático**: Si falla un batch, se divide a la mitad y reintenta
-- **Notificaciones**: Envía alertas a Slack en caso de errores
-
----
-
-## Paso 8: Configurar Limpieza de Datos
-
-El `Genserver.Cleaning` elimina registros duplicados en BigQuery y limpia registros ya procesados en PostgreSQL.
-
-### Flujo de Limpieza
-
-```
-BigQuery                          PostgreSQL
-   ↓                                  ↓
-Eliminar duplicados            Eliminar registros con
-(mantener más reciente)        estado = 'analizado_en_bq'
-```
-
-### Implementar CleanableTable en las Entidades
-
-Cada entidad que se desee limpiar debe implementar el behaviour `Cleaning.CleanableTable`:
-
-```elixir
-defmodule Entity.Record.Record do
-  use DataModel.RecordPg.Base
-  use Cleaning.CleanableTable  # ← Agregar este use
-
-  # ... configuración existente ...
-
-  ################
-  ### CleanableTable Implementation
-  ################
-
-  @impl Cleaning.CleanableTable
-  def business_key, do: :record
-
-  @impl Cleaning.CleanableTable
-  def bigquery_config do
+  def working_time(:mi_negocio) do
     %{
-      # Tabla de BigQuery a limpiar
-      table: Application.get_env(:mi_etl, :bigquery)[:table][:record],
-      
-      # Campos que identifican un registro único
-      id_fields: [RecordBase.unique_id()],
-      
-      # Campo de timestamp para determinar cuál es más reciente
-      timestamp_field: RecordBase.timestamp()
+      start_hour: 9,
+      end_hour: 18,
+      working_days: [1, 2, 3, 4, 5]  # Lunes a Viernes
     }
   end
 
-  @impl Cleaning.CleanableTable
-  def postgres_config do
-    %{
-      # Tabla de PostgreSQL a limpiar
-      table: Application.get_env(:mi_etl, :postgres)[:tables] |> List.first(),
-      
-      # Tipo de registro para filtrar
-      register_type: Application.get_env(:mi_etl, :postgres)[:register_type][:record]
-    }
-  end
+  def working_time(_), do: nil
 end
 ```
-
-### Configurar CleaningSupervisor
-
-El supervisor registra los módulos limpiables:
-
-```elixir
-defp child_cleaning_supervisor do
-  {Cleaning.CleaningSupervisor, cleanable_modules: [
-    Entity.Record.Record,
-    Entity.Task.Task
-    # Agregar más entidades limpiables
-  ]}
-end
-```
-
-### Configurar Cleaning GenServer
-
-```elixir
-defp child_cleaning do
-  {Genserver.Cleaning, %{
-    # :all para limpiar todas las tablas registradas
-    # o un business_key específico (:record, :task)
-    business: :all,
-    
-    # Configuración ODBC para BigQuery
-    bq_config: Application.get_env(:mi_etl, :bigquery)[:configuration],
-    
-    # Configuración PostgreSQL (opcional, nil para omitir limpieza PG)
-    pg_config: Application.get_env(:mi_etl, :postgres)[:connection],
-    
-    # Periodicidad de limpieza
-    periodicity: Application.get_env(:mi_etl, :activation_time)[:cleanup_in_bigquery][:periodicity] 
-                 |> notification_frequency(),
-    
-    # Webhook para notificaciones
-    webhook_url: slack_webhook_url()
-  }}
-end
-```
-
-### Configuración de Periodicidad en `runtime.exs`
-
-```elixir
-config :mi_etl,
-  activation_time: %{
-    cleanup_in_bigquery: %{
-      periodicity: %{
-        day: 0,
-        hour: 1,      # Ejecutar cada 1 hora 30 minutos
-        minute: 30,
-        second: 0
-      }
-    }
-  }
-```
-
-### Proceso de Limpieza en BigQuery
-
-La limpieza en BigQuery elimina duplicados manteniendo el registro más reciente:
-
-```sql
--- Query generado internamente
-DELETE FROM tabla
-WHERE unique_id IN (
-  SELECT unique_id 
-  FROM tabla t1
-  WHERE EXISTS (
-    SELECT 1 FROM tabla t2 
-    WHERE t2.unique_id = t1.unique_id 
-    AND t2.timestamp > t1.timestamp
-  )
-)
-```
-
-### Proceso de Limpieza en PostgreSQL
-
-Elimina registros que ya fueron enviados a BigQuery:
-
-```sql
-DELETE FROM tabla
-WHERE estado_analisis IN ('analizado_en_bq', 'con_problemas')
-  AND tipo = 'expediente'
-```
-
-### Modos de Operación
-
-| Modo | Descripción |
-|------|-------------|
-| `business: :all` | Limpia todas las tablas registradas en CleaningSupervisor |
-| `business: :record` | Limpia solo la tabla de records |
-| `business: :task` | Limpia solo la tabla de tasks |
-
-### Consideraciones
-
-- **Frecuencia**: La limpieza es costosa, no ejecutar muy frecuentemente (recomendado: cada 30-90 minutos)
-- **Conexiones**: Mantiene conexiones persistentes a BigQuery y PostgreSQL
-- **Orden**: Primero limpia BigQuery (duplicados), luego PostgreSQL (ya procesados)
 
 ---
 
-## Paso 9: Implementar Application
+## Paso 10: Implementar Application
 
 `lib/mi_etl/application.ex`
 
@@ -1120,6 +1360,10 @@ defmodule MiEtl.Application do
     {:ok, pid}
   end
 
+  ################
+  ### Construcción de Children
+  ################
+
   defp build_children do
     [
       child_task_supervisor(),
@@ -1127,7 +1371,7 @@ defmodule MiEtl.Application do
       child_bigquery_uploader(),
       child_cleaning_supervisor(),
       child_cleaning()
-      # child_forced_load()  # Descomentar si se necesita carga forzada al inicio
+      # child_forced_load()  # Descomentar para activar carga forzada
     ]
     |> List.flatten()
     |> Enum.reject(&is_nil/1)
@@ -1160,7 +1404,7 @@ defmodule MiEtl.Application do
   defp bigquery_upload_info(bq_config, pg_config) do
     [
       {:record, List.first(pg_config[:tables])},
-      {:task, List.last(pg_config[:tables])}
+      {:task, List.first(pg_config[:tables])}
     ]
     |> Enum.map(fn {type, pg_table} ->
       %{
@@ -1200,8 +1444,11 @@ defmodule MiEtl.Application do
   end
 
   defp rabbit_consumer_children do
+    # Establecer conexión a PostgreSQL y pasarla al RabbitConsumer
+    {:ok, pg_conn} = Postgres.connect(Application.get_env(:mi_etl, :postgres)[:connection])
+
     info = %{
-      pg_conn: get_postgres_connection(),
+      pg_conn: pg_conn,
       webhook_url: slack_webhook_url()
     }
 
@@ -1216,34 +1463,9 @@ defmodule MiEtl.Application do
     end)
   end
 
-  defp get_postgres_connection do
-    connection_config = Application.get_env(:mi_etl, :postgres)[:connection]
-
-    case Postgres.connect(connection_config) do
-      {:ok, conn} ->
-        Logger.info("Conexión PostgreSQL establecida para consumidores RabbitMQ")
-        conn
-
-      {:error, reason} ->
-        Logger.error("Error conectando a PostgreSQL: #{inspect(reason)}")
-        nil
-    end
-  end
-
-  defp slack_webhook_url do
-    Application.get_env(:mi_etl, :notification)[:slack_webhook][:url][:bug]
-  end
-
-  defp send_startup_notification do
-    message = "🚀 STARTING APPLICATION..."
-
-    notify_slack(
-      slack_webhook_url(),
-      Application.get_env(:mi_etl, :notification)[:slack_webhook][:headers],
-      System.get_env("ENVIRONMENT"),
-      message
-    )
-  end
+  ################
+  ### Funciones de Conexión
+  ################
 
   defp setup_postgres do
     Logger.info("Configurando PostgreSQL")
@@ -1260,8 +1482,7 @@ defmodule MiEtl.Application do
           case Postgres.create_table_if_not_exists(conn, table_name) do
             {:error, reason} ->
               Logger.error("Error creando tabla '#{table_name}': #{inspect(reason)}")
-            _ ->
-              :ok
+            _ -> :ok
           end
         end)
 
@@ -1272,85 +1493,222 @@ defmodule MiEtl.Application do
         {:error, reason}
     end
   end
-end
-```
 
----
-
-## Paso 10: Configurar el Tipo Documental
-
-`lib/impl/type/documentary_type_of.ex`
-
-```elixir
-defimpl Type.PDocumentaryTypeOf, for: Atom do
-  @moduledoc """
-  Implementación del tipo documental para el negocio.
-  """
-
-  def documentary_type_of(:record), do: "mi_tipo_documental"
-  def documentary_type_of(:task), do: "mi_tipo_documental"
-  def documentary_type_of(_), do: nil
-end
-```
-
----
-
-## Paso 11: Archivos Adicionales
-
-### `lib/impl/time/my_time.ex`
-
-```elixir
-defimpl Time.PWorkingTimeForBusiness, for: Atom do
-  @moduledoc """
-  Configuración de tiempo laboral para el negocio.
-  """
-
-  # Horario laboral: 9:00 - 18:00, Lunes a Viernes
-  def working_time(:mi_negocio) do
-    %{
-      start_hour: 9,
-      end_hour: 18,
-      working_days: [1, 2, 3, 4, 5]  # Lunes a Viernes
-    }
+  defp slack_webhook_url do
+    Application.get_env(:mi_etl, :notification)[:slack_webhook][:url][:bug]
   end
 
-  def working_time(_), do: nil
-end
-```
-
-### `lib/tools/stuff.ex`
-
-```elixir
-defmodule Tools.Stuff do
-  @moduledoc """
-  Funciones auxiliares específicas del proyecto.
-  """
-
-  require Logger
-  import Notification.Notify, only: [notify_slack: 4]
-
-  def handle_error(batch_id, unique_id, error, module, function) do
-    msg = """
-    [#{module} Error]
-    Function: #{function}
-    Record Id: #{inspect(unique_id)}
-    Batch Id: #{inspect(batch_id)}
-    Error: #{inspect(error)}
-    """
-
-    Logger.error(msg)
+  defp send_startup_notification do
+    message = "★,\n★★,\n★★★,\n★★★★,\n★★★★★,\nAPLICACION INICIADA: MI ETL..., \n★★★★★,\n★★★★,\n★★★,\n★★,\n★"
 
     notify_slack(
-      Application.get_env(:mi_etl, :notification)[:slack_webhook][:url][:bug],
+      slack_webhook_url(),
       Application.get_env(:mi_etl, :notification)[:slack_webhook][:headers],
       System.get_env("ENVIRONMENT"),
-      msg
+      message
     )
+  end
+
+  ################
+  ### Función para Carga Masiva Manual
+  ################
+
+  @doc """
+  Función para ejecutar carga masiva desde iex.
+  Uso: MiEtl.Application.start_band_air()
+  """
+  def start_band_air do
+    Logger.info("Activando carga forzada de registros")
+
+    {
+      Application.get_env(:mi_etl, :my_amqp_client)[:queue][:mi_negocio][:record][:business],
+      [
+        {{2024, 1, 1}, {0, 0, 0}},
+        Timex.now() |> Timex.to_erl(),
+        7,
+        true,
+        false
+      ]
+    }
+    |> Genserver.ForcedLoad.start_link()
   end
 end
 ```
 
-### `Dockerfile`
+---
+
+## Paso 11: Archivos de Deployment
+
+### 11.1 `k8s/canary/deployment.yml`
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: $POD_NAME
+  labels:
+    name: $POD_NAME
+spec:
+  selector:
+    matchLabels:
+      app: $POD_NAME
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: $POD_NAME
+    spec:
+      terminationGracePeriodSeconds: 31
+      containers:
+        - name: $POD_NAME
+          image: $IMAGE_NAME
+          imagePullPolicy: "Always"
+          ports:
+            - containerPort: 8080
+            - containerPort: 21123
+          env:
+            - name: MY_POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            
+            ### Generales
+            - name: ENVIRONMENT
+              value: "Canary"
+
+            ### RabbitMQ
+            - name: AMQP_HOST
+              value: "10.142.0.37"
+            - name: AMQP_PORT
+              value: "5672"
+            - name: AMQP_USERNAME
+              value: "admin"
+            - name: AMQP_PASSWORD
+              value: "puma7selva"
+            - name: AMQP_RECORD_QUEUE
+              value: "expediente_mi_etl_pdatos"
+            - name: AMQP_TASK_QUEUE
+              value: "tarea_mi_etl_pdatos"
+
+            ### BigQuery 
+            - name: DNS
+              value: "bigquery64"
+            - name: DATAMART_MI_ETL
+              value: "ttlchk-cloud.mi_etl_qa"
+            - name: MI_ETL_SERVICE_TABLE
+              value: "servicio"
+            - name: MI_ETL_TASK_TABLE
+              value: "tarea"
+
+            ### Notification (Slack)
+            - name: SLACK_WEBNOOK_FOR_BUGS 
+              value: "https://hooks.slack.com/services/..."
+            - name: SLACK_WEBNOOK_FOR_NOTIFICATIONS
+              value: "https://hooks.slack.com/services/..."
+            
+            ### Servicios DOX
+            - name: TICKET_ACCESS_URL  
+              value: "https://canary-backofficedigital.totalcheck.cl/userservice/login?u=<username>&pw=<password>"
+            - name: ELASTICSEARCH_HOST
+              value: "10.142.0.96"
+            - name: NODE_SERVICE_URL
+              value: "https://canary-web.albertcs.com/nodeservice/tenant/system/node/<unique_id>?alf_ticket=<ticket>"
+            - name: WORKFLOW_SERVICE_URL
+              value: "https://canary-backofficedigital.totalcheck.cl/api/workflowservice/workflow/<type_documentary>/nodeid/<contentref>?alf_ticket=<ticket>"
+            
+            ### Credenciales
+            - name: TOTALCHECK_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: alberto-auth-secret
+                  key: ALBERTO_SYSTEM_USERNAME
+            - name: TOTALCHECK_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: alberto-auth-secret
+                  key: ALBERTO_SYSTEM_PASSWORD
+
+            ### PostgreSQL (Buffer)
+            - name: PG_HOST
+              value: "10.0.32.3"
+            - name: PG_PORT
+              value: "5432"
+            - name: PG_DATABASE
+              value: "etl_buffer"
+            - name: PG_USERNAME
+              value: "etl_service"
+            - name: PG_PASSWORD
+              value: "Etl$3rv1c3_2024!"
+            - name: PG_TABLE
+              value: "mi_etl_buffer"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: $POD_NAME-service
+  labels:
+    app: $POD_NAME-service
+spec:
+  ports:
+    - port: 8080
+      name: "http"
+      targetPort: 8080
+    - port: 21123
+      name: "https"
+      targetPort: 21123
+  selector:
+    app: $POD_NAME
+  type: NodePort
+```
+
+### 11.2 `startup-prod.sh`
+
+```bash
+#!/bin/sh
+
+export ENVIRONMENT="prod-okteto"
+
+### RabbitMQ
+export AMQP_HOST="10.142.0.26"
+export AMQP_PORT="5672"
+export AMQP_USERNAME="admin"
+export AMQP_PASSWORD="puma7selva"
+export AMQP_RECORD_QUEUE="expediente_mi_etl_pdatos"
+export AMQP_TASK_QUEUE="tarea_mi_etl_pdatos"
+
+### BigQuery 
+export DNS="bigquery64"
+export DATAMART_MI_ETL="ttlchk-cloud.mi_etl_prod"
+export MI_ETL_SERVICE_TABLE="servicio"
+export MI_ETL_TASK_TABLE="tarea"
+
+### Notification
+export SLACK_WEBNOOK_FOR_BUGS="https://hooks.slack.com/services/..."
+export SLACK_WEBNOOK_FOR_NOTIFICATIONS="https://hooks.slack.com/services/..."
+
+### Servicios DOX
+export TICKET_ACCESS_URL="https://backofficedigital.totalcheck.cl/userservice/login?u=<username>&pw=<password>"
+export ELASTICSEARCH_HOST="10.142.0.61"
+export NODE_SERVICE_URL="https://web.albertcs.com/nodeservice/tenant/system/node/<unique_id>?alf_ticket=<ticket>"
+export WORKFLOW_SERVICE_URL="https://backofficedigital.totalcheck.cl/api/workflowservice/workflow/<type_documentary>/nodeid/<contentref>?alf_ticket=<ticket>"
+
+### Credenciales
+export TOTALCHECK_USERNAME="system"
+export TOTALCHECK_PASSWORD="tigre5playa"
+
+### PostgreSQL
+export PG_HOST="10.0.32.3"
+export PG_PORT="5432"
+export PG_DATABASE="etl_buffer"
+export PG_USERNAME="etl_service"
+export PG_PASSWORD="Etl\$3rv1c3_2024!"
+export PG_TABLE="mi_etl_buffer"
+
+iex -S mix
+```
+
+### 11.3 `Dockerfile`
 
 ```dockerfile
 FROM elixir:1.14-alpine AS build
@@ -1387,7 +1745,7 @@ ENV HOME=/app
 CMD ["bin/mi_etl", "start"]
 ```
 
-### `rel/env.sh.eex`
+### 11.4 `rel/env.sh.eex`
 
 ```bash
 #!/bin/sh
@@ -1401,76 +1759,111 @@ export RELEASE_NODE=mi_etl@127.0.0.1
 ## Checklist Final
 
 ### Estructura de Archivos
-- [ ] `mix.exs` con dependencias correctas
+- [ ] `mix.exs` con dependencias (etl_core v2.0)
 - [ ] `config/config.exs` - Logger básico
-- [ ] `config/runtime.exs` - Todas las variables de entorno
+- [ ] `config/runtime.exs` - **TODAS las variables de entorno**
 - [ ] `lib/mi_etl/application.ex` - Supervisor tree
 
 ### Entidades
 - [ ] `entity/record/subentities/record_base.ex` - Atributos base con `unique_id`, `last_update`, `timestamp`
-- [ ] `entity/record/record.ex` - Entidad Record principal
-- [ ] `entity/task/task.ex` - Entidad Task
-- [ ] Sub-entidades adicionales según necesidad
+- [ ] `entity/record/record.ex` - Entidad Record con `CleanableTable`
+- [ ] `entity/task/task.ex` - Entidad Task con `CleanableTable`
+- [ ] Sub-entidades adicionales según el negocio
 
 ### Implementaciones
-- [ ] `impl/genserver/worker.ex` - Protocolo PWorker
+- [ ] `impl/genserver/worker.ex` - Protocolo PWorker para `:record` y `:task`
 - [ ] `impl/genserver/forced_load_config.ex` - Configuración ForcedLoad
 - [ ] `impl/type/documentary_type_of.ex` - Tipo documental
 - [ ] `impl/time/my_time.ex` - Tiempo laboral (si se usa)
 
 ### Configuración
 - [ ] Variables de entorno documentadas
-- [ ] Colas RabbitMQ definidas
+- [ ] Colas RabbitMQ definidas (record y task)
 - [ ] Tablas BigQuery especificadas
 - [ ] Conexión PostgreSQL configurada
+- [ ] Webhooks de Slack configurados
 
 ### Deployment
-- [ ] Dockerfile funcional
-- [ ] Configuración de Kubernetes/Okteto
-- [ ] Scripts de inicio (startup.sh)
+- [ ] `Dockerfile` funcional
+- [ ] `k8s/canary/deployment.yml`
+- [ ] `k8s/production/deployment.yml`
+- [ ] `startup-prod.sh` y `startup-qa.sh`
+- [ ] `rel/env.sh.eex`
 
 ---
 
 ## Variables de Entorno Requeridas
 
 ```bash
+# Ambiente
+ENVIRONMENT=Canary|Production
+
 # BigQuery
-DNS=
-DATAMART_MI_ETL=
-MI_ETL_RECORDS_TABLE=
-MI_ETL_TASK_TABLE=
+DNS=bigquery64
+DATAMART_MI_ETL=ttlchk-cloud.mi_etl_prod
+MI_ETL_SERVICE_TABLE=servicio
+MI_ETL_TASK_TABLE=tarea
 
 # Slack
-SLACK_WEBHOOK_FOR_BUGS=
-SLACK_WEBHOOK_FOR_NOTIFICATIONS=
+SLACK_WEBNOOK_FOR_BUGS=https://hooks.slack.com/services/...
+SLACK_WEBNOOK_FOR_NOTIFICATIONS=https://hooks.slack.com/services/...
 
-# Credenciales
-TOTALCHECK_USERNAME=
-TOTALCHECK_PASSWORD=
+# Credenciales del sistema
+TOTALCHECK_USERNAME=system
+TOTALCHECK_PASSWORD=***
 
-# Servicios
-TICKET_ACCESS_URL=
-ELASTICSEARCH_HOST=
-NODE_SERVICE_URL=
-WORKFLOW_SERVICE_URL=
+# Servicios DOX
+TICKET_ACCESS_URL=https://backofficedigital.totalcheck.cl/userservice/login?u=<username>&pw=<password>
+ELASTICSEARCH_HOST=10.142.0.61
+NODE_SERVICE_URL=https://web.albertcs.com/nodeservice/tenant/system/node/<unique_id>?alf_ticket=<ticket>
+WORKFLOW_SERVICE_URL=https://backofficedigital.totalcheck.cl/api/workflowservice/workflow/<type_documentary>/nodeid/<contentref>?alf_ticket=<ticket>
 
 # RabbitMQ
-AMQP_HOST=
-AMQP_PORT=
-AMQP_USERNAME=
-AMQP_PASSWORD=
-AMQP_RECORD_QUEUE=
-AMQP_TASK_QUEUE=
+AMQP_HOST=10.142.0.26
+AMQP_PORT=5672
+AMQP_USERNAME=admin
+AMQP_PASSWORD=***
+AMQP_RECORD_QUEUE=expediente_mi_etl_pdatos
+AMQP_TASK_QUEUE=tarea_mi_etl_pdatos
 
-# PostgreSQL
-PG_HOST=
-PG_PORT=
-PG_DATABASE=
-PG_USERNAME=
-PG_PASSWORD=
-PG_TABLE_RECORDS=
-PG_TABLE_TASKS=
-
-# Ambiente
-ENVIRONMENT=
+# PostgreSQL (Buffer)
+PG_HOST=10.0.32.3
+PG_PORT=5432
+PG_DATABASE=etl_buffer
+PG_USERNAME=etl_service
+PG_PASSWORD=***
+PG_TABLE=mi_etl_buffer
 ```
+
+---
+
+## Consejos y Mejores Prácticas
+
+### 1. Nombrado de Atributos
+
+- Usar nombres en español para columnas de BigQuery (ej: `marca_vehiculo`, `fecha_solicitud`)
+- Mantener `id_payload` con el nombre exacto del campo en el JSON
+
+### 2. Manejo de Errores
+
+- Siempre envolver operaciones críticas en `try/rescue`
+- Usar `handle_processing_error/4` para notificar a Slack
+- Los errores individuales no deben detener el batch completo
+
+### 3. Post-procesamiento
+
+- Usar `special_post_processing/2` para lógica que depende del payload completo
+- El timestamp debe calcularse siempre (usar `Timex.now() |> Timex.to_unix()`)
+
+### 4. Testing
+
+- Ejecutar localmente con `iex -S mix` y el script `startup-qa.sh`
+- Verificar logs en Slack para errores
+- Revisar PostgreSQL para ver registros en estado `sin_analizar`
+
+### 5. Carga Masiva
+
+- Para cargar datos históricos, usar la función `start_band_air/0`
+- Ajustar `time_step` y `batch_size` según el volumen de datos
+- Monitorear la cola de RabbitMQ durante la carga
+

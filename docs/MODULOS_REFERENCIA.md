@@ -1,6 +1,6 @@
-# Referencia de Módulos ETL-Core
+# Referencia de Módulos ETL-Core v2.0
 
-Este documento describe los módulos disponibles en `etl-core`, sus funciones principales y aspectos importantes a considerar.
+Este documento describe los módulos disponibles en `etl-core` v2.0, sus funciones principales y aspectos importantes a considerar.
 
 ---
 
