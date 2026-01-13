@@ -86,8 +86,8 @@ entity_config(
 | `build_data/3` | Construye datos del record desde payloads |
 | `apply_post_processing/3` | Aplica post-procesamiento especial |
 | `prepare_record/4` | Prepara un registro para inserción |
-| `execute_insert/3` | Ejecuta inserción en base de datos |
-| `execute_insert_with_retry/3` | Inserción con estrategia de reintento divide-and-conquer |
+| `execute_insert/3` | Ejecuta inserción en base de datos (crea conexión temporal) |
+| `execute_insert_with_retry/3` | Inserción con estrategia de reintento divide-and-conquer (crea conexión temporal) |
 | `handle_processing_error/4` | Maneja errores y envía notificaciones |
 
 #### Ejemplo de Uso
@@ -111,7 +111,7 @@ defmodule MiApp.Record do
   
   generate_helper_functions()
   
-  def insert_by_lote(batch, batch_id, pg_conn) do
+  def insert_by_lote(batch, batch_id, pg_config) do
     {grouped, keys} = batch |> filter_batch() |> group_by_unique_id()
     
     records = 
@@ -120,7 +120,7 @@ defmodule MiApp.Record do
       |> Enum.filter(&match?({:ok, _}, &1))
       |> Enum.map(fn {:ok, r} -> r end)
     
-    execute_insert_with_retry(records, pg_conn, batch_id)
+    execute_insert_with_retry(records, pg_config, batch_id)
   end
 end
 ```
@@ -211,7 +211,7 @@ Consumidor continuo de colas RabbitMQ.
 Donde:
 - `queue_info`: Mapa con `:business` y `:config`
 - `amqp_connection`: Configuración de conexión AMQP
-- `info`: Mapa con `:pg_conn`, `:webhook_url`, etc.
+- `info`: Mapa con `:pg_config` (configuración de PostgreSQL), `:webhook_url`, etc.
 
 **Configuración de cola:**
 ```elixir
@@ -244,14 +244,14 @@ Donde `config` se construye con `ForcedLoad.Config`.
 
 ### `Genserver.BigqueryUploader`
 
-Sube datos de PostgreSQL a BigQuery periódicamente.
+Sube datos de PostgreSQL a BigQuery periódicamente. Las conexiones a ambas bases de datos se crean al inicio de cada ciclo de ejecución y se cierran al finalizar, evitando problemas de conexiones obsoletas o desconectadas.
 
 **Configuración:**
 ```elixir
 {Genserver.BigqueryUploader, %{
   business: :mi_negocio,
-  data_source: bq_config,
-  pg_config: pg_connection_config,
+  data_source: bq_config,           # Configuración ODBC para BigQuery
+  pg_config: pg_connection_config,  # Configuración de conexión PostgreSQL
   info: [
     %{bq_table: "tabla_bq", tipo: "expediente", pg_table: "tabla_pg"}
   ],
@@ -260,6 +260,11 @@ Sube datos de PostgreSQL a BigQuery periódicamente.
   webhook_url: webhook_url
 }}
 ```
+
+**Ciclo de ejecución:**
+1. Se crean las conexiones a PostgreSQL y BigQuery
+2. Se procesan las tablas configuradas en `info`
+3. Se cierran ambas conexiones (incluso si hay errores, usando `try/after`)
 
 ---
 
@@ -530,12 +535,12 @@ defimpl Genserver.Protocols.PWorker, for: List do
   def perform(batch, batch_id, :record, info) do
     batch
     |> Enum.map(fn %{"current" => payload} -> payload end)
-    |> MiApp.Record.insert_by_lote(batch_id, info.pg_conn)
+    |> MiApp.Record.insert_by_lote(batch_id, info.pg_config)
   end
   
   def perform(batch, batch_id, :task, info) do
     batch
-    |> MiApp.Task.insert_by_lote(batch_id, info.pg_conn)
+    |> MiApp.Task.insert_by_lote(batch_id, info.pg_config)
   end
 end
 ```
@@ -544,7 +549,68 @@ end
 
 ## Consideraciones Importantes
 
-### 1. Configuración en Runtime vs Compilación
+### 1. Conexiones Temporales a PostgreSQL y BigQuery
+
+A partir de la versión actual, las conexiones se crean **bajo demanda** y se cierran después de cada operación. Esto aplica tanto para inserciones individuales como para el ciclo de subida a BigQuery.
+
+| Antes | Ahora |
+|-------|-------|
+| `pg_conn` (conexión activa pasada como parámetro) | `pg_config` (configuración para crear conexión) |
+| Conexión persistente durante todo el ciclo de vida | Conexión temporal creada y cerrada por operación |
+| Requiere manejo manual de desconexiones | Resiliencia automática ante desconexiones |
+
+**Patrón de conexión temporal (inserciones):**
+```elixir
+def execute_insert(records, pg_config, batch_id) do
+  try do
+    case Connection.Postgres.connect(pg_config) do
+      {:ok, pg_conn} ->
+        try do
+          Connection.Postgres.insert_many(pg_conn, table_name(), records)
+        after
+          Connection.Postgres.disconnect(pg_conn)
+        end
+      {:error, reason} ->
+        Logger.error("Error conectando: #{inspect(reason)}")
+        Notify.notify_slack(webhook_url, headers, env, "Error de conexión PostgreSQL")
+        {:error, reason}
+    end
+  rescue
+    error ->
+      Logger.error("Error inesperado: #{inspect(error)}")
+      {:error, error}
+  end
+end
+```
+
+**Patrón de conexión por ciclo (BigqueryUploader):**
+```elixir
+def handle_info(:update, state) do
+  # Crear conexiones al inicio del ciclo
+  {:ok, pg_conn} = Postgres.connect(pg_config)
+  bq_conn = Odbc.connect(data_source)
+  
+  try do
+    # Procesar todas las tablas configuradas
+    Enum.each(info, fn table_config ->
+      Bigquery.run(business, bq_conn, pg_conn, pg_table, bq_table, ...)
+    end)
+  after
+    # Cerrar conexiones al finalizar (siempre se ejecuta)
+    Postgres.disconnect(pg_conn)
+    Odbc.disconnect(bq_conn)
+  end
+end
+```
+
+**Beneficios:**
+- Mayor resiliencia ante caídas de conexión
+- No es necesario manejar reconexiones manualmente
+- Cada operación/ciclo tiene su propia conexión aislada
+- Mejor manejo de errores con try-rescue y notificaciones
+- Evita problemas de conexiones obsoletas o timeouts
+
+### 2. Configuración en Runtime vs Compilación
 
 Usar `*_path` para valores que se resuelven desde variables de entorno en runtime:
 - `table_key_path` en lugar de `table_key`

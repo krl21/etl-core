@@ -61,14 +61,14 @@ El sistema ETL sigue un flujo de datos bien definido:
 │  RabbitMQ   │───►│   Worker    │───►│ PostgreSQL  │───►│  BigQuery   │
 │  (Eventos)  │    │ (Procesa)   │    │  (Buffer)   │    │ (Destino)   │
 └─────────────┘    └─────────────┘    └─────────────┘    └─────────────┘
-                                             │
-                   ┌─────────────────────────┤
-                   │                         │
-                   ▼                         ▼
-            ┌─────────────┐          ┌─────────────┐
-            │ BigQuery    │          │  Cleaning   │
-            │  Uploader   │          │ (Limpieza)  │
-            └─────────────┘          └─────────────┘
+                                          ▲     ▲
+                   ┌──────────────────────┘     │
+                   │                            │
+                   │                            │
+            ┌──────┴──────┐             ┌───────┴─────┐
+            │ BigQuery    │             │  Cleaning   │
+            │  Uploader   │             │ (Limpieza)  │
+            └─────────────┘             └─────────────┘
 ```
 
 ### Componentes Principales
@@ -856,15 +856,15 @@ defmodule Entity.Record.Record do
   ## Parámetros
     - `batch`: Lista de payloads
     - `batch_id`: Identificador del batch
-    - `pg_conn`: Conexión a PostgreSQL
+    - `pg_config`: Configuración de conexión a PostgreSQL
 
   ## Retorna
     - `{:ok, count}` - Número de registros insertados
     - `{:error, reason}` - Si hay error
   """
-  def insert_by_lote([], _batch_id, _pg_conn), do: {:ok, 0}
+  def insert_by_lote([], _batch_id, _pg_config), do: {:ok, 0}
 
-  def insert_by_lote(batch, batch_id, pg_conn)
+  def insert_by_lote(batch, batch_id, pg_config)
       when is_list(batch) and is_binary(batch_id) do
 
     {grouped, keys} = group_by_unique_id(batch)
@@ -886,7 +886,7 @@ defmodule Entity.Record.Record do
       |> Enum.filter(&match?({:ok, _}, &1))
       |> Enum.map(fn {:ok, record} -> record end)
 
-    execute_insert_with_retry(records, pg_conn, batch_id)
+    execute_insert_with_retry(records, pg_config, batch_id)
   end
 
   ################
@@ -1172,13 +1172,13 @@ defimpl Genserver.Protocols.PWorker, for: List do
   @doc """
   Procesa un batch de expedientes (records).
   """
-  def perform(batch, batch_id, :record = business, %{pg_conn: pg_conn} = _info) do
+  def perform(batch, batch_id, :record = business, %{pg_config: pg_config} = _info) do
     Logger.debug("Nuevo batch. Negocio: #{inspect(business)}. Mensajes: #{length(batch)}")
 
     try do
       batch
       |> Enum.map(fn %{"current" => payload} -> payload end)
-      |> Record.insert_by_lote(batch_id, pg_conn)
+      |> Record.insert_by_lote(batch_id, pg_config)
 
       Logger.debug("Batch procesado. Id: #{inspect(batch_id)}. Negocio: #{inspect(business)}")
     rescue
@@ -1197,12 +1197,12 @@ defimpl Genserver.Protocols.PWorker, for: List do
   @doc """
   Procesa un batch de tareas.
   """
-  def perform(batch, batch_id, :task = business, %{pg_conn: pg_conn} = _info) do
+  def perform(batch, batch_id, :task = business, %{pg_config: pg_config} = _info) do
     Logger.debug("Nuevo batch. Negocio: #{inspect(business)}. Mensajes: #{length(batch)}")
 
     try do
       batch
-      |> Task.insert_by_lote(batch_id, pg_conn)
+      |> Task.insert_by_lote(batch_id, pg_config)
 
       Logger.debug("Batch procesado. Id: #{inspect(batch_id)}. Negocio: #{inspect(business)}")
     rescue
@@ -1444,11 +1444,8 @@ defmodule MiEtl.Application do
   end
 
   defp rabbit_consumer_children do
-    # Establecer conexión a PostgreSQL y pasarla al RabbitConsumer
-    {:ok, pg_conn} = Postgres.connect(Application.get_env(:mi_etl, :postgres)[:connection])
-
     info = %{
-      pg_conn: pg_conn,
+      pg_config: Application.get_env(:mi_etl, :postgres)[:connection],
       webhook_url: slack_webhook_url()
     }
 

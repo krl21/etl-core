@@ -1,6 +1,6 @@
 # Arquitectura del Sistema ETL
 
-Este documento describe la arquitectura concebida para el sistema ETL basado en `etl-core`.
+Este documento describe la arquitectura concebida para el sistema ETL basado en `etl-core` v2.0.
 
 ---
 
@@ -189,7 +189,7 @@ El sistema ETL está diseñado como una aplicación Elixir/OTP que sigue el patr
 │                                          ▼                                  │
 │   3. PROCESAMIENTO                                                          │
 │   ┌─────────────────────────────────────────────────────────────────┐       │
-│   │ Entity.Record.insert_by_lote(batch, batch_id, pg_conn)          │       │
+│   │ Entity.Record.insert_by_lote(batch, batch_id, pg_config)        │       │
 │   │                                                                 │       │
 │   │   batch                                                         │       │
 │   │     │                                                           │       │
@@ -477,7 +477,7 @@ Las funciones generadas son "bloques de construcción" que pueden componerse:
 
 ```elixir
 # Implementación personalizada usando los building blocks
-def insert_by_lote(batch, batch_id, pg_conn) do
+def insert_by_lote(batch, batch_id, pg_config) do
   batch
   |> filter_batch()           # Override si es necesario
   |> custom_preprocessing()   # Lógica personalizada
@@ -581,28 +581,59 @@ end
 
 | Componente | PostgreSQL | BigQuery (ODBC) | RabbitMQ |
 |------------|------------|-----------------|----------|
-| **RabbitConsumer** | Pool compartido | - | Conexión propia por cola |
-| **BigqueryUploader** | Conexión propia | Conexión propia | - |
-| **Cleaning** | Conexión propia | Conexión propia | - |
+| **RabbitConsumer** | Conexión temporal por inserción | - | Conexión propia por cola |
+| **BigqueryUploader** | Conexión por ciclo | Conexión por ciclo | - |
+| **Cleaning** | Conexión temporal por operación | Conexión temporal por operación | - |
 | **ForcedLoad** | Via config | Via config | Publica a colas |
 
 ### Ciclo de Vida de Conexiones
 
 ```elixir
-# Conexión persistente en GenServer
-def init(config) do
-  # Abrir conexiones al iniciar
-  {:ok, pg_conn} = Postgres.connect(pg_config)
-  bq_conn = Odbc.connect(bq_config)
-  
-  {:ok, %{pg_conn: pg_conn, bq_conn: bq_conn, ...}}
+# Conexión bajo demanda para PostgreSQL
+# En lugar de mantener una conexión persistente, se crea una conexión
+# temporal en el momento de insertar y se cierra inmediatamente después.
+
+def execute_insert(records, pg_config, batch_id) do
+  try do
+    case Connection.Postgres.connect(pg_config) do
+      {:ok, pg_conn} ->
+        try do
+          # Realizar operación de inserción
+          result = Connection.Postgres.insert_many(pg_conn, table_name(), records)
+          result
+        after
+          # Siempre cerrar la conexión
+          Connection.Postgres.disconnect(pg_conn)
+        end
+      {:error, reason} ->
+        Logger.error("Error conectando a PostgreSQL: #{inspect(reason)}")
+        {:error, reason}
+    end
+  rescue
+    error ->
+      Logger.error("Error inesperado: #{inspect(error)}")
+      {:error, error}
+  end
 end
 
-def terminate(_reason, %{pg_conn: pg_conn, bq_conn: bq_conn}) do
-  # Cerrar conexiones al terminar
-  Postgres.disconnect(pg_conn)
-  Odbc.disconnect(bq_conn)
-  :ok
+# BigqueryUploader: conexiones creadas por ciclo de ejecución
+# Las conexiones a PostgreSQL y BigQuery se crean al inicio de cada ciclo
+# y se cierran al finalizar, evitando problemas de conexiones obsoletas.
+def handle_info(:update, state) do
+  # Crear conexiones para este ciclo
+  {:ok, pg_conn} = Postgres.connect(pg_config)
+  bq_conn = Odbc.connect(data_source)
+  
+  try do
+    # Procesar tablas configuradas
+    Enum.each(info, fn table_config ->
+      Bigquery.run(business, bq_conn, pg_conn, ...)
+    end)
+  after
+    # Cerrar conexiones al finalizar el ciclo
+    Postgres.disconnect(pg_conn)
+    Odbc.disconnect(bq_conn)
+  end
 end
 ```
 
@@ -713,24 +744,24 @@ AMQP.Basic.reject(channel, delivery_tag, requeue: false)
 ```
 ┌───────────────────────────────────────────────────────────────────────┐
 │                                                                       │
-│   ┌─────────────┐                     ┌─────────────────────────┐    │
-│   │    Queue    │ ── mensaje ──►      │      Consumer           │    │
-│   │   records   │                     │                         │    │
-│   └─────────────┘                     └───────────┬─────────────┘    │
+│   ┌─────────────┐                     ┌─────────────────────────┐     │
+│   │    Queue    │ ── mensaje ──►      │      Consumer           │     │
+│   │   records   │                     │                         │     │
+│   └─────────────┘                     └───────────┬─────────────┘     │
 │                                                   │                   │
-│                                            ┌──────┴──────┐           │
-│                                            │   Error?    │           │
-│                                            └──────┬──────┘           │
+│                                            ┌──────┴──────┐            │
+│                                            │   Error?    │            │
+│                                            └──────┬──────┘            │
 │                                                   │                   │
-│                                     ┌─────────────┴─────────────┐    │
-│                                     │                           │    │
-│                                     ▼                           ▼    │
-│                              ┌─────────────┐             ┌─────────┐ │
-│                              │    ACK      │             │  REJECT │ │
-│                              │  (success)  │             │(no req) │ │
-│                              └─────────────┘             └────┬────┘ │
-│                                                               │      │
-│                                                               ▼      │
+│                                     ┌─────────────┴─────────────┐     │
+│                                     │                           │     │
+│                                     ▼                           ▼     │
+│                              ┌─────────────┐             ┌─────────┐  │
+│                              │    ACK      │             │  REJECT │  │
+│                              │  (success)  │             │(no req) │  │
+│                              └─────────────┘             └────┬────┘  │
+│                                                               │       │
+│                                                               ▼       │
 │                                                    ┌─────────────────┐│
 │                                                    │  Dead Letter    ││
 │                                                    │  Queue (DLQ)    ││
@@ -801,7 +832,7 @@ end
 3. **Implementar Worker**:
 ```elixir
 def perform(batch, batch_id, :nuevo, info) do
-  Entity.Nuevo.insert_by_lote(batch, batch_id, info.pg_conn)
+  Entity.Nuevo.insert_by_lote(batch, batch_id, info.pg_config)
 end
 ```
 
