@@ -26,6 +26,9 @@ defmodule Genserver.RabbitConsumer do
 
         setup_queue(channel, queue_info)
 
+        prefetch_count = Map.get(queue_info, :prefetch_count, 50)
+        :ok = AMQP.Basic.qos(channel, prefetch_count: prefetch_count)
+
         {:ok, _consumer_tag} = AMQP.Basic.consume(channel, queue)
 
         pg_conn = open_postgres_connection(info[:pg_config], queue)
