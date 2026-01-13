@@ -2,7 +2,6 @@
 defmodule Genserver.BigqueryUploader do
     @moduledoc"""
     GenServer for uploading pending records to BigQuery.
-    Maintains persistent connections to both PostgreSQL and BigQuery (ODBC).
     """
 
     use GenServer
@@ -63,19 +62,12 @@ defmodule Genserver.BigqueryUploader do
 
         Logger.info("#{to_string(__MODULE__)}. Inicializando. Negocio: ---#{to_string(business)}---")
 
-        {:ok, pg_conn} = Postgres.connect(pg_config)
-        Logger.info("#{to_string(__MODULE__)}. Conexión a PostgreSQL establecida para negocio: #{to_string(business)}")
-
-        bq_conn = Odbc.connect(data_source)
-        Logger.info("#{to_string(__MODULE__)}. Conexión ODBC a BigQuery establecida para negocio: #{to_string(business)}")
-
         milliseconds_timeout = notification_frequency(periodicity)
 
         state = %{
             business: business,
             data_source: data_source,
-            pg_conn: pg_conn,
-            bq_conn: bq_conn,
+            pg_config: pg_config,
             info: info,
             milliseconds_timeout: milliseconds_timeout,
             batch_size: batch_size,
@@ -100,8 +92,8 @@ defmodule Genserver.BigqueryUploader do
     def handle_info(:update, state) do
         %{
             business: business,
-            pg_conn: pg_conn,
-            bq_conn: bq_conn,
+            data_source: data_source,
+            pg_config: pg_config,
             info: info,
             milliseconds_timeout: milliseconds_timeout,
             batch_size: batch_size,
@@ -110,17 +102,31 @@ defmodule Genserver.BigqueryUploader do
 
         Logger.info("#{to_string(__MODULE__)}. Iniciando ciclo de carga a BigQuery para negocio: #{to_string(business)}")
 
-        Enum.each(info, fn table_config ->
-            batch_id = random_string_generate(15)
+        {:ok, pg_conn} = Postgres.connect(pg_config)
+        Logger.debug("#{to_string(__MODULE__)}. Conexión a PostgreSQL establecida para ciclo de negocio")
 
-            bq_table = Map.fetch!(table_config, :bq_table)
-            tipo = Map.fetch!(table_config, :tipo)
-            pg_table = Map.fetch!(table_config, :pg_table)
+        bq_conn = Odbc.connect(data_source)
+        Logger.debug("#{to_string(__MODULE__)}. Conexión ODBC a BigQuery establecida para ciclo de negocio")
 
-            Bigquery.run(business, bq_conn, pg_conn, pg_table, bq_table, tipo, batch_id, batch_size, webhook_url)
-        end)
+        try do
+            Enum.each(info, fn table_config ->
+                batch_id = random_string_generate(15)
 
-        Logger.info("#{to_string(__MODULE__)}. Ciclo de carga a BigQuery finalizado para negocio: #{to_string(business)}")
+                bq_table = Map.fetch!(table_config, :bq_table)
+                tipo = Map.fetch!(table_config, :tipo)
+                pg_table = Map.fetch!(table_config, :pg_table)
+
+                Bigquery.run(business, bq_conn, pg_conn, pg_table, bq_table, tipo, batch_id, batch_size, webhook_url)
+            end)
+
+            Logger.info("#{to_string(__MODULE__)}. Ciclo de carga a BigQuery finalizado para negocio: #{to_string(business)}")
+        after
+            Postgres.disconnect(pg_conn)
+            Logger.debug("#{to_string(__MODULE__)}. Conexión a PostgreSQL cerrada para ciclo de negocio: #{to_string(business)}")
+
+            Odbc.disconnect(bq_conn)
+            Logger.debug("#{to_string(__MODULE__)}. Conexión ODBC a BigQuery cerrada para ciclo de negocio: #{to_string(business)}")
+        end
 
         variable_wait(:later, milliseconds_timeout)
         {:noreply, state}
@@ -144,19 +150,8 @@ defmodule Genserver.BigqueryUploader do
     end
 
     @impl true
-    def terminate(reason, %{pg_conn: pg_conn, bq_conn: bq_conn, business: business}) do
+    def terminate(reason, %{business: business}) do
         Logger.info("#{to_string(__MODULE__)}. Terminando para negocio: #{to_string(business)}. Razón: #{inspect(reason)}")
-
-        if pg_conn do
-            Postgres.disconnect(pg_conn)
-            Logger.debug("#{to_string(__MODULE__)}. Conexión a PostgreSQL cerrada")
-        end
-
-        if bq_conn do
-            Odbc.disconnect(bq_conn)
-            Logger.debug("#{to_string(__MODULE__)}. Conexión ODBC a BigQuery cerrada")
-        end
-
         :ok
     end
 

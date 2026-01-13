@@ -160,7 +160,7 @@ defmodule Genserver.Handlers.Bigquery do
                 fn {id_nodo, all_ids, remaining_records}, {ids_acc, failed_acc, count_acc} ->
                     case Map.get(result_map, id_nodo) do
                         {:ok, _} ->
-                            # Exito: marca todos los registros en este grupo como enviados
+                            # Éxito: marca todos los registros en este grupo como enviados
                             {ids_acc ++ all_ids, failed_acc, count_acc + 1}
 
                         {:error, first_failed_id} ->
