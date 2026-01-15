@@ -3,7 +3,7 @@ defmodule Pool.BigQuery do
     @moduledoc """
     Pool de conexiones para BigQuery via ODBC usando NimblePool.
 
-    ## Uso
+    ### Uso
 
     Agregar al árbol de supervisión:
 
@@ -19,14 +19,14 @@ defmodule Pool.BigQuery do
             Connection.Odbc.select(conn, "SELECT * FROM table")
         end)
 
-    ## Manejo de Errores
+    ### Manejo de Errores
 
     - Si una conexión falla durante una operación, el error se propaga al llamador
     - La conexión problemática se descarta y se crea una nueva
     - Los errores de conexión inicial se loguean y reintentan
     - No se envían notificaciones a Slack desde este módulo (responsabilidad del llamador)
 
-    ## Configuración
+    ### Configuración
 
     - `:name` (atom, requerido) - Nombre del pool
     - `:data_source` (list, requerido) - Configuración ODBC para BigQuery
@@ -43,13 +43,13 @@ defmodule Pool.BigQuery do
     @doc """
     Starts the BigQuery connection pool.
 
-    ## Parameters
+    ### Parameters
         - opts: Keyword. Configuration options:
             - :name: Atom. Pool name
             - :data_source: List. ODBC configuration.
             - :pool_size: Integer. Pool size (default: 5)
 
-    ## Returns
+    ### Returns
         - {:ok, pid} Pool started successfully
         - {:error, reason} Error starting the pool
     """
@@ -74,13 +74,13 @@ defmodule Pool.BigQuery do
     @doc """
     Executes a function with a connection from the pool.
 
-    ## Parameters
+    ### Parameters
         - pool_name: Atom. Pool name
         - fun: Function. Function that receives the ODBC connection and executes operations
         - opts: Keyword, optional. Options:
             - :timeout: Integer. Timeout to get connection (default: 30000ms)
 
-    ## Returns
+    ### Returns
         - The result of executing `fun.(conn)`
         - Propagates any exception that occurs within `fun`
     """
@@ -109,10 +109,10 @@ defmodule Pool.BigQuery do
     @doc """
     Checks the pool status.
 
-    ## Parameters
+    ### Parameters
         - pool_name: Atom. Pool name to check
 
-    ## Returns
+    ### Returns
         - {:ok, :running} Pool is active
         - {:error, :pool_not_found} Pool does not exist
     """

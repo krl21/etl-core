@@ -3,14 +3,14 @@ defmodule Pool.Postgres do
     @moduledoc """
     Connection pool supervisor for PostgreSQL using Postgrex.
 
-    ## Features
+    ### Features
 
     - **Supervised pool**: Connections are managed and restarted automatically
     - **Automatic reconnection**: If a connection fails, Postgrex reconnects it
     - **Dual mode**: Supports read replicas (write_hostname + read_hostname)
     - **Flexible configuration**: pool_size, queue_target, queue_interval
 
-    ## Usage
+    ### Usage
 
     Add to the supervision tree:
 
@@ -29,7 +29,7 @@ defmodule Pool.Postgres do
             Postgrex.query!(conn, "INSERT ...", [])
         end)
 
-    ## Configuration
+    ### Configuration
 
     - `:name` (atom, required) - Pool name
     - `:config` (map, required) - PostgreSQL connection configuration
@@ -48,7 +48,7 @@ defmodule Pool.Postgres do
     @doc """
     Starts the PostgreSQL pool supervisor.
 
-    ## Parameters
+    ### Parameters
         - opts: Keyword. Configuration options:
             - :name: Atom. Pool name
             - :config: Map. Connection configuration with:
@@ -62,7 +62,7 @@ defmodule Pool.Postgres do
             - :queue_target: Integer. Queue target (default: 50)
             - :queue_interval: Integer. Queue interval (default: 1000)
 
-    ## Returns
+    ### Returns
         - {:ok, pid} Pool started successfully
         - {:error, reason} Error starting the pool
     """
@@ -164,13 +164,13 @@ defmodule Pool.Postgres do
     @doc """
     Executes a query using a connection from the pool.
 
-    ## Parameters
+    ### Parameters
         - pool_name: Atom. Pool name
         - sql: String. SQL query to execute
         - params: List. Query parameters
         - opts: Keyword, optional. Additional options for Postgrex
 
-    ## Returns
+    ### Returns
         - {:ok, %Postgrex.Result{}} Query executed successfully
         - {:error, %Postgrex.Error{}} Query error
     """
@@ -181,13 +181,13 @@ defmodule Pool.Postgres do
     @doc """
     Executes a query using the read pool (for dual mode).
 
-    ## Parameters
+    ### Parameters
         - pool_name: Atom. Main pool name
         - sql: String. SQL query to execute
         - params: List. Query parameters
         - opts: Keyword, optional. Additional options for Postgrex
 
-    ## Returns
+    ### Returns
         - {:ok, %Postgrex.Result{}} Query executed successfully
         - {:error, %Postgrex.Error{}} Query error
     """
@@ -204,12 +204,12 @@ defmodule Pool.Postgres do
     @doc """
     Executes a transaction using a connection from the pool.
 
-    ## Parameters
+    ### Parameters
         - pool_name: Atom. Pool name
         - fun: Function. Function that receives the connection and executes operations
         - opts: Keyword, optional. Additional options for the transaction
 
-    ## Returns
+    ### Returns
         - {:ok, result} Transaction completed, result is what fun returns
         - {:error, reason} Transaction failed or rolled back
     """
@@ -220,10 +220,10 @@ defmodule Pool.Postgres do
     @doc """
     Checks the pool status.
 
-    ## Parameters
+    ### Parameters
         - pool_name: Atom. Pool name to check
 
-    ## Returns
+    ### Returns
         - {:ok, :running} Pool is active
         - {:error, :pool_not_found} Pool does not exist
     """
@@ -244,10 +244,10 @@ defmodule Pool.Postgres do
     @doc """
     Checks if the pool is in dual mode (with read replica).
 
-    ## Parameters
+    ### Parameters
         - pool_name: Atom. Pool name to check
 
-    ## Returns
+    ### Returns
         - true: Pool has read replica configured
         - false: Pool is simple (no read replica)
     """
