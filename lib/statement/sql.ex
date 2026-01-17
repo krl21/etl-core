@@ -156,6 +156,40 @@ defmodule Statement.Sql do
     end
 
     @doc"""
+    Combine multiple `INSERT` queries into a single one
+
+    ### Parameters:
+
+        - `queries`: [String]. List of insert clauses. It is assumed that they all belong to the same table
+
+    ### Return:
+
+        - String
+
+    """
+    def merge_inserts(queries) when is_list(queries) do
+
+        split_by = "VALUES "
+        prefix =
+            queries
+            |> hd()
+            |> String.split(split_by)
+            |> hd()
+            |> Kernel.<>(split_by)
+
+        values =
+            queries
+            |> Enum.map(fn query ->
+                query
+                |> String.split(split_by)
+                |> List.last()
+                |> String.trim_trailing(";")
+            end)
+
+        prefix <> Enum.join(values, ", ") <> ";"
+    end
+
+    @doc"""
     Construct an SELECT statement
 
     ### Parameters:

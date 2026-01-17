@@ -25,10 +25,10 @@ defmodule Connection.Odbc do
         :odbc.start()
         |> case do
             :ok ->
-                Logger.debug("Connection started with ODBC")
+                Logger.debug("Conexión ODBC iniciada")
                 :ok
             {:error, {:already_started, :odbc}} ->
-                Logger.debug("Previously started connection with ODBC")
+                Logger.debug("Conexión ODBC previamente iniciada")
                 :ok
             {:error, error} ->
                 raise("Unhandled error trying to \":odbc.start/0\", Error: #{inspect error}")
@@ -47,10 +47,10 @@ defmodule Connection.Odbc do
         :odbc.stop()
         |> case do
             :ok ->
-                Logger.debug("Connection stop with ODBC")
+                Logger.debug("Conexión ODBC detenida")
                 :ok
             {:error, {:not_started, :odbc}} ->
-                Logger.debug("Previously stopped connection with ODBC")
+                Logger.debug("Conexión ODBC previamente detenida")
                 :ok
             {:error, error} ->
                 raise("Unhandled error trying to \":odbc.stop/0\", Error: #{inspect error}")
@@ -78,6 +78,27 @@ defmodule Connection.Odbc do
             {:ok, pid} -> pid
             {:error, error} ->
                 raise("Unhandled error trying to \":odbc.connect/2\", Error: #{inspect error}")
+        end
+    end
+
+    @doc"""
+    Closes the connection to the Data Source
+
+    ### Parameter:
+        - pid: Process. Process connecting Elixir and ODBC.
+
+    ### Return:
+        - :ok | Exception. If the connection can be closed, return the atom. Otherwise, it throws an exception with the error.
+
+    """
+    def disconnect(pid) when is_pid(pid) do
+        :odbc.disconnect(pid)
+        |> case do
+            :ok ->
+                Logger.debug("Conexión ODBC cerrada")
+                :ok
+            {:error, error} ->
+                raise("Unhandled error trying to \":odbc.disconnect/1\", Error: #{inspect error}")
         end
     end
 
