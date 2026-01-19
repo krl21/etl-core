@@ -1,7 +1,29 @@
 
 defmodule Genserver.RabbitConsumer do
     @moduledoc """
-    Continuous consumer GenServer for RabbitMQ queues.
+    GenServer continuous consumer for RabbitMQ queues.
+
+    Supports two operation modes for PostgreSQL:
+
+    - **Pool Mode** (recommended): Uses a connection pool.
+        Configure with `pg_pool_name` in the `info` map.
+
+    - **Legacy Mode**: Opens a dedicated connection at startup.
+        Configure with `pg_config` in the `info` map.
+
+    ## Pool Mode
+
+        info = %{
+            pg_pool_name: :postgres_pool,
+            webhook_url: "https://..."
+        }
+
+    ## Legacy Mode
+
+        info = %{
+            pg_config: postgres_config,
+            webhook_url: "https://..."
+        }
     """
 
     require Logger
@@ -12,10 +34,31 @@ defmodule Genserver.RabbitConsumer do
     alias Connection.Postgres
 
 
+    @doc """
+    Starts the RabbitMQ consumer GenServer.
+
+    ## Parameters
+        - `args` (tuple) - Tuple with three elements:
+            - `queue_info` (map) - Queue configuration with:
+            - `:business` (atom) - Business identifier
+            - `:config` (map) - RabbitMQ queue configuration
+            - `configuration_amqp` - AMQP connection configuration
+            - `info` (map) - Additional information with:
+            - `:pg_pool_name` (atom, optional) - PostgreSQL pool name (pool mode)
+            - `:pg_config` (map, optional) - PostgreSQL configuration (legacy mode)
+            - `:webhook_url` (string) - URL for Slack notifications
+
+    ## Returns
+        - `{:ok, pid}` - GenServer started
+        - `{:error, reason}` - Error starting the GenServer
+    """
     def start_link({%{config: %{queue: queue}} = _queue_info, _configuration_amqp, _info} = args) do
         GenServer.start_link(__MODULE__, args, name: :"#{__MODULE__}.#{queue}")
     end
 
+    @doc """
+    Initializes the GenServer.
+    """
     def init({%{business: business, config: %{queue: queue} = queue_info}, configuration_amqp, info}) do
         Monitor.register(self(), to_string(__MODULE__) <> "." <> to_string(business) <> "." <> to_string(queue))
 
@@ -31,19 +74,53 @@ defmodule Genserver.RabbitConsumer do
 
         {:ok, _consumer_tag} = AMQP.Basic.consume(channel, queue)
 
-        pg_conn = open_postgres_connection(info[:pg_config], queue)
-        info_with_conn = Map.put(info, :pg_conn, pg_conn)
+        # Configurar conexión PostgreSQL según el modo
+        info_with_conn = setup_postgres_connection(info, queue)
 
         {:ok, {channel, queue, business, info_with_conn}}
     end
 
-    # Confirmation sent by the broker after registering this process as a consumer
+    #
+    # Configures the PostgreSQL connection according to the available mode
+    #
+    # Parameters:
+    #     - info: map with the information
+    #     - queue: string with the queue name
+    #
+    # Returns:
+    #     - map with the information
+    #
+    defp setup_postgres_connection(info, queue) do
+        cond do
+        # Modo pool: usar nombre del pool directamente
+        Map.has_key?(info, :pg_pool_name) ->
+            Logger.info("#{to_string(__MODULE__)}. Usando pool de PostgreSQL: #{info.pg_pool_name} para cola: #{queue}")
+            Map.put(info, :pg_mode, :pool)
+
+        # Modo legacy: abrir conexión dedicada
+        Map.has_key?(info, :pg_config) ->
+            pg_conn = open_postgres_connection(info[:pg_config], queue)
+            info
+            |> Map.put(:pg_conn, pg_conn)
+            |> Map.put(:pg_mode, :legacy)
+
+        true ->
+            Logger.warning("#{to_string(__MODULE__)}. No se proporcionó configuración de PostgreSQL para la cola: #{queue}")
+            Map.put(info, :pg_mode, :none)
+        end
+    end
+
+    @doc """
+    Handles the confirmation of registration as a consumer.
+    """
     def handle_info({:basic_consume_ok, %{consumer_tag: consumer_tag}}, state) do
         Logger.info("#{to_string(__MODULE__)}. Consumidor registrado con tag: #{consumer_tag}")
         {:noreply, state}
     end
 
-    # Sent by the broker when the consumer is unexpectedly cancelled
+    @doc """
+    Handles the unexpected cancellation of the consumer.
+    """
     def handle_info({:basic_cancel, %{consumer_tag: consumer_tag}}, {_channel, queue, _business, info} = state) do
         message = "#{to_string(__MODULE__)}. Consumidor cancelado inesperadamente: #{consumer_tag}. Cola: #{queue}"
         Logger.error(message)
@@ -51,46 +128,51 @@ defmodule Genserver.RabbitConsumer do
         {:stop, :consumer_cancelled, state}
     end
 
-    # Confirmation sent by the broker to the consumer process after a Basic.cancel
+    @doc """
+    Handles the confirmation of cancellation of the consumer.
+    """
     def handle_info({:basic_cancel_ok, %{consumer_tag: consumer_tag}}, state) do
         Logger.info("#{to_string(__MODULE__)}. Cancelación de consumidor confirmada: #{consumer_tag}")
         {:noreply, state}
     end
 
-    # Handle incoming messages from the queue
+    @doc """
+    Handles incoming messages from the queue.
+    """
     def handle_info({:basic_deliver, payload, %{delivery_tag: delivery_tag}}, {channel, queue, business, info} = state) do
-        # Logger.debug("#{to_string(__MODULE__)}. Message received on queue: #{queue}")
-
         payload
         |> Poison.decode()
         |> case do
-            {:ok, msg_decode} ->
-                [msg_decode]
-                |> perform(
-                    random_string_generate(15),
-                    business,
-                    info
-                )
+        {:ok, msg_decode} ->
+            [msg_decode]
+            |> perform(
+                random_string_generate(15),
+                business,
+                info
+            )
 
-                AMQP.Basic.ack(channel, delivery_tag)
+            AMQP.Basic.ack(channel, delivery_tag)
 
-            {:error, reason} ->
-                message = "#{to_string(__MODULE__)}. Error al decodificar mensaje: #{inspect(reason)}. Cola: #{queue}"
-                Logger.error(message)
-                notify_error(info, message)
-                AMQP.Basic.reject(channel, delivery_tag, requeue: false)
+        {:error, reason} ->
+            message = "#{to_string(__MODULE__)}. Error al decodificar mensaje: #{inspect(reason)}. Cola: #{queue}"
+            Logger.error(message)
+            notify_error(info, message)
+            AMQP.Basic.reject(channel, delivery_tag, requeue: false)
         end
 
         {:noreply, state}
     end
 
     #
-    # Set up a queue. The configuration consists of creating the queues and establishing
-    # the relevant connections to the exchanges.
+    # Configures a RabbitMQ queue
     #
-    # ### Parameters:
-    #     - channel: AMQP.Channel. Rabbit connection channel.
-    #     - queue: Map. Queue definition.
+    # Parameters:
+    #     - channel: channel with the channel
+    #     - queue: map with the queue configuration
+    #
+    # Returns:
+    #     - :ok: if the queue is configured successfully
+    #     - :error: if the queue is not configured successfully
     #
     defp setup_queue(channel, %{queue: queue, exchange: exchange, queue_error: queue_error, queue_arguments: queue_arguments, listen: listen}) do
         Logger.info("#{to_string(__MODULE__)}. Configurando la cola ---#{to_string(queue)}---")
@@ -104,34 +186,40 @@ defmodule Genserver.RabbitConsumer do
         :ok = AMQP.Queue.bind(channel, queue, exchange)
 
         Enum.each(listen, fn exchange_to_hear ->
-            :ok = AMQP.Exchange.fanout(channel, exchange_to_hear, durable: true)
-            :ok = AMQP.Exchange.bind(channel, exchange, exchange_to_hear)
+        :ok = AMQP.Exchange.fanout(channel, exchange_to_hear, durable: true)
+        :ok = AMQP.Exchange.bind(channel, exchange, exchange_to_hear)
         end)
     end
 
     #
-    # Sends error notification to Slack if webhook_url is configured in info map.
+    # Sends an error notification to Slack
+    #
+    # Parameters:
+    #     - webhook_url: string with the webhook URL
+    #     - message: string with the message
+    #
+    # Returns:
+    #     - :ok: if the notification is sent successfully
     #
     defp notify_error(%{webhook_url: webhook_url}, message) when is_binary(webhook_url) and webhook_url != "" do
         Notify.notify_slack(
-            webhook_url,
-            [{"Content-type", "application/json"}],
-            "RabbitMQ Consumer",
-            message
+        webhook_url,
+        [{"Content-type", "application/json"}],
+        "RabbitMQ Consumer",
+        message
         )
     end
     defp notify_error(_, _), do: :ok
 
     #
-    # Opens a PostgreSQL connection if configuration is provided.
+    # Opens a PostgreSQL connection (only legacy mode)
     #
-    # ### Parameters
-    #     - pg_config: Map | nil. PostgreSQL connection configuration
-    #     - queue: String. Queue name for logging purposes
+    # Parameters:
+    #     - pg_config: map with the PostgreSQL configuration
+    #     - queue: string with the queue name
     #
-    # ### Returns
-    #     - pid | Map | nil
-    #
+    # Returns:
+    #     - :ok: if the connection is opened successfully
     defp open_postgres_connection(nil, queue) do
         Logger.warning("#{to_string(__MODULE__)}. No se proporcionó configuración de PostgreSQL para la cola: #{queue}")
         nil
@@ -141,28 +229,28 @@ defmodule Genserver.RabbitConsumer do
         Logger.debug("#{to_string(__MODULE__)}. Abriendo conexión a PostgreSQL para la cola: #{queue}")
 
         case Postgres.connect(pg_config) do
-            {:ok, conn} ->
-                Logger.info("#{to_string(__MODULE__)}. Conexión a PostgreSQL establecida para la cola: #{queue}")
-                conn
+        {:ok, conn} ->
+            Logger.info("#{to_string(__MODULE__)}. Conexión a PostgreSQL establecida para la cola: #{queue}")
+            conn
 
-            {:error, reason} ->
-                Logger.error("#{to_string(__MODULE__)}. Error al conectar a PostgreSQL para la cola #{queue}: #{inspect(reason)}")
-                nil
+        {:error, reason} ->
+            Logger.error("#{to_string(__MODULE__)}. Error al conectar a PostgreSQL para la cola #{queue}: #{inspect(reason)}")
+            nil
         end
     end
 
-    #
-    # Terminates the GenServer and closes the PostgreSQL connection.
-    #
+    @doc """
+    Handles the termination of the GenServer.
+    """
     def terminate(reason, {_channel, queue, _business, info}) do
         Logger.info("#{to_string(__MODULE__)}. Terminando (#{inspect(reason)}). Cola: ---#{queue}---")
 
-        if info[:pg_conn] do
-            Logger.debug("#{to_string(__MODULE__)}. Cerrando conexión a PostgreSQL")
-            Postgres.disconnect(info[:pg_conn])
+        # Solo cerrar conexión en modo legacy
+        if info[:pg_mode] == :legacy and info[:pg_conn] do
+        Logger.debug("#{to_string(__MODULE__)}. Cerrando conexión a PostgreSQL")
+        Postgres.disconnect(info[:pg_conn])
         end
 
         :ok
     end
-
 end
