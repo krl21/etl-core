@@ -1,35 +1,71 @@
 
 defmodule Genserver.Handlers.Bigquery do
     @moduledoc """
-    Handler module for BigQuery upload operations.
-    Contains the core logic for fetching records from PostgreSQL,
-    building queries, and uploading to BigQuery with retry mechanisms.
+    Module handler for BigQuery operations.
+
+    Contains the main logic for getting records from PostgreSQL,
+    build queries, and upload them to BigQuery with retry mechanisms.
+
+    ## Operation Modes
+
+    ### Pool Mode (recommended)
+
+    Uses connection pools for PostgreSQL and BigQuery:
+
+        Bigquery.run_with_pool(
+          :my_business,
+          bq_conn,           # Conexión ODBC del pool
+          :postgres_pool,    # PostgreSQL pool name
+          "pg_table",
+          "bq_dataset.bq_table",
+          "record",
+          "batch_123",
+          100,
+          "https://slack.webhook"
+        )
+
+    ### Legacy Mode
+
+    Uses direct connections (opened manually):
+
+        Bigquery.run(
+          :my_business,
+          bq_conn,           # BigQuery connection PID
+          pg_conn,           # PostgreSQL connection PID
+          "pg_table",
+          "bq_dataset.bq_table",
+          "record",
+          "batch_123",
+          100,
+          "https://slack.webhook"
+        )
     """
 
     require Logger
     alias Connection.Postgres
+    alias Connection.PostgresPool
     alias Statement.Sql
     alias Connection.Odbc
     alias Notification.Notify
     alias Genserver.Protocols.PBigqueryPostProcess
 
     @doc """
-    Uploads pending records to BigQuery.
+    Uploads pending records to BigQuery (legacy mode).
 
-    ### Parameters:
-        - business: Atom. Business type.
-        - bq_conn: pid. Active BigQuery ODBC connection (persistent, not closed here).
-        - pg_conn: pid | Map. Active PostgreSQL connection (persistent, not closed here).
-        - pg_table: String. PostgreSQL table name for pending records.
-        - bq_table: String. BigQuery table name.
-        - tipo: String. Type field value to filter records.
-        - batch_id: String. Batch identifier.
-        - batch_size: Integer. Number of records per batch.
-        - webhook_url: String. Slack webhook URL for error notifications.
+    ## Parameters:
+        - `business` (atom) - Business identifier
+        - `bq_conn` (pid) - Active BigQuery ODBC connection
+        - `pg_conn` (pid | map) - Active PostgreSQL connection
+        - `pg_table` (string) - PostgreSQL table name
+        - `bq_table` (string) - BigQuery table name
+        - `tipo` (string) - Value of the tipo field to filter
+        - `batch_id` (string) - Batch identifier
+        - `batch_size` (integer) - Number of records per batch
+        - `webhook_url` (string) - URL of the Slack webhook
 
-    ### Returns:
-        - {:ok, count} - Number of records uploaded
-        - {:error, reason} - Upload error
+    ## Returns:
+        - `{:ok, count}` - Number of records uploaded
+        - `{:error, reason}` - Upload error
     """
     def run(business, bq_conn, pg_conn, pg_table, bq_table, tipo, batch_id, batch_size, webhook_url) do
         Postgres.get_pending_bq(pg_conn, pg_table, tipo)
@@ -70,6 +106,74 @@ defmodule Genserver.Handlers.Bigquery do
                     bq_conn: bq_conn,
                     pg_table: pg_table,
                     pg_conn: pg_conn
+                })
+
+                {:ok, uploaded_count}
+
+            {:error, reason} ->
+                Logger.error("Error al obtener registros pendientes de #{pg_table}: #{inspect(reason)}")
+                {:error, reason}
+        end
+    end
+
+    @doc """
+    Uploads pending records to BigQuery using connection pools.
+
+    ## Parameters:
+        - `business` (atom) - Business identifier
+        - `bq_conn` (pid) - Active BigQuery ODBC connection
+        - `pg_pool_name` (atom) - PostgreSQL pool name
+        - `pg_table` (string) - PostgreSQL table name
+        - `bq_table` (string) - BigQuery table name
+        - `tipo` (string) - Value of the tipo field to filter
+        - `batch_id` (string) - Batch identifier
+        - `batch_size` (integer) - Number of records per batch
+        - `webhook_url` (string) - URL of the Slack webhook
+
+    ## Returns:
+        - `{:ok, count}` - Número de registros subidos
+        - `{:error, reason}` - Error de carga
+    """
+    def run_with_pool(business, bq_conn, pg_pool_name, pg_table, bq_table, tipo, batch_id, batch_size, webhook_url) do
+        alias Connection.PostgresPool
+
+        PostgresPool.get_pending_bq(pg_pool_name, pg_table, tipo)
+        |> case do
+            {:ok, records} when records == [] ->
+                {:ok, 0}
+
+            {:ok, records} ->
+                # Procesa cada grupo, insertando en BigQuery el registro más actualizado
+                {successful_ids, failed_ids, uploaded_count} =
+                    records
+                    |> Enum.group_by(&Map.get(&1, :id_nodo))
+                    |> process_grouped_records(
+                        bq_table,
+                        bq_conn,
+                        batch_id,
+                        batch_size,
+                        webhook_url
+                    )
+
+                # Marca como enviado en BigQuery los registros exitosos
+                if not Enum.empty?(successful_ids) do
+                    PostgresPool.mark_as_sent_to_bq(pg_pool_name, pg_table, successful_ids)
+                end
+
+                # Marca como con problemas los registros fallidos
+                if not Enum.empty?(failed_ids) do
+                    PostgresPool.mark_as_with_problems(pg_pool_name, pg_table, failed_ids)
+                end
+
+                run_post_process(business, tipo, %{
+                    uploaded_count: uploaded_count,
+                    successful_ids: successful_ids,
+                    failed_ids: failed_ids,
+                    batch_id: batch_id,
+                    bq_table: bq_table,
+                    bq_conn: bq_conn,
+                    pg_table: pg_table,
+                    pg_pool_name: pg_pool_name
                 })
 
                 {:ok, uploaded_count}
