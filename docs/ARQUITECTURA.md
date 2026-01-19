@@ -1,6 +1,6 @@
 # Arquitectura del Sistema ETL
 
-Este documento describe la arquitectura concebida para el sistema ETL basado en `etl-core` v2.0.
+Este documento describe la arquitectura concebida para el sistema ETL basado en `etl-core` v2.1.
 
 ---
 
@@ -374,28 +374,38 @@ El sistema ETL está diseñado como una aplicación Elixir/OTP que sigue el patr
                     │    (Supervisor)     │
                     └─────────┬───────────┘
                               │
-        ┌─────────────────────┼─────────────────────┐
-        │                     │                     │
-        ▼                     ▼                     ▼
-┌───────────────┐    ┌───────────────┐    ┌───────────────┐
-│Task.Supervisor│    │    Monitor    │    │   Cleaning    │
-│               │    │               │    │  Supervisor   │
-└───────────────┘    └───────────────┘    └───────┬───────┘
-                                                   │
-                                          ┌────────┴────────┐
-                                          ▼                 ▼
-                                   ┌───────────┐     ┌───────────┐
-                                   │ Cleaning  │     │  Cleaner  │
-                                   │ GenServer │     │  Workers  │
-                                   └───────────┘     └───────────┘
+   ┌──────────────────────────┼──────────────────────────┐
+   │                          │                          │
+   ▼                          ▼                          ▼
+┌─────────────────┐   ┌─────────────────┐   ┌─────────────────┐
+│  Pool.Postgres  │   │  Pool.BigQuery  │   │Task.Supervisor  │
+│  (Supervisor)   │   │  (NimblePool)   │   │                 │
+└─────────────────┘   └─────────────────┘   └─────────────────┘
         │
         ├─────────────────────┬─────────────────────┐
         ▼                     ▼                     ▼
-┌───────────────┐    ┌───────────────┐    ┌───────────────┐
-│BigqueryUploader│   │RabbitConsumer │    │RabbitConsumer │
-│    (:record)   │   │   (:record)   │    │   (:task)     │
-└───────────────┘    └───────────────┘    └───────────────┘
+┌───────────────┐    ┌───────────────┐    ┌────────────────┐
+│    Monitor    │    │   Cleaning    │    │BigqueryUploader│
+│               │    │  Supervisor   │    │                │
+└───────────────┘    └───────┬───────┘    └────────────────┘
+                             │
+                    ┌────────┴────────┐
+                    ▼                 ▼
+             ┌───────────┐     ┌───────────┐
+             │ Registry  │     │ Cleaning  │
+             │ (Tables)  │     │ GenServer │
+             └───────────┘     └───────────┘
+                 │
+                 ├─────────────────────┐
+                 ▼                     ▼
+       ┌───────────────┐    ┌───────────────┐
+       │RabbitConsumer │    │RabbitConsumer │
+       │   (:record)   │    │   (:task)     │
+       └───────────────┘    └───────────────┘
 ```
+
+**Nota:** Los pools `Pool.Postgres` y `Pool.BigQuery` deben iniciarse **antes** que los
+GenServers que los usan (BigqueryUploader, RabbitConsumer, etc.).
 
 ---
 
@@ -579,30 +589,107 @@ end
 
 ### Estrategia de Conexiones
 
-| Componente | PostgreSQL | BigQuery (ODBC) | RabbitMQ |
-|------------|------------|-----------------|----------|
-| **RabbitConsumer** | Conexión temporal por inserción | - | Conexión propia por cola |
-| **BigqueryUploader** | Conexión por ciclo | Conexión por ciclo | - |
-| **Cleaning** | Conexión temporal por operación | Conexión temporal por operación | - |
-| **ForcedLoad** | Via config | Via config | Publica a colas |
+A partir de la versión 1.2.0, el sistema soporta **dos modos de conexión**:
 
-### Ciclo de Vida de Conexiones
+| Modo | Descripción | Cuándo Usar |
+|------|-------------|-------------|
+| **Pool Mode** | Usa pools de conexiones gestionados | Producción, alto volumen |
+| **Legacy Mode** | Crea conexiones temporales por operación | Desarrollo, compatibilidad |
+
+### Pool de Conexiones (Recomendado - v2.1+)
+
+El sistema implementa pools de conexiones para PostgreSQL y BigQuery que proporcionan:
+
+| Característica | PostgreSQL (Pool.Postgres) | BigQuery (Pool.BigQuery) |
+|----------------|----------------------------|--------------------------|
+| **Librería base** | Postgrex (DBConnection) | NimblePool + ODBC |
+| **Reconexión automática** | Gestionada por DBConnection | Con health checks |
+| **Supervisión** | Como parte del árbol OTP | Como parte del árbol OTP |
+| **Pool size configurable** | Via opción `:pool_size` | Via opción `:pool_size` |
+| **Modo dual (read/write)** | Soportado | N/A |
+
+### Arquitectura del Pool
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                            POOL DE CONEXIONES                               │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│   ┌─────────────────────────────────────────────────────────────────────┐   │
+│   │                        Pool.Postgres (Supervisor)                   │   │
+│   │                                                                     │   │
+│   │   Modo Simple:                     Modo Dual:                       │   │
+│   │   ┌─────────────────┐              ┌─────────────────┐              │   │
+│   │   │  Postgrex Pool  │              │  Write Pool     │              │   │
+│   │   │   (name: atom)  │              │  (writes only)  │              │   │
+│   │   └─────────────────┘              └─────────────────┘              │   │
+│   │                                    ┌─────────────────┐              │   │
+│   │                                    │  Read Pool      │              │   │
+│   │                                    │  (reads only)   │              │   │
+│   │                                    └─────────────────┘              │   │
+│   └─────────────────────────────────────────────────────────────────────┘   │
+│                                                                             │
+│   ┌─────────────────────────────────────────────────────────────────────┐   │
+│   │                        Pool.BigQuery (NimblePool)                   │   │
+│   │                                                                     │   │
+│   │   ┌─────────────────────────────────────────────────────────────┐   │   │
+│   │   │  Worker 1  │  Worker 2  │  Worker 3  │  ...  │  Worker N    │   │   │
+│   │   │   (ODBC)   │   (ODBC)   │   (ODBC)   │       │   (ODBC)     │   │   │
+│   │   └─────────────────────────────────────────────────────────────┘   │   │
+│   │                                                                     │   │
+│   │   • Health checks en checkout                                       │   │
+│   │   • Auto-descarte de conexiones muertas                             │   │
+│   │   • Reconexión automática al devolver al pool                       │   │
+│   └─────────────────────────────────────────────────────────────────────┘   │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Componentes y Modos de Conexión
+
+| Componente | Pool Mode | Legacy Mode |
+|------------|-----------|-------------|
+| **RabbitConsumer** | Usa `pg_pool_name` | Conexión temporal por inserción |
+| **BigqueryUploader** | Usa `pg_pool_name` + `bq_pool_name` | Conexión por ciclo |
+| **Cleaning** | Usa pools configurados | Conexión temporal por operación |
+| **ForcedLoad** | Via config con pools | Via config legacy |
+
+### Modo Pool: Uso del Pool de Conexiones
 
 ```elixir
-# Conexión bajo demanda para PostgreSQL
-# En lugar de mantener una conexión persistente, se crea una conexión
-# temporal en el momento de insertar y se cierra inmediatamente después.
+# Con pool de conexiones (modo pool - recomendado)
+# Las conexiones se toman del pool y se devuelven automáticamente.
+
+def execute_insert_pooled(records, pg_pool_name, batch_id) do
+  # No se abre ni cierra conexión - el pool lo gestiona
+  case Connection.PostgresPool.insert_many(pg_pool_name, table_name(), records) do
+    {:ok, count} -> {:ok, count}
+    {:error, reason} ->
+      Logger.error("Error en inserción: #{inspect(reason)}")
+      {:error, reason}
+  end
+end
+
+# BigQuery con pool
+Pool.BigQuery.with_connection(:bigquery_pool, fn bq_conn ->
+  Connection.Odbc.insert(bq_conn, statement)
+end)
+```
+
+### Modo Legacy: Ciclo de Vida de Conexiones
+
+```elixir
+# Conexión bajo demanda para PostgreSQL (modo legacy)
+# Se crea una conexión temporal y se cierra inmediatamente después.
 
 def execute_insert(records, pg_config, batch_id) do
   try do
     case Connection.Postgres.connect(pg_config) do
       {:ok, pg_conn} ->
         try do
-          # Realizar operación de inserción
           result = Connection.Postgres.insert_many(pg_conn, table_name(), records)
           result
         after
-          # Siempre cerrar la conexión
           Connection.Postgres.disconnect(pg_conn)
         end
       {:error, reason} ->
@@ -616,21 +703,16 @@ def execute_insert(records, pg_config, batch_id) do
   end
 end
 
-# BigqueryUploader: conexiones creadas por ciclo de ejecución
-# Las conexiones a PostgreSQL y BigQuery se crean al inicio de cada ciclo
-# y se cierran al finalizar, evitando problemas de conexiones obsoletas.
+# BigqueryUploader: conexiones creadas por ciclo de ejecución (modo legacy)
 def handle_info(:update, state) do
-  # Crear conexiones para este ciclo
   {:ok, pg_conn} = Postgres.connect(pg_config)
   bq_conn = Odbc.connect(data_source)
   
   try do
-    # Procesar tablas configuradas
     Enum.each(info, fn table_config ->
       Bigquery.run(business, bq_conn, pg_conn, ...)
     end)
   after
-    # Cerrar conexiones al finalizar el ciclo
     Postgres.disconnect(pg_conn)
     Odbc.disconnect(bq_conn)
   end

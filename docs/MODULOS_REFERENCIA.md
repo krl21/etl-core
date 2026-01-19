@@ -1,6 +1,6 @@
-# Referencia de Módulos ETL-Core v2.0
+# Referencia de Módulos ETL-Core v2.1
 
-Este documento describe los módulos disponibles en `etl-core` v2.0, sus funciones principales y aspectos importantes a considerar.
+Este documento describe los módulos disponibles en `etl-core` v2.1, sus funciones principales y aspectos importantes a considerar.
 
 ---
 
@@ -9,10 +9,11 @@ Este documento describe los módulos disponibles en `etl-core` v2.0, sus funcion
 1. [Estructura de Datos](#estructura-de-datos)
 2. [Modelos de Datos](#modelos-de-datos)
 3. [GenServers](#genservers)
-4. [Conexiones](#conexiones)
-5. [Utilidades](#utilidades)
-6. [Limpieza de Datos](#limpieza-de-datos)
-7. [Carga Forzada](#carga-forzada)
+4. [Pools de Conexiones](#pools-de-conexiones) *(nuevo en v2.1)*
+5. [Conexiones](#conexiones)
+6. [Utilidades](#utilidades)
+7. [Limpieza de Datos](#limpieza-de-datos)
+8. [Carga Forzada](#carga-forzada)
 
 ---
 
@@ -86,8 +87,10 @@ entity_config(
 | `build_data/3` | Construye datos del record desde payloads |
 | `apply_post_processing/3` | Aplica post-procesamiento especial |
 | `prepare_record/4` | Prepara un registro para inserción |
-| `execute_insert/3` | Ejecuta inserción en base de datos (crea conexión temporal) |
-| `execute_insert_with_retry/3` | Inserción con estrategia de reintento divide-and-conquer (crea conexión temporal) |
+| `execute_insert/3` | Ejecuta inserción (modo legacy - crea conexión temporal) |
+| `execute_insert_with_retry/3` | Inserción con retry divide-and-conquer (modo legacy) |
+| `execute_insert_pooled/3` | Ejecuta inserción usando pool *(nuevo v2.1)* |
+| `execute_insert_with_retry_pooled/3` | Inserción con retry usando pool *(nuevo v2.1)* |
 | `handle_processing_error/4` | Maneja errores y envía notificaciones |
 
 #### Ejemplo de Uso
@@ -201,17 +204,28 @@ end
 
 ### `Genserver.RabbitConsumer`
 
-Consumidor continuo de colas RabbitMQ.
+Consumidor continuo de colas RabbitMQ. Soporta modo pool y modo legacy.
 
-**Inicialización:**
+**Inicialización (modo pool - recomendado):**
 ```elixir
-{Genserver.RabbitConsumer, {queue_info, amqp_connection, info}}
+{Genserver.RabbitConsumer, {queue_info, amqp_connection, %{
+  pg_pool_name: :postgres_pool,  # Nombre del pool de PostgreSQL
+  webhook_url: "https://hooks.slack.com/..."
+}}}
+```
+
+**Inicialización (modo legacy):**
+```elixir
+{Genserver.RabbitConsumer, {queue_info, amqp_connection, %{
+  pg_config: %{hostname: "...", ...},  # Configuración directa
+  webhook_url: "https://hooks.slack.com/..."
+}}}
 ```
 
 Donde:
 - `queue_info`: Mapa con `:business` y `:config`
 - `amqp_connection`: Configuración de conexión AMQP
-- `info`: Mapa con `:pg_config` (configuración de PostgreSQL), `:webhook_url`, etc.
+- `info`: Mapa con `:pg_pool_name` O `:pg_config`, más `:webhook_url`
 
 **Configuración de cola:**
 ```elixir
@@ -244,9 +258,24 @@ Donde `config` se construye con `ForcedLoad.Config`.
 
 ### `Genserver.BigqueryUploader`
 
-Sube datos de PostgreSQL a BigQuery periódicamente. Las conexiones a ambas bases de datos se crean al inicio de cada ciclo de ejecución y se cierran al finalizar, evitando problemas de conexiones obsoletas o desconectadas.
+Sube datos de PostgreSQL a BigQuery periódicamente. Soporta modo pool y modo legacy.
 
-**Configuración:**
+**Configuración (modo pool - recomendado):**
+```elixir
+{Genserver.BigqueryUploader, %{
+  business: :mi_negocio,
+  pg_pool_name: :postgres_pool,     # Nombre del pool de PostgreSQL
+  bq_pool_name: :bigquery_pool,     # Nombre del pool de BigQuery
+  info: [
+    %{bq_table: "tabla_bq", tipo: "expediente", pg_table: "tabla_pg"}
+  ],
+  periodicity: periodicidad,
+  batch_size: 70,
+  webhook_url: webhook_url
+}}
+```
+
+**Configuración (modo legacy):**
 ```elixir
 {Genserver.BigqueryUploader, %{
   business: :mi_negocio,
@@ -261,7 +290,12 @@ Sube datos de PostgreSQL a BigQuery periódicamente. Las conexiones a ambas base
 }}
 ```
 
-**Ciclo de ejecución:**
+**Ciclo de ejecución (modo pool):**
+1. Se obtienen conexiones de los pools
+2. Se procesan las tablas configuradas en `info`
+3. Las conexiones se devuelven automáticamente al pool
+
+**Ciclo de ejecución (modo legacy):**
 1. Se crean las conexiones a PostgreSQL y BigQuery
 2. Se procesan las tablas configuradas en `info`
 3. Se cierran ambas conexiones (incluso si hay errores, usando `try/after`)
@@ -277,6 +311,123 @@ Limpia registros ya procesados de PostgreSQL periódicamente.
 ### `Genserver.Monitor`
 
 Monitorea el estado de los GenServers y envía heartbeats.
+
+---
+
+## Pools de Conexiones
+
+> **Nuevo en v2.1**: Los pools de conexiones permiten reutilizar conexiones a PostgreSQL y BigQuery,
+> evitando la sobrecarga de abrir/cerrar conexiones para cada operación.
+
+### `Pool.Postgres`
+
+Supervisor que gestiona un pool de conexiones PostgreSQL usando Postgrex.
+
+**Características:**
+- Pool gestionado por DBConnection (reconexión automática)
+- Soporte para modo simple y modo dual (read/write)
+- Supervisado por OTP (reinicio automático)
+
+**Inicialización (modo simple):**
+```elixir
+{Pool.Postgres, %{
+  name: :postgres_pool,
+  config: %{
+    hostname: "localhost",
+    port: 5432,
+    database: "mi_db",
+    username: "user",
+    password: "pass"
+  },
+  pool_size: 10
+}}
+```
+
+**Inicialización (modo dual):**
+```elixir
+{Pool.Postgres, %{
+  name: :postgres_pool,
+  config: %{
+    write_hostname: "primary.db",
+    read_hostname: "replica.db",
+    port: 5432,
+    database: "mi_db",
+    username: "user",
+    password: "pass"
+  },
+  pool_size: 10
+}}
+```
+
+**Funciones principales:**
+
+| Función | Descripción |
+|---------|-------------|
+| `query/3` | Ejecuta query en pool de escritura |
+| `query_read/3` | Ejecuta query en pool de lectura (o escritura si no hay dual) |
+| `transaction/2` | Ejecuta función dentro de transacción |
+
+---
+
+### `Pool.BigQuery`
+
+Pool de conexiones ODBC para BigQuery usando NimblePool.
+
+**Características:**
+- Health checks en cada checkout de conexión
+- Auto-descarte de conexiones muertas
+- Reconexión automática al devolver al pool
+
+**Inicialización:**
+```elixir
+{Pool.BigQuery, %{
+  name: :bigquery_pool,
+  config: [dsn: "bigquery64", warehouse: "mi_warehouse"],
+  pool_size: 5
+}}
+```
+
+**Uso principal:**
+```elixir
+Pool.BigQuery.with_connection(:bigquery_pool, fn conn ->
+  Connection.Odbc.insert(conn, statement)
+end)
+```
+
+**Funciones principales:**
+
+| Función | Descripción |
+|---------|-------------|
+| `with_connection/2` | Ejecuta función con conexión del pool |
+| `status/1` | Retorna estado del pool |
+
+---
+
+### `Connection.PostgresPool`
+
+API de alto nivel para operaciones PostgreSQL usando un pool nombrado.
+
+**Funciones principales:**
+
+| Función | Descripción |
+|---------|-------------|
+| `insert_many/3` | Inserta múltiples registros |
+| `get_pending_bq/3` | Obtiene registros pendientes de BigQuery |
+| `mark_as_sent_to_bq/3` | Marca registros como enviados |
+| `delete_analyzed_records/3` | Elimina registros analizados |
+| `create_table_if_not_exists/2` | Crea tabla si no existe |
+
+**Ejemplo:**
+```elixir
+# Insertar registros usando pool
+Connection.PostgresPool.insert_many(:postgres_pool, "mi_tabla", [
+  %{id_nodo: "uuid-1", tipo: "expediente", informacion: %{...}},
+  %{id_nodo: "uuid-2", tipo: "expediente", informacion: %{...}}
+])
+
+# Obtener pendientes
+Connection.PostgresPool.get_pending_bq(:postgres_pool, "mi_tabla", "expediente")
+```
 
 ---
 
@@ -549,17 +700,37 @@ end
 
 ## Consideraciones Importantes
 
-### 1. Conexiones Temporales a PostgreSQL y BigQuery
+### 1. Modos de Conexión: Pool vs Legacy
 
-A partir de la versión actual, las conexiones se crean **bajo demanda** y se cierran después de cada operación. Esto aplica tanto para inserciones individuales como para el ciclo de subida a BigQuery.
+A partir de la versión 1.2.0, el sistema soporta **dos modos de conexión**:
 
-| Antes | Ahora |
-|-------|-------|
-| `pg_conn` (conexión activa pasada como parámetro) | `pg_config` (configuración para crear conexión) |
-| Conexión persistente durante todo el ciclo de vida | Conexión temporal creada y cerrada por operación |
-| Requiere manejo manual de desconexiones | Resiliencia automática ante desconexiones |
+| Característica | Pool Mode (v2.1+) | Legacy Mode |
+|----------------|---------------------|-------------|
+| **Gestión de conexiones** | Pool automático | Conexión temporal por operación |
+| **Parámetro** | `pg_pool_name` / `bq_pool_name` | `pg_config` / `data_source` |
+| **Reconexión** | Automática por DBConnection/NimblePool | Manual |
+| **Rendimiento** | Alto (reutiliza conexiones) | Moderado (overhead de conexión) |
+| **Uso recomendado** | Producción | Desarrollo, compatibilidad |
 
-**Patrón de conexión temporal (inserciones):**
+**Patrón de conexión con pool (recomendado):**
+```elixir
+def execute_insert_pooled(records, pg_pool_name, batch_id) do
+  # El pool gestiona las conexiones automáticamente
+  case Connection.PostgresPool.insert_many(pg_pool_name, table_name(), records) do
+    {:ok, count} -> {:ok, count}
+    {:error, reason} ->
+      Logger.error("Error en inserción: #{inspect(reason)}")
+      {:error, reason}
+  end
+end
+
+# BigQuery con pool
+Pool.BigQuery.with_connection(:bigquery_pool, fn bq_conn ->
+  Connection.Odbc.insert(bq_conn, statement)
+end)
+```
+
+**Patrón de conexión temporal (legacy):**
 ```elixir
 def execute_insert(records, pg_config, batch_id) do
   try do
@@ -572,7 +743,6 @@ def execute_insert(records, pg_config, batch_id) do
         end
       {:error, reason} ->
         Logger.error("Error conectando: #{inspect(reason)}")
-        Notify.notify_slack(webhook_url, headers, env, "Error de conexión PostgreSQL")
         {:error, reason}
     end
   rescue
@@ -583,32 +753,17 @@ def execute_insert(records, pg_config, batch_id) do
 end
 ```
 
-**Patrón de conexión por ciclo (BigqueryUploader):**
-```elixir
-def handle_info(:update, state) do
-  # Crear conexiones al inicio del ciclo
-  {:ok, pg_conn} = Postgres.connect(pg_config)
-  bq_conn = Odbc.connect(data_source)
-  
-  try do
-    # Procesar todas las tablas configuradas
-    Enum.each(info, fn table_config ->
-      Bigquery.run(business, bq_conn, pg_conn, pg_table, bq_table, ...)
-    end)
-  after
-    # Cerrar conexiones al finalizar (siempre se ejecuta)
-    Postgres.disconnect(pg_conn)
-    Odbc.disconnect(bq_conn)
-  end
-end
-```
+**Beneficios del modo pool:**
+- Mayor rendimiento al reutilizar conexiones
+- Reconexión automática ante fallos
+- Supervisión OTP con reinicio automático
+- Health checks periódicos
+- Mejor manejo de recursos
 
-**Beneficios:**
-- Mayor resiliencia ante caídas de conexión
-- No es necesario manejar reconexiones manualmente
-- Cada operación/ciclo tiene su propia conexión aislada
-- Mejor manejo de errores con try-rescue y notificaciones
-- Evita problemas de conexiones obsoletas o timeouts
+**Beneficios del modo legacy:**
+- Simplicidad para desarrollo local
+- Compatibilidad con código existente
+- No requiere configurar pools en el supervisor
 
 ### 2. Configuración en Runtime vs Compilación
 
@@ -645,6 +800,7 @@ El proyecto ETL depende de:
 - `etl_core` - Funcionalidad base
 - `timex` - Manejo de fechas
 - `poison` / `jason` - JSON
-- `postgrex` - PostgreSQL
+- `postgrex` - PostgreSQL (y pools)
+- `nimble_pool` - Pool de conexiones ODBC *(nuevo v2.1)*
 - `amqp` - RabbitMQ
 

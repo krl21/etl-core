@@ -1,6 +1,6 @@
 # Guía para Crear un ETL desde Cero
 
-Esta guía describe paso a paso cómo crear un nuevo proyecto ETL utilizando `etl-core` v2.0.
+Esta guía describe paso a paso cómo crear un nuevo proyecto ETL utilizando `etl-core` v2.1.
 
 ---
 
@@ -38,6 +38,7 @@ Esta guía describe paso a paso cómo crear un nuevo proyecto ETL utilizando `et
     - [11.4 `rel/env.sh.eex`](#114-relenvsheex)
   - [Checklist Final](#checklist-final)
     - [Estructura de Archivos](#estructura-de-archivos)
+    - [Pools de Conexiones (v2.1+)](#pools-de-conexiones-v21)
     - [Entidades](#entidades)
     - [Implementaciones](#implementaciones)
     - [Configuración](#configuración)
@@ -49,6 +50,7 @@ Esta guía describe paso a paso cómo crear un nuevo proyecto ETL utilizando `et
     - [3. Post-procesamiento](#3-post-procesamiento)
     - [4. Testing](#4-testing)
     - [5. Carga Masiva](#5-carga-masiva)
+    - [6. Pools de Conexiones (v2.1+)](#6-pools-de-conexiones-v21)
 
 ---
 
@@ -60,21 +62,30 @@ El sistema ETL sigue un flujo de datos bien definido:
 ┌─────────────┐    ┌─────────────┐    ┌─────────────┐    ┌─────────────┐
 │  RabbitMQ   │───►│   Worker    │───►│ PostgreSQL  │───►│  BigQuery   │
 │  (Eventos)  │    │ (Procesa)   │    │  (Buffer)   │    │ (Destino)   │
-└─────────────┘    └─────────────┘    └─────────────┘    └─────────────┘
-                                          ▲     ▲
-                   ┌──────────────────────┘     │
-                   │                            │
-                   │                            │
-            ┌──────┴──────┐             ┌───────┴─────┐
-            │ BigQuery    │             │  Cleaning   │
-            │  Uploader   │             │ (Limpieza)  │
-            └─────────────┘             └─────────────┘
+└─────────────┘    └─────────────┘    └──────┬──────┘    └──────┬──────┘
+                                             │                  │
+                                     ┌───────┴──────┐   ┌───────┴──────┐
+                                     │ Pool.Postgres│   │Pool.BigQuery │
+                                     │  (v2.1+)   │   │  (v2.1+)   │
+                                     └───────┬──────┘   └───────┬──────┘
+                                             │                  │
+                   ┌─────────────────────────┼──────────────────┘
+                   │                         │
+            ┌──────┴──────┐           ┌──────┴──────┐
+            │ BigQuery    │           │  Cleaning   │
+            │  Uploader   │           │ (Limpieza)  │
+            └─────────────┘           └─────────────┘
 ```
+
+> **Nota v2.1**: Los pools gestionan las conexiones automáticamente, evitando
+> abrir/cerrar conexiones para cada operación.
 
 ### Componentes Principales
 
 | Componente | Descripción |
 |------------|-------------|
+| **Pool.Postgres** | Pool de conexiones PostgreSQL (v2.1+) |
+| **Pool.BigQuery** | Pool de conexiones BigQuery via ODBC (v2.1+) |
 | **RabbitConsumer** | Consume mensajes de colas RabbitMQ en tiempo real |
 | **Worker** | Procesa los mensajes según el tipo de negocio (`:record`, `:task`) |
 | **PostgreSQL** | Buffer intermedio para almacenamiento temporal |
@@ -197,8 +208,8 @@ defmodule MiEtl.MixProject do
 
   defp deps do
     [
-      # ETL Core v2.0 - Librería base
-      {:etl_core, git: "https://github.com/krl21/etl-core.git", branch: "v2.0"},
+      # ETL Core v2.1 - Librería base (incluye pools de conexiones)
+      {:etl_core, git: "https://github.com/krl21/etl-core.git", branch: "v2.1"},
       
       # Logger flexible
       {:flex_logger, "~> 0.2.1"},
@@ -847,11 +858,11 @@ defmodule Entity.Record.Record do
   def timestamp, do: @record_base.timestamp()
 
   ################
-  ### Función Principal: insert_by_lote
+  ### Función Principal: insert_by_lote (Modo Legacy)
   ################
 
   @doc """
-  Inserta registros desde un batch. Agrupa por unique_id y mantiene datos actualizados.
+  Inserta registros desde un batch (modo legacy - crea conexión temporal).
 
   ## Parámetros
     - `batch`: Lista de payloads
@@ -887,6 +898,50 @@ defmodule Entity.Record.Record do
       |> Enum.map(fn {:ok, record} -> record end)
 
     execute_insert_with_retry(records, pg_config, batch_id)
+  end
+
+  ################
+  ### Función Principal: insert_by_lote_pooled (Modo Pool v2.1+)
+  ################
+
+  @doc """
+  Inserta registros desde un batch usando pool de conexiones (recomendado).
+
+  ## Parámetros
+    - `batch`: Lista de payloads
+    - `batch_id`: Identificador del batch
+    - `pg_pool_name`: Nombre del pool de PostgreSQL
+
+  ## Retorna
+    - `{:ok, count}` - Número de registros insertados
+    - `{:error, reason}` - Si hay error
+  """
+  def insert_by_lote_pooled([], _batch_id, _pg_pool_name), do: {:ok, 0}
+
+  def insert_by_lote_pooled(batch, batch_id, pg_pool_name)
+      when is_list(batch) and is_binary(batch_id) and is_atom(pg_pool_name) do
+
+    {grouped, keys} = group_by_unique_id(batch)
+
+    records =
+      keys
+      |> Enum.map(fn key ->
+        try do
+          prepare_record_for_insert(key, Map.get(grouped, key))
+        rescue
+          error ->
+            handle_processing_error(batch_id, key, error, %{
+              function: :insert_by_lote_pooled,
+              module: __MODULE__
+            })
+            {:error, nil}
+        end
+      end)
+      |> Enum.filter(&match?({:ok, _}, &1))
+      |> Enum.map(fn {:ok, record} -> record end)
+
+    # Usar la versión pooled del macro
+    execute_insert_with_retry_pooled(records, pg_pool_name, batch_id)
   end
 
   ################
@@ -1154,7 +1209,7 @@ end
 
 ## Paso 7: Implementar el Worker
 
-El Worker procesa los mensajes según el tipo de negocio.
+El Worker procesa los mensajes según el tipo de negocio. A partir de v2.1, soporta tanto modo pool como modo legacy.
 
 `lib/impl/genserver/worker.ex`
 
@@ -1162,6 +1217,7 @@ El Worker procesa los mensajes según el tipo de negocio.
 defimpl Genserver.Protocols.PWorker, for: List do
   @moduledoc """
   Implementación del protocolo Worker para procesar lotes de mensajes.
+  Soporta modo pool (pg_pool_name) y modo legacy (pg_config).
   """
 
   require Logger
@@ -1170,10 +1226,28 @@ defimpl Genserver.Protocols.PWorker, for: List do
   import Notification.Notify, only: [notify_slack: 4]
 
   @doc """
-  Procesa un batch de expedientes (records).
+  Procesa un batch de expedientes (records) - Modo Pool (recomendado v2.1+).
+  """
+  def perform(batch, batch_id, :record = business, %{pg_pool_name: pg_pool_name} = _info) do
+    Logger.debug("Nuevo batch (pool mode). Negocio: #{inspect(business)}. Mensajes: #{length(batch)}")
+
+    try do
+      batch
+      |> Enum.map(fn %{"current" => payload} -> payload end)
+      |> Record.insert_by_lote_pooled(batch_id, pg_pool_name)
+
+      Logger.debug("Batch procesado. Id: #{inspect(batch_id)}. Negocio: #{inspect(business)}")
+    rescue
+      error ->
+        handle_error(batch_id, business, error)
+    end
+  end
+
+  @doc """
+  Procesa un batch de expedientes (records) - Modo Legacy.
   """
   def perform(batch, batch_id, :record = business, %{pg_config: pg_config} = _info) do
-    Logger.debug("Nuevo batch. Negocio: #{inspect(business)}. Mensajes: #{length(batch)}")
+    Logger.debug("Nuevo batch (legacy mode). Negocio: #{inspect(business)}. Mensajes: #{length(batch)}")
 
     try do
       batch
@@ -1183,22 +1257,32 @@ defimpl Genserver.Protocols.PWorker, for: List do
       Logger.debug("Batch procesado. Id: #{inspect(batch_id)}. Negocio: #{inspect(business)}")
     rescue
       error ->
-        msg = "Error procesando batch. Batch Id: #{inspect(batch_id)}. Negocio: #{inspect(business)}. Error: #{inspect(error)}"
-        Logger.error(msg)
-        notify_slack(
-          Application.get_env(:mi_etl, :notification)[:slack_webhook][:url][:bug],
-          Application.get_env(:mi_etl, :notification)[:slack_webhook][:headers],
-          System.get_env("ENVIRONMENT"),
-          msg
-        )
+        handle_error(batch_id, business, error)
     end
   end
 
   @doc """
-  Procesa un batch de tareas.
+  Procesa un batch de tareas - Modo Pool (recomendado v2.1+).
+  """
+  def perform(batch, batch_id, :task = business, %{pg_pool_name: pg_pool_name} = _info) do
+    Logger.debug("Nuevo batch (pool mode). Negocio: #{inspect(business)}. Mensajes: #{length(batch)}")
+
+    try do
+      batch
+      |> Task.insert_by_lote_pooled(batch_id, pg_pool_name)
+
+      Logger.debug("Batch procesado. Id: #{inspect(batch_id)}. Negocio: #{inspect(business)}")
+    rescue
+      error ->
+        handle_error(batch_id, business, error)
+    end
+  end
+
+  @doc """
+  Procesa un batch de tareas - Modo Legacy.
   """
   def perform(batch, batch_id, :task = business, %{pg_config: pg_config} = _info) do
-    Logger.debug("Nuevo batch. Negocio: #{inspect(business)}. Mensajes: #{length(batch)}")
+    Logger.debug("Nuevo batch (legacy mode). Negocio: #{inspect(business)}. Mensajes: #{length(batch)}")
 
     try do
       batch
@@ -1207,21 +1291,25 @@ defimpl Genserver.Protocols.PWorker, for: List do
       Logger.debug("Batch procesado. Id: #{inspect(batch_id)}. Negocio: #{inspect(business)}")
     rescue
       error ->
-        msg = "Error procesando batch. Batch Id: #{inspect(batch_id)}. Negocio: #{inspect(business)}. Error: #{inspect(error)}"
-        Logger.error(msg)
-        notify_slack(
-          Application.get_env(:mi_etl, :notification)[:slack_webhook][:url][:bug],
-          Application.get_env(:mi_etl, :notification)[:slack_webhook][:headers],
-          System.get_env("ENVIRONMENT"),
-          msg
-        )
+        handle_error(batch_id, business, error)
     end
   end
 
-  # Agregar más implementaciones de perform/4 según necesidad
-  # def perform(batch, batch_id, :otro_tipo, info) do ... end
+  defp handle_error(batch_id, business, error) do
+    msg = "Error procesando batch. Batch Id: #{inspect(batch_id)}. Negocio: #{inspect(business)}. Error: #{inspect(error)}"
+    Logger.error(msg)
+    notify_slack(
+      Application.get_env(:mi_etl, :notification)[:slack_webhook][:url][:bug],
+      Application.get_env(:mi_etl, :notification)[:slack_webhook][:headers],
+      System.get_env("ENVIRONMENT"),
+      msg
+    )
+  end
 end
 ```
+
+> **Nota v2.1**: La entidad Record debe implementar `insert_by_lote_pooled/3` para usar el modo pool.
+> Esta función usa `execute_insert_with_retry_pooled/3` del macro base.
 
 ---
 
@@ -1337,7 +1425,6 @@ defmodule MiEtl.Application do
   require Logger
   import Time.Timem, only: [notification_frequency: 1]
   import Notification.Notify, only: [notify_slack: 4]
-  alias Connection.Postgres
   alias Impl.Genserver.ForcedLoadConfig
 
   @impl true
@@ -1348,12 +1435,13 @@ defmodule MiEtl.Application do
     Logger.info("Iniciando conexión ODBC")
     Connection.Odbc.start()
 
-    setup_postgres()
-
     children = build_children()
 
     opts = [strategy: :one_for_one, name: MiEtl.Supervisor]
     {:ok, pid} = Supervisor.start_link(children, opts)
+
+    # Crear tablas después de que el pool esté iniciado
+    setup_postgres()
 
     send_startup_notification()
 
@@ -1366,6 +1454,9 @@ defmodule MiEtl.Application do
 
   defp build_children do
     [
+      # IMPORTANTE: Los pools deben iniciarse PRIMERO
+      child_postgres_pool(),
+      child_bigquery_pool(),
       child_task_supervisor(),
       child_monitor(),
       child_bigquery_uploader(),
@@ -1377,6 +1468,34 @@ defmodule MiEtl.Application do
     |> Enum.reject(&is_nil/1)
     |> Kernel.++(rabbit_consumer_children())
   end
+
+  ################
+  ### Pools de Conexiones (v2.1+)
+  ################
+
+  defp child_postgres_pool do
+    pg_config = Application.get_env(:mi_etl, :postgres)[:connection]
+
+    {Pool.Postgres, %{
+      name: :postgres_pool,
+      config: pg_config,
+      pool_size: 10
+    }}
+  end
+
+  defp child_bigquery_pool do
+    bq_config = Application.get_env(:mi_etl, :bigquery)[:configuration]
+
+    {Pool.BigQuery, %{
+      name: :bigquery_pool,
+      config: bq_config,
+      pool_size: 5
+    }}
+  end
+
+  ################
+  ### GenServers
+  ################
 
   defp child_task_supervisor do
     {Task.Supervisor, name: SupervisorTareas}
@@ -1390,10 +1509,11 @@ defmodule MiEtl.Application do
     bq_config = Application.get_env(:mi_etl, :bigquery)
     pg_config = Application.get_env(:mi_etl, :postgres)
 
+    # Modo pool (recomendado v2.1+)
     {Genserver.BigqueryUploader, %{
       business: :mi_negocio,
-      data_source: bq_config[:configuration],
-      pg_config: pg_config[:connection],
+      pg_pool_name: :postgres_pool,      # Usar pool en lugar de config directa
+      bq_pool_name: :bigquery_pool,      # Usar pool en lugar de data_source
       info: bigquery_upload_info(bq_config, pg_config),
       periodicity: Application.get_env(:mi_etl, :activation_time)[:bigquery_uploader][:periodicity],
       batch_size: Application.get_env(:mi_etl, :batch_size_process),
@@ -1444,8 +1564,9 @@ defmodule MiEtl.Application do
   end
 
   defp rabbit_consumer_children do
+    # Modo pool (recomendado v2.1+)
     info = %{
-      pg_config: Application.get_env(:mi_etl, :postgres)[:connection],
+      pg_pool_name: :postgres_pool,      # Usar pool en lugar de pg_config
       webhook_url: slack_webhook_url()
     }
 
@@ -1465,30 +1586,19 @@ defmodule MiEtl.Application do
   ################
 
   defp setup_postgres do
-    Logger.info("Configurando PostgreSQL")
+    Logger.info("Configurando PostgreSQL (creando tablas si no existen)")
 
-    postgres_config = Application.get_env(:mi_etl, :postgres)
-    connection_config = postgres_config[:connection]
-    tables = postgres_config[:tables]
+    tables = Application.get_env(:mi_etl, :postgres)[:tables]
 
-    case Postgres.connect(connection_config) do
-      {:ok, conn} ->
-        Logger.info("Conexión PostgreSQL establecida")
-
-        Enum.each(tables, fn table_name ->
-          case Postgres.create_table_if_not_exists(conn, table_name) do
-            {:error, reason} ->
-              Logger.error("Error creando tabla '#{table_name}': #{inspect(reason)}")
-            _ -> :ok
-          end
-        end)
-
-        Postgres.disconnect(conn)
-
-      {:error, reason} ->
-        Logger.error("Error conectando a PostgreSQL: #{inspect(reason)}")
-        {:error, reason}
-    end
+    Enum.each(tables, fn table_name ->
+      # Usar el pool para crear tablas
+      case Connection.PostgresPool.create_table_if_not_exists(:postgres_pool, table_name) do
+        {:error, reason} ->
+          Logger.error("Error creando tabla '#{table_name}': #{inspect(reason)}")
+        _ -> 
+          Logger.info("Tabla '#{table_name}' verificada/creada")
+      end
+    end)
   end
 
   defp slack_webhook_url do
@@ -1756,19 +1866,24 @@ export RELEASE_NODE=mi_etl@127.0.0.1
 ## Checklist Final
 
 ### Estructura de Archivos
-- [ ] `mix.exs` con dependencias (etl_core v2.0)
+- [ ] `mix.exs` con dependencias (etl_core v2.1)
 - [ ] `config/config.exs` - Logger básico
 - [ ] `config/runtime.exs` - **TODAS las variables de entorno**
-- [ ] `lib/mi_etl/application.ex` - Supervisor tree
+- [ ] `lib/mi_etl/application.ex` - Supervisor tree con pools
+
+### Pools de Conexiones (v2.1+)
+- [ ] Pool PostgreSQL configurado en `build_children/0`
+- [ ] Pool BigQuery configurado en `build_children/0`
+- [ ] Pools iniciados ANTES que los GenServers que los usan
 
 ### Entidades
 - [ ] `entity/record/subentities/record_base.ex` - Atributos base con `unique_id`, `last_update`, `timestamp`
-- [ ] `entity/record/record.ex` - Entidad Record con `CleanableTable`
-- [ ] `entity/task/task.ex` - Entidad Task con `CleanableTable`
+- [ ] `entity/record/record.ex` - Entidad Record con `CleanableTable` e `insert_by_lote_pooled/3`
+- [ ] `entity/task/task.ex` - Entidad Task con `CleanableTable` e `insert_by_lote_pooled/3`
 - [ ] Sub-entidades adicionales según el negocio
 
 ### Implementaciones
-- [ ] `impl/genserver/worker.ex` - Protocolo PWorker para `:record` y `:task`
+- [ ] `impl/genserver/worker.ex` - Protocolo PWorker con soporte pool y legacy
 - [ ] `impl/genserver/forced_load_config.ex` - Configuración ForcedLoad
 - [ ] `impl/type/documentary_type_of.ex` - Tipo documental
 - [ ] `impl/time/my_time.ex` - Tiempo laboral (si se usa)
@@ -1863,4 +1978,12 @@ PG_TABLE=mi_etl_buffer
 - Para cargar datos históricos, usar la función `start_band_air/0`
 - Ajustar `time_step` y `batch_size` según el volumen de datos
 - Monitorear la cola de RabbitMQ durante la carga
+
+### 6. Pools de Conexiones (v2.1+)
+
+- **Orden de inicio**: Los pools deben iniciarse ANTES que los GenServers que los usan
+- **Pool size**: Ajustar según la carga esperada (10 para PostgreSQL, 5 para BigQuery es un buen punto de partida)
+- **Modo dual**: Usar `write_hostname` y `read_hostname` si tienes réplica de lectura
+- **Migración**: Puedes migrar gradualmente de modo legacy a modo pool
+- **Health checks**: El pool de BigQuery realiza health checks automáticos en cada checkout
 
