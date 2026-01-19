@@ -604,6 +604,113 @@ defmodule DataModel.TaskPg.Macro do
             defoverridable execute_insert_with_retry: 3
 
             @doc """
+            Executes the insert operation using a PostgreSQL connection pool.
+
+            ## Parameters:
+                - `records` (list) - List of record maps to insert
+                - `pg_pool_name` (atom) - PostgreSQL pool name
+                - `batch_id` (string) - Batch identifier for logging
+
+            ## Returns:
+            - `{:ok,    nt}` - Number of records inserted
+            - `{:error, reason}` - If there's an error
+            """
+            def execute_insert_pooled([], _pg_pool_name, _batch_id), do: {:ok, 0}
+
+            def execute_insert_pooled(records, pg_pool_name, batch_id) do
+                require Logger
+
+                try do
+                    result = Connection.PostgresPool.insert_many(pg_pool_name, table_name(), records)
+
+                    case result do
+                        {:ok, count} ->
+                            {:ok, count}
+
+                        {:error, reason} = error ->
+                            handle_processing_error(batch_id, Enum.map(records, & &1.id_nodo), reason, %{
+                                function: :execute_insert_pooled,
+                                module: __MODULE__
+                            })
+                            error
+                    end
+                rescue
+                    error ->
+                        msg = "Excepción en execute_insert_pooled: #{inspect(error)}"
+                        Logger.error("#{__MODULE__}. #{msg}")
+                        handle_processing_error(batch_id, Enum.map(records, & &1.id_nodo), error, %{
+                            function: :execute_insert_pooled,
+                            module: __MODULE__
+                        })
+                        {:error, error}
+                end
+            end
+            defoverridable execute_insert_pooled: 3
+
+            @doc """
+            Executes insertion with divide-and-conquer retry strategy using pool.
+
+            If an error occurs, splits the data in half and retries each part.
+            Uses the connection pool, without opening/closing connections.
+
+            ## Parameters:
+                - `records` (list) - List of record maps to insert
+                - `pg_pool_name` (atom) - PostgreSQL pool name
+                - `batch_id` (string) - Batch identifier for logging
+
+            ## Returns:
+                - `{:ok, count}` - Total records inserted
+                - `{:error, reason}` - If all retries fail
+            """
+            def execute_insert_with_retry_pooled([], _pg_pool_name, _batch_id), do: {:ok, 0}
+
+            def execute_insert_with_retry_pooled(records, pg_pool_name, batch_id) do
+                require Logger
+
+                try do
+                    case Connection.PostgresPool.insert_many(pg_pool_name, table_name(), records) do
+                        {:ok, count} ->
+                            {:ok, count}
+
+                        {:error, _reason} when length(records) == 1 ->
+                            # Registro individual falló, registrar y saltar
+                            [record] = records
+                            handle_processing_error(batch_id, record.id_nodo, "Insert failed", %{
+                                function: :execute_insert_with_retry_pooled,
+                                module: __MODULE__
+                            })
+                            {:ok, 0}
+
+                        {:error, _reason} ->
+                            # Dividir y reintentar
+                            Logger.info("#{__MODULE__}. Inserción de lote TaskPg fallida, dividiendo datos a la mitad y reintentando...")
+
+                            mid = div(length(records), 2)
+                            {first_half, second_half} = Enum.split(records, mid)
+
+                            result1 = execute_insert_with_retry_pooled(first_half, pg_pool_name, batch_id)
+                            result2 = execute_insert_with_retry_pooled(second_half, pg_pool_name, batch_id)
+
+                            case {result1, result2} do
+                                {{:ok, c1}, {:ok, c2}} -> {:ok, c1 + c2}
+                                {{:error, _} = err, _} -> err
+                                {_, {:error, _} = err} -> err
+                            end
+                    end
+                rescue
+                    error ->
+                        msg = "Excepción en execute_insert_with_retry_pooled: #{inspect(error)}"
+                        Logger.error("#{__MODULE__}. #{msg}")
+                        handle_processing_error(batch_id, Enum.map(records, & &1.id_nodo), error, %{
+                            function: :execute_insert_with_retry_pooled,
+                            module: __MODULE__
+                        })
+                        {:error, error}
+                end
+            end
+            defoverridable execute_insert_with_retry_pooled: 3
+
+            @doc """
             Hook for post-insert processing.
             Override this to add custom logic after successful insert.
 
@@ -720,12 +827,62 @@ defmodule DataModel.TaskPg.Macro do
             end
             defoverridable insert_by_lote: 3
 
+            @doc """
+            Implementation of insert_by_lote using PostgreSQL connection pool.
+
+            ## Parameters:
+                - `batch` (list) - List of payloads
+                - `batch_id` (string) - Batch identifier
+                - `pg_pool_name` (atom) - PostgreSQL pool name
+
+            ## Returns:
+                - `{:ok, count}` - Number of records inserted
+                - `{:error, reason}` - If there's an error
+            """
+            def insert_by_lote_pooled([], _batch_id, _pg_pool_name), do: {:ok, 0}
+
+            def insert_by_lote_pooled(batch, batch_id, pg_pool_name)
+                when is_list(batch) and is_binary(batch_id) and is_atom(pg_pool_name) do
+
+                {grouped_by_key, keys} = group_by_composite_key(batch)
+
+                records =
+                    keys
+                    |> Enum.map(fn key ->
+                        prepare_record(batch_id, key, Map.get(grouped_by_key, key))
+                    end)
+                    |> Enum.filter(&match?({:ok, _}, &1))
+                    |> Enum.map(fn {:ok, record} -> record end)
+
+                result = execute_insert_with_retry_pooled(records, pg_pool_name, batch_id)
+
+                # Hook post-insert (con pool name en lugar de config)
+                after_insert_pooled(batch, batch_id, pg_pool_name)
+
+                result
+            end
+            defoverridable insert_by_lote_pooled: 3
+
+            @doc """
+            Hook para post-procesamiento después de insertar (modo pool).
+
+            Override para agregar lógica personalizada después de una inserción exitosa.
+
+            ## Parámetros
+
+            - `batch` - Lote original de payloads
+            - `batch_id` (string) - Identificador del lote
+            - `pg_pool_name` (atom) - Nombre del pool de PostgreSQL
+
+            ## Retorna
+
+            - any
+            """
+            def after_insert_pooled(_batch, _batch_id, _pg_pool_name), do: :ok
+            defoverridable after_insert_pooled: 3
+
         end
     end
-
-    # ============================================
-    # PRIVATE HELPER FUNCTIONS
-    # ============================================
 
     @doc false
     defp generate_getter_functions(attributes) do
