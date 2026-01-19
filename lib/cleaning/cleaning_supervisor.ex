@@ -46,3 +46,4 @@ defmodule Cleaning.CleaningSupervisor do
         Cleaning.CleanableTableRegistry.register_all(modules)
     end
 end
+
