@@ -344,14 +344,14 @@ defmodule DataModel.RecordPg.Macro do
             @doc """
             Executes the insert operation in PostgreSQL using insert_many.
 
-            ### Parameters
-                - records (List) - List of record maps to insert
-                - pg_config (Map) - PostgreSQL connection configuration
-                - batch_id (String) - Batch identifier for logging
+            ## Parameters:
+                - `records` (list) - List of record maps to insert
+                - `pg_config` (map) - PostgreSQL connection configuration
+                - `batch_id` (string) - Batch identifier for logging
 
-            ### Returns
-                - {:ok, count} - Number of records inserted
-                - {:error, reason} - If there's an error
+            ## Returns:
+                - `{:ok, count}` - Number of records inserted
+                - `{:error, reason}` - If there's an error
             """
             def execute_insert([], _pg_config, _batch_id), do: {:ok, 0}
 
@@ -413,18 +413,69 @@ defmodule DataModel.RecordPg.Macro do
             defoverridable execute_insert: 3
 
             @doc """
-            Executes insertion with divide-and-conquer retry strategy.
-            If an error occurs, splits the data in half and retries each part.
-            Creates a temporary connection for each attempt.
+            Executes the insert operation using a PostgreSQL connection pool.
 
-            ### Parameters
-                - records (List) - List of record maps to insert
-                - pg_config (Map) - PostgreSQL connection configuration
-                - batch_id (String) - Batch identifier
+            ## Parameters:
+                - `records` (list) - List of record maps to insert
+                - `pg_pool_name` (atom) - PostgreSQL pool name
+                - `batch_id` (string) - Batch identifier for logging
 
-            ### Returns
-                - {:ok, count} - Total records inserted
-                - {:error, reason} - If all retries fail
+            ## Returns:
+                - `{:ok, count}` - Number of records inserted
+                - `{:error, reason}` - If there's an error
+            """
+            def execute_insert_pooled([], _pg_pool_name, _batch_id), do: {:ok, 0}
+
+            def execute_insert_pooled(records, pg_pool_name, batch_id) do
+                require Logger
+
+                try do
+                    records
+                    |> Enum.chunk_every(batch_size())
+                    |> Enum.reduce({:ok, 0}, fn chunk, acc ->
+                        case acc do
+                            {:ok, total} ->
+                                Connection.PostgresPool.insert_many(pg_pool_name, table_name(), chunk)
+                                |> case do
+                                    {:ok, count} ->
+                                        {:ok, total + count}
+
+                                    {:error, reason} = error ->
+                                        handle_processing_error(batch_id, Enum.map(chunk, & &1.id_nodo), reason, %{
+                                            function: :execute_insert_pooled,
+                                            module: __MODULE__
+                                        })
+                                        error
+                                end
+
+                            error ->
+                                error
+                        end
+                    end)
+                rescue
+                    error ->
+                        msg = "Excepción en execute_insert_pooled: #{inspect(error)}"
+                        Logger.error("#{__MODULE__}. #{msg}")
+                        handle_processing_error(batch_id, Enum.map(records, & &1.id_nodo), error, %{
+                            function: :execute_insert_pooled,
+                            module: __MODULE__
+                        })
+                        {:error, error}
+                end
+            end
+            defoverridable execute_insert_pooled: 3
+
+            @doc """
+            Executes insertion with divide-and-conquer retry strategy (legacy mode).
+
+            ## Parameters:
+                - `records` (list) - List of record maps to insert
+                - `pg_config` (map) - PostgreSQL connection configuration
+                - `batch_id` (string) - Batch identifier for logging
+
+            ## Returns:
+                - `{:ok, count}` - Total records inserted
+                - `{:error, reason}` - If all retries fail
             """
             def execute_insert_with_retry([], _pg_config, _batch_id), do: {:ok, 0}
 
@@ -499,9 +550,76 @@ defmodule DataModel.RecordPg.Macro do
             defoverridable execute_insert_with_retry: 3
 
             @doc """
+            Executes insertion with divide-and-conquer retry strategy using pool.
+
+            ## Parameters:
+                - `records` (list) - List of record maps to insert
+                - `pg_pool_name` (atom) - PostgreSQL pool name
+                - `batch_id` (string) - Batch identifier for logging
+
+            ## Returns:
+                - `{:ok, count}` - Total records inserted
+                - `{:error, reason}` - If all retries fail
+            """
+            def execute_insert_with_retry_pooled([], _pg_pool_name, _batch_id), do: {:ok, 0}
+
+            def execute_insert_with_retry_pooled(records, pg_pool_name, batch_id) do
+                require Logger
+
+                try do
+                    case Connection.PostgresPool.insert_many(pg_pool_name, table_name(), records) do
+                        {:ok, count} ->
+                            {:ok, count}
+
+                        {:error, _reason} when length(records) == 1 ->
+                            # Registro individual falló, registrar y saltar
+                            [record] = records
+                            handle_processing_error(batch_id, record.id_nodo, "Insert failed", %{
+                                function: :execute_insert_with_retry_pooled,
+                                module: __MODULE__
+                            })
+                            {:ok, 0}
+
+                        {:error, _reason} ->
+                            # Dividir y reintentar
+                            Logger.info("#{__MODULE__}. Inserción de lote fallida, dividiendo datos a la mitad y reintentando...")
+
+                            mid = div(length(records), 2)
+                            {first_half, second_half} = Enum.split(records, mid)
+
+                            result1 = execute_insert_with_retry_pooled(first_half, pg_pool_name, batch_id)
+                            result2 = execute_insert_with_retry_pooled(second_half, pg_pool_name, batch_id)
+
+                            case {result1, result2} do
+                                {{:ok, c1}, {:ok, c2}} -> {:ok, c1 + c2}
+                                {{:error, _} = err, _} -> err
+                                {_, {:error, _} = err} -> err
+                            end
+                    end
+                rescue
+                    error ->
+                        msg = "Excepción en execute_insert_with_retry_pooled: #{inspect(error)}"
+                        Logger.error("#{__MODULE__}. #{msg}")
+                        handle_processing_error(batch_id, Enum.map(records, & &1.id_nodo), error, %{
+                            function: :execute_insert_with_retry_pooled,
+                            module: __MODULE__
+                        })
+                        {:error, error}
+                end
+            end
+            defoverridable execute_insert_with_retry_pooled: 3
+
+            @doc """
             Handles errors during record processing.
-            Logs the error and sends a Slack notification if webhook is configured.
-            Override to implement custom error handling.
+
+            ## Parameters
+                - `batch_id` (string) - Batch identifier
+                - `unique_id` (string | list) - Record identifier
+                - `error` (any) - The error that occurred
+                - `context` (map) - Context with additional information
+
+            ## Returns:
+                - `:ok`
             """
             def handle_processing_error(batch_id, unique_id, error, context) do
                 require Logger
