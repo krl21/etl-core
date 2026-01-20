@@ -42,7 +42,8 @@ defmodule EtlCore.MixProject do
       {:amqp, "~> 3.2"},
       {:ecto_sql, "~> 3.9.0"},
       {:postgrex, "~> 0.16.0"},
-      {:nimble_pool, "~> 1.0"}
+      {:nimble_pool, "~> 1.0"},
+      {:poolboy, "~> 1.5"}
     ]
   end
 end
