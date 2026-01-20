@@ -41,6 +41,19 @@ defmodule Pool.BigQuery do
     @checkout_timeout 30_000
 
     @doc """
+    Returns the child specification for the pool.
+    """
+    def child_spec(opts) do
+        %{
+            id: Keyword.get(opts, :name, __MODULE__),
+            start: {__MODULE__, :start_link, [opts]},
+            type: :worker,
+            restart: :permanent,
+            shutdown: 5000
+        }
+    end
+
+    @doc """
     Starts the BigQuery connection pool.
 
     ### Parameters

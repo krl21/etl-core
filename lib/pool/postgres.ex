@@ -46,6 +46,19 @@ defmodule Pool.Postgres do
     @default_queue_interval 1000
 
     @doc """
+    Returns the child specification for the pool.
+    """
+    def child_spec(opts) do
+        %{
+            id: Keyword.get(opts, :name, __MODULE__),
+            start: {__MODULE__, :start_link, [opts]},
+            type: :supervisor,
+            restart: :permanent,
+            shutdown: :infinity
+        }
+    end
+
+    @doc """
     Starts the PostgreSQL pool supervisor.
 
     ### Parameters
