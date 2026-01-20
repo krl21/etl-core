@@ -602,7 +602,7 @@ El sistema implementa pools de conexiones para PostgreSQL y BigQuery que proporc
 
 | Característica | PostgreSQL (Pool.Postgres) | BigQuery (Pool.BigQuery) |
 |----------------|----------------------------|--------------------------|
-| **Librería base** | Postgrex (DBConnection) | NimblePool + ODBC |
+| **Librería base** | Postgrex (DBConnection) | poolboy + ODBC |
 | **Reconexión automática** | Gestionada por DBConnection | Con health checks |
 | **Supervisión** | Como parte del árbol OTP | Como parte del árbol OTP |
 | **Pool size configurable** | Via opción `:pool_size` | Via opción `:pool_size` |
@@ -630,16 +630,16 @@ El sistema implementa pools de conexiones para PostgreSQL y BigQuery que proporc
 │   └─────────────────────────────────────────────────────────────────────┘   │
 │                                                                             │
 │   ┌─────────────────────────────────────────────────────────────────────┐   │
-│   │                        Pool.BigQuery (NimblePool)                   │   │
+│   │                        Pool.BigQuery (poolboy)                      │   │
 │   │                                                                     │   │
 │   │   ┌─────────────────────────────────────────────────────────────┐   │   │
 │   │   │  Worker 1  │  Worker 2  │  Worker 3  │  ...  │  Worker N    │   │   │
 │   │   │   (ODBC)   │   (ODBC)   │   (ODBC)   │       │   (ODBC)     │   │   │
 │   │   └─────────────────────────────────────────────────────────────┘   │   │
 │   │                                                                     │   │
-│   │   • Health checks en checkout                                       │   │
-│   │   • Auto-descarte de conexiones muertas                             │   │
-│   │   • Reconexión automática al devolver al pool                       │   │
+│   │   • Workers GenServer con conexión ODBC persistente                 │   │
+│   │   • Soporte para max_overflow bajo carga                            │   │
+│   │   • Reconexión automática en caso de fallo                          │   │
 │   └─────────────────────────────────────────────────────────────────────┘   │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘

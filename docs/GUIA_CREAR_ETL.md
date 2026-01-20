@@ -1486,11 +1486,12 @@ defmodule MiEtl.Application do
   defp child_bigquery_pool do
     bq_config = Application.get_env(:mi_etl, :bigquery)[:configuration]
 
-    {Pool.BigQuery, %{
+    {Pool.BigQuery, [
       name: :bigquery_pool,
-      config: bq_config,
-      pool_size: 5
-    }}
+      data_source: bq_config,
+      pool_size: 5,
+      max_overflow: 2
+    ]}
   end
 
   ################

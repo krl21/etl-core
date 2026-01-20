@@ -371,25 +371,33 @@ Supervisor que gestiona un pool de conexiones PostgreSQL usando Postgrex.
 
 ### `Pool.BigQuery`
 
-Pool de conexiones ODBC para BigQuery usando NimblePool.
+Pool de conexiones ODBC para BigQuery usando **poolboy**.
 
 **Características:**
-- Health checks en cada checkout de conexión
-- Auto-descarte de conexiones muertas
-- Reconexión automática al devolver al pool
+- Workers GenServer con conexión ODBC persistente
+- Soporte para `max_overflow` (workers adicionales bajo carga)
+- Reconexión automática en caso de fallo
+- Estadísticas del pool disponibles
 
 **Inicialización:**
 ```elixir
-{Pool.BigQuery, %{
+{Pool.BigQuery, [
   name: :bigquery_pool,
-  config: [dsn: "bigquery64", warehouse: "mi_warehouse"],
-  pool_size: 5
-}}
+  data_source: [dsn: "bigquery64", warehouse: "mi_warehouse"],
+  pool_size: 5,
+  max_overflow: 2  # Workers adicionales bajo carga (opcional, default: 2)
+]}
 ```
 
 **Uso principal:**
 ```elixir
+# Versión que lanza excepción en caso de error
 Pool.BigQuery.with_connection(:bigquery_pool, fn conn ->
+  Connection.Odbc.insert(conn, statement)
+end)
+
+# Versión "safe" que retorna {:ok, result} o {:error, reason}
+Pool.BigQuery.with_connection_safe(:bigquery_pool, fn conn ->
   Connection.Odbc.insert(conn, statement)
 end)
 ```
@@ -398,8 +406,27 @@ end)
 
 | Función | Descripción |
 |---------|-------------|
-| `with_connection/2` | Ejecuta función con conexión del pool |
-| `status/1` | Retorna estado del pool |
+| `with_connection/3` | Ejecuta función con conexión del pool (lanza excepción en error) |
+| `with_connection_safe/3` | Ejecuta función retornando `{:ok, result}` o `{:error, reason}` |
+| `status/1` | Retorna estado del pool (`:running` o `:pool_not_found`) |
+| `pool_stats/1` | Retorna estadísticas: workers disponibles, overflow, checked out |
+
+---
+
+### `Pool.BigQuery.Worker`
+
+Worker GenServer que gestiona una conexión ODBC individual.
+
+**Características:**
+- Mantiene conexión ODBC persistente
+- Reconecta automáticamente si la conexión falla en `init/1`
+- Desconecta limpiamente en `terminate/2`
+
+**Funciones:**
+
+| Función | Descripción |
+|---------|-------------|
+| `execute/3` | Ejecuta función con la conexión ODBC del worker |
 
 ---
 
@@ -801,6 +828,6 @@ El proyecto ETL depende de:
 - `timex` - Manejo de fechas
 - `poison` / `jason` - JSON
 - `postgrex` - PostgreSQL (y pools)
-- `nimble_pool` - Pool de conexiones ODBC *(nuevo v2.1)*
+- `poolboy` - Pool de conexiones para BigQuery/ODBC *(actualizado v2.1)*
 - `amqp` - RabbitMQ
 
