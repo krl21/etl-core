@@ -169,8 +169,9 @@ defmodule Stuff do
         - String. Full path to the file, or raises an error if not found.
     """
     def find_project_file(filename) when is_binary(filename) do
-        build_search_paths()
-        |> Enum.find_value(fn path ->
+        search_paths = build_search_paths()
+
+        Enum.find_value(search_paths, fn path ->
             find_file_recursive(path, filename)
         end) || raise "File not found: #{filename}. Searched in: #{inspect(search_paths)}"
     end
@@ -181,10 +182,18 @@ defmodule Stuff do
     # ### Return:
     #     - List of String. List of directory paths to search
     #
-    defp build_search_paths do
+    defp build_search_paths() do
         project_root = get_project_root_from_beam()
 
         [
+            Path.join(__DIR__, "../constants"),
+            Path.join(__DIR__, "../../constants"),
+            Path.join(__DIR__, "../../../constants"),
+            Path.join(__DIR__, "../../../../constants"),
+            Path.join(__DIR__, "../../../../../constants"),
+            Path.join(__DIR__, "../../../../../../constants"),
+            Path.join(__DIR__, "../../../../../../../constants"),
+            Path.join(__DIR__, "../../../../../../../../constants"),
             "/app",
             get_deps_path_from_mix(),
             get_deps_source_from_project_root(project_root),
@@ -319,8 +328,6 @@ defmodule Stuff do
             end
         end
     end
-
-
 
 
 end
