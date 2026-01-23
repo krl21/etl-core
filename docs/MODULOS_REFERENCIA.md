@@ -601,6 +601,118 @@ Time.WorkingTime.elapsed_time(fecha_inicio, fecha_fin, :mi_negocio, opts)
 
 ---
 
+### `Type.Normalize`
+
+Normalización de caracteres especiales y conversión a ASCII.
+
+```elixir
+# Normalizar caracteres especiales (españoles y unicode)
+Type.Normalize.normalize_special_chars("José María")
+# => "Jos%ee% Mar%ii%a"
+
+# Revertir normalización
+Type.Normalize.denormalize_special_chars("Jos%ee% Mar%ii%a")
+# => "José María"
+
+# Normalizar a ASCII
+Type.Normalize.to_ascii("niño—2023")
+# => "ni%nn%o-2023"
+```
+
+**Nota:** Las conversiones de caracteres se cargan desde `constants/char_mappings.json` en tiempo de compilación.
+
+---
+
+### `Time.Timem`
+
+Funciones extendidas para manejo de tiempo y fechas.
+
+```elixir
+# Verificar si una fecha es feriado
+Time.Timem.is_holiday?(%{year: 2024, month: 9, day: 18})
+# => true
+
+# Obtener fecha actual en formato YYYY-MM-DD
+Time.Timem.get_date_with_string_format()
+# => "2024-09-18"
+
+# Obtener hora actual en formato HH:MM:SS
+Time.Timem.get_time_with_string_format()
+# => "14:30:45"
+
+# Dividir rango de fechas en intervalos
+Time.Timem.by_intervals(start_date, end_date, step_days)
+# => {:ok, [{start1, end1}, {start2, end2}, ...]}
+```
+
+**Nota:** Los días feriados se cargan desde `constants/holidays.json` en tiempo de compilación.
+
+---
+
+### Constantes del Sistema
+
+El sistema utiliza archivos JSON en la carpeta `constants/` para almacenar valores constantes que se cargan en tiempo de compilación:
+
+#### `constants/holidays.json`
+
+Contiene los días feriados por año para Chile. Estructura:
+
+```json
+{
+    "2024": {
+        "january": [1],
+        "february": [],
+        "march": [29, 30],
+        ...
+    }
+}
+```
+
+- **Ubicación:** `constants/holidays.json`
+- **Uso:** Cargado automáticamente por `Time.Timem` en tiempo de compilación
+- **Actualización:** Editar el archivo JSON y recompilar el proyecto
+- **Fuente:** https://www.feriados.cl/index.php
+
+#### `constants/char_mappings.json`
+
+Contiene mapeos de caracteres especiales para normalización. Estructura:
+
+```json
+{
+    "spanish_chars": {
+        "ñ": "%nn%",
+        "á": "%aa%",
+        ...
+    },
+    "unicode_chars": {
+        "\u00FC": "u",
+        "\u2014": "-",
+        ...
+    },
+    "denormalize": {
+        "%nn%": "ñ",
+        "%aa%": "á",
+        ...
+    }
+}
+```
+
+- **Ubicación:** `constants/char_mappings.json`
+- **Uso:** Cargado automáticamente por `Type.Normalize` en tiempo de compilación
+- **Secciones:**
+  - `spanish_chars`: Caracteres españoles y espacios (ñ, á, é, í, ó, ú, ü)
+  - `unicode_chars`: Caracteres Unicode a ASCII (más de 200 conversiones)
+  - `denormalize`: Mapeos inversos para restaurar caracteres originales
+- **Actualización:** Editar el archivo JSON y recompilar el proyecto
+
+**Ventajas de usar archivos JSON:**
+- Fácil mantenimiento sin modificar código
+- Recompilación automática cuando cambian los archivos (gracias a `@external_resource`)
+- Separación de datos y lógica
+- Versionado independiente de los datos
+
+---
+
 ### `Notification.Notify`
 
 Envío de notificaciones.
