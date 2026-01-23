@@ -8,8 +8,7 @@ defmodule EtlCore.MixProject do
       elixir: "~> 1.14.0-rc.0",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
-      package: package(),
-
+      package: package()
     ]
   end
 
