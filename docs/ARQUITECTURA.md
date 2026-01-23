@@ -577,9 +577,12 @@ end
 │                                                                         │
 │   • Common.Payload - Extracción de datos                                │
 │   • Type.Type - Conversiones de tipos                                   │
+│   • Type.Normalize - Normalización de caracteres                         │
 │   • Statement.Sql - Generación de SQL                                   │
 │   • Time.WorkingTime - Cálculo de tiempos                               │
+│   • Time.Timem - Utilidades de tiempo y feriados                        │
 │   • Notification.Notify - Notificaciones Slack                          │
+│   • Constantes (JSON) - Feriados y mapeos de caracteres                 │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -937,6 +940,14 @@ def filter_batch(batch) do
   |> custom_filter()  # Agregar lógica personalizada
 end
 ```
+
+### Gestión de Constantes
+
+El sistema utiliza archivos JSON en la carpeta `constants/` para almacenar valores constantes que se cargan en tiempo de compilación. Esto permite modificar datos sin cambiar código:
+
+**Archivos de constantes:**
+- `constants/holidays.json` - Días feriados por año (usado por `Time.Timem`)
+- `constants/char_mappings.json` - Mapeos de caracteres especiales (usado por `Type.Normalize`)
 
 ---
 
