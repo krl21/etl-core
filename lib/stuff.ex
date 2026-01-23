@@ -169,7 +169,116 @@ defmodule Stuff do
         - String. Full path to the file, or raises an error if not found.
     """
     def find_project_file(filename) when is_binary(filename) do
-        find_file_recursive("/app", filename) || raise "File not found: #{filename}. Searched from: app"
+        build_search_paths()
+        |> Enum.find_value(fn path ->
+            find_file_recursive(path, filename)
+        end) || raise "File not found: #{filename}. Searched in: #{inspect(search_paths)}"
+    end
+
+    #
+    # Builds a list of search paths to look for project files
+    #
+    # ### Return:
+    #     - List of String. List of directory paths to search
+    #
+    defp build_search_paths do
+        project_root = get_project_root_from_beam()
+
+        [
+            "/app",
+            get_deps_path_from_mix(),
+            get_deps_source_from_project_root(project_root),
+            get_deps_from_cwd(),
+            project_root,
+            File.cwd!()
+        ]
+        |> Enum.filter(&(&1 != nil))
+        |> Enum.uniq()
+    end
+
+    #
+    # Gets the etl_core dependency path from Mix.Project.deps_paths()
+    # This works when etl_core is used as a git dependency
+    #
+    # ### Return:
+    #     - String | nil. Path to deps/etl_core, or nil if not found
+    #
+    defp get_deps_path_from_mix do
+        try do
+            Mix.Project.deps_paths()
+            |> Map.get(:etl_core)
+        rescue
+            _ -> nil
+        end
+    end
+
+    #
+    # Gets the project root by navigating from the compiled beam file location
+    # When used as dependency, beam is in: _build/*/lib/etl_core/ebin
+    # Navigates up: ebin -> lib/etl_core -> _build/* -> project root
+    #
+    # ### Return:
+    #     - String | nil. Project root path, or nil if not found
+    #
+    defp get_project_root_from_beam do
+        try do
+            beam_path = :code.which(__MODULE__)
+            if beam_path do
+                beam_path
+                |> to_string()
+                |> Path.dirname()  # ebin
+                |> Path.join("..")  # lib/etl_core
+                |> Path.expand()
+                |> Path.join("..")  # _build/*
+                |> Path.expand()
+                |> Path.join("..")  # project root
+                |> Path.expand()
+            else
+                nil
+            end
+        rescue
+            _ -> nil
+        end
+    end
+
+    #
+    # Gets the deps/etl_core path from the project root
+    # Used when etl_core is compiled as a git dependency
+    #
+    # ### Parameter:
+    #     - project_root: String | nil. Project root path
+    #
+    # ### Return:
+    #     - String | nil. Path to deps/etl_core, or nil if not found
+    #
+    defp get_deps_source_from_project_root(project_root) do
+        try do
+            if project_root do
+                deps_etl_core = Path.join(project_root, "deps/etl_core")
+                if File.exists?(deps_etl_core), do: deps_etl_core, else: nil
+            else
+                nil
+            end
+        rescue
+            _ -> nil
+        end
+    end
+
+    #
+    # Gets the deps/etl_core path from the current working directory
+    # Used when compiling from the project root
+    #
+    # ### Return:
+    #     - String | nil. Path to deps/etl_core, or nil if not found
+    #
+    defp get_deps_from_cwd do
+        try do
+            cwd = File.cwd!()
+            deps_path = Path.join(cwd, "deps/etl_core")
+            if File.exists?(deps_path), do: deps_path, else: nil
+        rescue
+            _ -> nil
+        end
     end
 
     #
