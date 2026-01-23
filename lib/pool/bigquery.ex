@@ -9,7 +9,7 @@ defmodule Pool.BigQuery do
 
     @default_pool_size 5
     @default_max_overflow 2
-    @checkout_timeout 30_000
+    @default_checkout_timeout 70_000 # 70 segundos
 
     @doc """
     Returns the child specification for the pool.
@@ -35,6 +35,7 @@ defmodule Pool.BigQuery do
             - :data_source: List. ODBC configuration.
             - :pool_size: Integer. Pool size (default: 5)
             - :max_overflow: Integer. Extra workers under load (default: 2)
+            - :checkout_timeout: Integer. Timeout to get connection in ms (default: 70000)
 
     ### Returns
         - {:ok, pid} Pool started successfully
@@ -45,8 +46,12 @@ defmodule Pool.BigQuery do
         data_source = Keyword.fetch!(opts, :data_source)
         pool_size = Keyword.get(opts, :pool_size, @default_pool_size)
         max_overflow = Keyword.get(opts, :max_overflow, @default_max_overflow)
+        checkout_timeout = Keyword.get(opts, :checkout_timeout, @default_checkout_timeout)
 
-        Logger.info("#{__MODULE__}. Iniciando pool '#{name}' con #{pool_size} conexiones (overflow: #{max_overflow})")
+        # Guardar el timeout configurado para este pool
+        :persistent_term.put({__MODULE__, :checkout_timeout, name}, checkout_timeout)
+
+        Logger.info("#{__MODULE__}. Iniciando pool '#{name}' con #{pool_size} conexiones (overflow: #{max_overflow}, timeout: #{checkout_timeout}ms)")
 
         pool_config = [
             name: {:local, name},
@@ -65,14 +70,14 @@ defmodule Pool.BigQuery do
         - pool_name: Atom. Pool name
         - fun: Function. Function that receives the ODBC connection and executes operations
         - opts: Keyword, optional. Options:
-            - :timeout: Integer. Timeout to get connection (default: 30000ms)
+            - :timeout: Integer. Timeout to get connection (uses pool's configured timeout by default)
 
     ### Returns
         - The result of executing `fun.(conn)`
         - Raises exception if operation fails
     """
     def with_connection(pool_name, fun, opts \\ []) do
-        timeout = Keyword.get(opts, :timeout, @checkout_timeout)
+        timeout = Keyword.get(opts, :timeout, get_checkout_timeout(pool_name))
 
         :poolboy.transaction(
             pool_name,
@@ -95,35 +100,45 @@ defmodule Pool.BigQuery do
     ### Parameters
         - pool_name: Atom. Pool name
         - fun: Function. Function that receives the ODBC connection
-        - opts: Keyword, optional. Options
+        - opts: Keyword, optional. Options:
+            - :timeout: Integer. Timeout to get connection (uses pool's configured timeout by default)
 
     ### Returns
         - {:ok, result} - Operación exitosa
         - {:error, reason} - Error en la operación
     """
     def with_connection_safe(pool_name, fun, opts \\ []) do
-        timeout = Keyword.get(opts, :timeout, @checkout_timeout)
+        timeout = Keyword.get(opts, :timeout, get_checkout_timeout(pool_name))
 
         try do
-        result =
-            :poolboy.transaction(
-                pool_name,
-                fn worker_pid ->
-                    Worker.execute(worker_pid, fun, timeout)
-                end,
-                timeout
-            )
+            result =
+                :poolboy.transaction(
+                    pool_name,
+                    fn worker_pid ->
+                        Worker.execute(worker_pid, fun, timeout)
+                    end,
+                    timeout
+                )
 
-        case result do
-            {:ok, _} = success -> success
-            {:error, _} = error -> error
-        end
+            case result do
+                {:ok, _} = success -> success
+                {:error, _} = error -> error
+            end
         catch
             :exit, {:timeout, _} ->
                 {:error, :pool_timeout}
 
             :exit, reason ->
                 {:error, {:pool_exit, reason}}
+        end
+    end
+
+    # Obtiene el timeout configurado para el pool, o el default si no está configurado
+    defp get_checkout_timeout(pool_name) do
+        try do
+            :persistent_term.get({__MODULE__, :checkout_timeout, pool_name})
+        rescue
+            ArgumentError -> @default_checkout_timeout
         end
     end
 
