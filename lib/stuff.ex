@@ -149,7 +149,6 @@ defmodule Stuff do
         - len: Integer. Chain length.
 
     ### Return:
-
         - String.
 
     """
@@ -193,7 +192,7 @@ defmodule Stuff do
                 {:ok, entries} ->
                     entries
                     |> Enum.reject(fn entry ->
-                        entry in ["node_modules"] or
+                        # entry in ["_build", "deps", "node_modules"] or
                         String.starts_with?(entry, ".")
                     end)
                     |> Enum.find_value(fn entry ->
