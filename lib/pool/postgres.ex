@@ -42,8 +42,9 @@ defmodule Pool.Postgres do
     require Logger
 
     @default_pool_size 10
-    @default_queue_target 50
-    @default_queue_interval 1000
+    @default_queue_target 1000
+    @default_queue_interval 10000
+
 
     @doc """
     Returns the child specification for the pool.
