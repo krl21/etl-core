@@ -1,6 +1,6 @@
-# Referencia de Módulos ETL-Core v2.1
+# Referencia de Módulos ETL-Core
 
-Este documento describe los módulos disponibles en `etl-core` v2.1, sus funciones principales y aspectos importantes a considerar.
+Este documento describe los módulos disponibles en `etl-core`, sus funciones principales y aspectos importantes a considerar.
 
 ---
 
@@ -9,7 +9,7 @@ Este documento describe los módulos disponibles en `etl-core` v2.1, sus funcion
 1. [Estructura de Datos](#estructura-de-datos)
 2. [Modelos de Datos](#modelos-de-datos)
 3. [GenServers](#genservers)
-4. [Pools de Conexiones](#pools-de-conexiones) *(nuevo en v2.1)*
+4. [Pools de Conexiones](#pools-de-conexiones)
 5. [Conexiones](#conexiones)
 6. [Utilidades](#utilidades)
 7. [Limpieza de Datos](#limpieza-de-datos)
@@ -940,6 +940,6 @@ El proyecto ETL depende de:
 - `timex` - Manejo de fechas
 - `poison` / `jason` - JSON
 - `postgrex` - PostgreSQL (y pools)
-- `poolboy` - Pool de conexiones para BigQuery/ODBC *(actualizado v2.1)*
+- `poolboy` - Pool de conexiones para BigQuery/ODBC
 - `amqp` - RabbitMQ
 

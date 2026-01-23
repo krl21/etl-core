@@ -1,6 +1,6 @@
 # Arquitectura del Sistema ETL
 
-Este documento describe la arquitectura concebida para el sistema ETL basado en `etl-core` v2.1.
+Este documento describe la arquitectura concebida para el sistema ETL basado en `etl-core`.
 
 ---
 

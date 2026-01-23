@@ -1,6 +1,6 @@
 # Guía para Crear un ETL desde Cero
 
-Esta guía describe paso a paso cómo crear un nuevo proyecto ETL utilizando `etl-core` v2.1.
+Esta guía describe paso a paso cómo crear un nuevo proyecto ETL utilizando `etl-core`.
 
 ---
 
@@ -77,7 +77,7 @@ El sistema ETL sigue un flujo de datos bien definido:
             └─────────────┘           └─────────────┘
 ```
 
-> **Nota v2.1**: Los pools gestionan las conexiones automáticamente, evitando
+> **Nota v2.1+**: Los pools gestionan las conexiones automáticamente, evitando
 > abrir/cerrar conexiones para cada operación.
 
 ### Componentes Principales
@@ -209,7 +209,7 @@ defmodule MiEtl.MixProject do
   defp deps do
     [
       # ETL Core v2.1 - Librería base (incluye pools de conexiones)
-      {:etl_core, git: "https://github.com/krl21/etl-core.git", branch: "v2.1"},
+      {:etl_core, git: "https://github.com/krl21/etl-core.git", branch: "v2.2"},
       
       # Logger flexible
       {:flex_logger, "~> 0.2.1"},
@@ -1308,7 +1308,7 @@ defimpl Genserver.Protocols.PWorker, for: List do
 end
 ```
 
-> **Nota v2.1**: La entidad Record debe implementar `insert_by_lote_pooled/3` para usar el modo pool.
+> **Nota v2.1+**: La entidad Record debe implementar `insert_by_lote_pooled/3` para usar el modo pool.
 > Esta función usa `execute_insert_with_retry_pooled/3` del macro base.
 
 ---
@@ -1867,7 +1867,7 @@ export RELEASE_NODE=mi_etl@127.0.0.1
 ## Checklist Final
 
 ### Estructura de Archivos
-- [ ] `mix.exs` con dependencias (etl_core v2.1)
+- [ ] `mix.exs` con dependencias (etl_core vx.y)
 - [ ] `config/config.exs` - Logger básico
 - [ ] `config/runtime.exs` - **TODAS las variables de entorno**
 - [ ] `lib/mi_etl/application.ex` - Supervisor tree con pools
