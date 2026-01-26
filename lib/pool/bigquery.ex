@@ -9,7 +9,7 @@ defmodule Pool.BigQuery do
 
     @default_pool_size 5
     @default_max_overflow 2
-    @default_checkout_timeout 70_000 # 70 segundos
+    @default_checkout_timeout 600_000 # 10 minutos
 
     @doc """
     Returns the child specification for the pool.
@@ -35,7 +35,7 @@ defmodule Pool.BigQuery do
             - :data_source: List. ODBC configuration.
             - :pool_size: Integer. Pool size (default: 5)
             - :max_overflow: Integer. Extra workers under load (default: 2)
-            - :checkout_timeout: Integer. Timeout to get connection in ms (default: 70000)
+            - :checkout_timeout: Integer. Timeout to get connection in ms (default: 600000)
 
     ### Returns
         - {:ok, pid} Pool started successfully
