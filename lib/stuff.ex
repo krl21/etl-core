@@ -146,7 +146,6 @@ defmodule Stuff do
     Generates a random string with the symbols '0123456789abcdefghijklmnopqrstuvwxyz'
 
     ### Parameter:
-
         - len: Integer. Chain length.
 
     ### Return:
@@ -159,6 +158,58 @@ defmodule Stuff do
         symbols = '0123456789abcdefghijklmnopqrstuvwxyz'
         symbol_count = Enum.count(symbols)
         for _ <- 1..len, into: "", do: <<Enum.at(symbols, :crypto.rand_uniform(0, symbol_count))>>
+    end
+
+    @doc"""
+    Searches for a file by its name, searching from the root
+
+    ### Parameter:
+        - filename: String. Filename or suffix to search for.
+
+    ### Return:
+        - String. Full path to the file, or raises an error if not found.
+    """
+    def find_project_file(filename) when is_binary(filename) do
+        find_file_recursive("/app", filename) || raise "File not found: #{filename}. Searched from: app"
+    end
+
+    #
+    # Recursively searches for a file starting from a directory
+    #
+    # ### Parameters:
+    #     - dir: String. Directory to search in
+    #     - filename: String. Filename to search for
+    #
+    # ### Return:
+    #     - String. Full path to the file, or nil if not found
+    #
+    defp find_file_recursive(dir, filename) do
+        full_path = Path.join(dir, filename)
+
+        if File.exists?(full_path) do
+            Path.expand(full_path)
+        else
+            case File.ls(dir) do
+                {:ok, entries} ->
+                    entries
+                    |> Enum.reject(fn entry ->
+                        entry in ["_build", "deps", "node_modules"] or
+                        String.starts_with?(entry, ".")
+                    end)
+                    |> Enum.find_value(fn entry ->
+                        entry_path = Path.join(dir, entry)
+
+                        if File.dir?(entry_path) do
+                            find_file_recursive(entry_path, filename)
+                        else
+                            nil
+                        end
+                    end)
+
+                {:error, _} ->
+                    nil
+            end
+        end
     end
 
 

@@ -9,87 +9,25 @@ defmodule Time.Timem do
 
     #
     # Url where the information of the holidays was extracted
-    #     2021 => "https://www.chile.gob.cl/buenos-aires/feriados-2021",
-    #     2022 => "https://www.feriados.cl/index.php",
-    #     2023 => "https://www.feriados.cl/2023.htm",
-    #     2024 => "https://www.feriados.cl/2024.htm"
-    #     2024 => "https://www.feriados.cl/2025.htm"
+    #     "https://www.feriados.cl/index.php"
     #
-    @holidays %{
-        2021 => %{
-            january:    [1],
-            february:   [15, 16],
-            march:      [24],
-            april:      [2],
-            may:        [21, 24, 25],
-            june:       [21],
-            july:       [9],
-            august:     [16],
-            september:  [17],
-            october:    [8, 11],
-            november:   [22],
-            december:   [8]
-        },
-        2022 => %{
-            january:    [1],
-            february:   [],
-            march:      [],
-            april:      [15, 16],
-            may:        [1, 21],
-            june:       [21, 27],
-            july:       [16],
-            august:     [15],
-            september:  [4, 16, 18, 19],
-            october:    [10, 31],
-            november:   [1],
-            december:   [8, 25]
-        },
-        2023 => %{
-            january:    [1, 2],
-            february:   [],
-            march:      [],
-            april:      [7, 8],
-            may:        [1, 21],
-            june:       [21, 26],
-            july:       [16],
-            august:     [15],
-            september:  [18, 19],
-            october:    [9, 27],
-            november:   [1],
-            december:   [8, 25]
-        },
-        2024 => %{
-            january:    [1],
-            february:   [],
-            march:      [29, 30],
-            april:      [],
-            may:        [1, 21],
-            june:       [9, 20, 29],
-            july:       [16],
-            august:     [15],
-            september:  [18, 19, 20],
-            october:    [12, 27, 31],
-            november:   [1, 24],
-            december:   [8, 25]
-        },
-        2025 => %{
-            january:    [1],
-            february:   [],
-            march:      [],
-            april:      [18, 19],
-            may:        [1, 21],
-            june:       [20, 29],
-            july:       [16],
-            august:     [15],
-            september:  [18, 19],
-            october:    [12, 31],
-            november:   [1, 16],
-            december:   [8, 14, 25]
-        },
-
-    }
-
-
+    # Holidays are loaded from external JSON file at compile time
+    #
+    @holidays (
+        "holidays.json"
+        |> Stuff.find_project_file()
+        |> File.read!()
+        |> Jason.decode!()
+        |> Enum.map(fn {year, months} ->
+            year_int = String.to_integer(year)
+            months_map = Enum.map(months, fn {month, days} ->
+                {String.to_existing_atom(month), days}
+            end)
+            |> Map.new()
+            {year_int, months_map}
+        end)
+        |> Map.new()
+    )
 
     @doc"""
     Search the time defined in the configuration, for sending notifications
