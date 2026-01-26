@@ -619,7 +619,7 @@ Type.Normalize.to_ascii("niño—2023")
 # => "ni%nn%o-2023"
 ```
 
-**Nota:** Las conversiones de caracteres se cargan desde `constants/char_mappings.json` en tiempo de compilación.
+**Nota:** Las conversiones de caracteres se cargan desde `lib/type/char_mappings.json` en tiempo de compilación.
 
 ---
 
@@ -645,15 +645,15 @@ Time.Timem.by_intervals(start_date, end_date, step_days)
 # => {:ok, [{start1, end1}, {start2, end2}, ...]}
 ```
 
-**Nota:** Los días feriados se cargan desde `constants/holidays.json` en tiempo de compilación.
+**Nota:** Los días feriados se cargan desde `lib/time/holidays.json` en tiempo de compilación.
 
 ---
 
 ### Constantes del Sistema
 
-El sistema utiliza archivos JSON en la carpeta `constants/` para almacenar valores constantes que se cargan en tiempo de compilación:
+El sistema utiliza archivos JSON ubicados junto a los módulos que los utilizan para almacenar valores constantes que se cargan en tiempo de compilación:
 
-#### `constants/holidays.json`
+#### `lib/time/holidays.json`
 
 Contiene los días feriados por año para Chile. Estructura:
 
@@ -668,12 +668,12 @@ Contiene los días feriados por año para Chile. Estructura:
 }
 ```
 
-- **Ubicación:** `constants/holidays.json`
+- **Ubicación:** `lib/time/holidays.json`
 - **Uso:** Cargado automáticamente por `Time.Timem` en tiempo de compilación
 - **Actualización:** Editar el archivo JSON y recompilar el proyecto
 - **Fuente:** https://www.feriados.cl/index.php
 
-#### `constants/char_mappings.json`
+#### `lib/type/char_mappings.json`
 
 Contiene mapeos de caracteres especiales para normalización. Estructura:
 
@@ -697,7 +697,7 @@ Contiene mapeos de caracteres especiales para normalización. Estructura:
 }
 ```
 
-- **Ubicación:** `constants/char_mappings.json`
+- **Ubicación:** `lib/type/char_mappings.json`
 - **Uso:** Cargado automáticamente por `Type.Normalize` en tiempo de compilación
 - **Secciones:**
   - `spanish_chars`: Caracteres españoles y espacios (ñ, á, é, í, ó, ú, ü)

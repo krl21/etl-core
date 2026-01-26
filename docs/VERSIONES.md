@@ -25,12 +25,12 @@ Este documento describe las versiones de `etl-core`, sus características princi
 
 #### Constantes Externas
 
-- **`constants/holidays.json`**: Días feriados por año para Chile
+- **`lib/time/holidays.json`**: Días feriados por año para Chile
   - Cargado automáticamente por `Time.Timem` en tiempo de compilación
   - Actualización sin modificar código fuente
   - Recompilación automática cuando cambia el archivo
 
-- **`constants/char_mappings.json`**: Mapeos de caracteres especiales
+- **`lib/type/char_mappings.json`**: Mapeos de caracteres especiales
   - Sección `spanish_chars`: Caracteres españoles (ñ, á, é, í, ó, ú)
   - Sección `unicode_chars`: Más de 200 conversiones Unicode a ASCII
   - Sección `denormalize`: Mapeos inversos para restaurar caracteres

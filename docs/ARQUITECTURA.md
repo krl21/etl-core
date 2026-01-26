@@ -943,11 +943,11 @@ end
 
 ### Gestión de Constantes
 
-El sistema utiliza archivos JSON en la carpeta `constants/` para almacenar valores constantes que se cargan en tiempo de compilación. Esto permite modificar datos sin cambiar código:
+El sistema utiliza archivos JSON ubicados junto a los módulos que los utilizan para almacenar valores constantes que se cargan en tiempo de compilación. Esto permite modificar datos sin cambiar código:
 
 **Archivos de constantes:**
-- `constants/holidays.json` - Días feriados por año (usado por `Time.Timem`)
-- `constants/char_mappings.json` - Mapeos de caracteres especiales (usado por `Type.Normalize`)
+- `lib/time/holidays.json` - Días feriados por año (usado por `Time.Timem`)
+- `lib/type/char_mappings.json` - Mapeos de caracteres especiales (usado por `Type.Normalize`)
 
 ---
 
