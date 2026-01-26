@@ -13,9 +13,9 @@ defmodule Time.Timem do
     #
     # Holidays are loaded from external JSON file at compile time
     #
+    @external_resource Path.join(__DIR__, "holidays.json")
     @holidays (
-        "holidays.json"
-        |> Stuff.find_project_file()
+        Path.join(__DIR__, "holidays.json")
         |> File.read!()
         |> Jason.decode!()
         |> Enum.map(fn {year, months} ->

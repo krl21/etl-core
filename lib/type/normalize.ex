@@ -7,9 +7,9 @@ defmodule Type.Normalize do
     #
     # Character mappings are loaded from external JSON file at compile time
     #
+    @external_resource Path.join(__DIR__, "char_mappings.json")
     @char_mappings (
-        "char_mappings.json"
-        |> Stuff.find_project_file()
+        Path.join(__DIR__, "char_mappings.json")
         |> File.read!()
         |> Jason.decode!()
     )
