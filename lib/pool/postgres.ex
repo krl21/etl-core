@@ -42,7 +42,7 @@ defmodule Pool.Postgres do
     use Supervisor
     require Logger
 
-    @default_pool_size 10
+    @default_pool_size 3
     @default_queue_target 1000
     @default_queue_interval 10000
 
