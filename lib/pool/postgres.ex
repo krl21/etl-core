@@ -33,7 +33,8 @@ defmodule Pool.Postgres do
 
     - `:name` (atom, required) - Pool name
     - `:config` (map, required) - PostgreSQL connection configuration
-    - `:pool_size` (integer, optional) - Pool size (default: 10)
+    - `:pool_size` (integer, optional) - Pool size (default: 10). Maximum number of connections.
+      **Note:** `max_overflow` is set to 0 to ensure the pool never exceeds `pool_size`.
     - `:queue_target` (integer, optional) - Queue target in ms (default: 50)
     - `:queue_interval` (integer, optional) - Queue interval in ms (default: 1000)
     """
@@ -125,6 +126,7 @@ defmodule Pool.Postgres do
             password: Map.fetch!(config, :password),
             ssl: Map.get(config, :ssl, false),
             pool_size: pool_size,
+            max_overflow: 0,
             queue_target: queue_target,
             queue_interval: queue_interval
         ]
