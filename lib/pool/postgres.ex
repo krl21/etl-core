@@ -90,9 +90,9 @@ defmodule Pool.Postgres do
     def init(opts) do
         name = Keyword.fetch!(opts, :name)
         config = Keyword.fetch!(opts, :config)
-        pool_size = Keyword.get(opts, :pool_size, @default_pool_size)
-        queue_target = Keyword.get(opts, :queue_target, @default_queue_target)
-        queue_interval = Keyword.get(opts, :queue_interval, @default_queue_interval)
+        pool_size = Keyword.get(opts, :pool_size, @default_pool_size) || @default_pool_size
+        queue_target = Keyword.get(opts, :queue_target, @default_queue_target) || @default_queue_target
+        queue_interval = Keyword.get(opts, :queue_interval, @default_queue_interval) || @default_queue_interval
 
         Logger.info("#{__MODULE__}. Iniciando pool '#{name}' con #{pool_size} conexiones")
 
