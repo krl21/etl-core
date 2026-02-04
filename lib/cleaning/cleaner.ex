@@ -8,9 +8,10 @@ defmodule Cleaning.Cleaner do
     require Logger
     import Connection.Odbc, only: [select: 2, delete: 2]
     alias Statement.Sql
-    alias Connection.Postgres
+    alias Connection.PostgresPool
     alias Type.Type
     alias Notification.Notify
+    alias Pool.BigQuery
     import Stuff, only: [convert_seconds_to_humans: 1]
 
 
@@ -19,21 +20,22 @@ defmodule Cleaning.Cleaner do
 
     ### Parameters
         - business_key: Atom. The business key (e.g., :record, :task)
-        - pid: Process. ODBC connection to BigQuery
+        - bq_pool_name: Atom. BigQuery pool name
+        - opts: List. Optional list of options
 
     ### Returns
         - {:ok, count} on success with number of rows removed
         - {:error, :not_registered} if module not found
         - {:error, reason} if cleaning fails
     """
-    def run(business_key, pid, opts \\ []) when is_atom(business_key) do
+    def run(business_key, bq_pool_name, opts \\ []) when is_atom(business_key) and is_atom(bq_pool_name) do
         case Cleaning.CleanableTableRegistry.get(business_key) do
             nil ->
                 Logger.warning("No hay CleanableTable registrada para la llave: #{inspect(business_key)}")
                 {:error, :not_registered}
 
             module ->
-                run_for_module(module, pid, opts)
+                run_for_module(module, bq_pool_name, opts)
         end
     end
 
@@ -42,18 +44,19 @@ defmodule Cleaning.Cleaner do
     Runs cleaning for all enabled CleanableTable modules.
 
     ### Parameters
-        - pid: Process. ODBC connection to BigQuery
+        - bq_pool_name: Atom. BigQuery pool name
+        - opts: List. Optional list of options
 
     ### Returns
         - List of tuples {business_key, {:ok, count} | {:error, reason}}
     """
-    def run_all(pid, opts \\ []) do
+    def run_all(bq_pool_name, opts \\ []) when is_atom(bq_pool_name) do
         start = Timex.now()
 
         results =
             Cleaning.CleanableTableRegistry.enabled()
             |> Enum.map(fn module ->
-                {module.business_key(), run_for_module(module, pid, opts)}
+                {module.business_key(), run_for_module(module, bq_pool_name, opts)}
             end)
 
         total_time = Timex.diff(Timex.now(), start, :second)
@@ -67,13 +70,14 @@ defmodule Cleaning.Cleaner do
 
     ### Parameters
         - module: Module. A module implementing CleanableTable behaviour
-        - pid: Process. ODBC connection to BigQuery
+        - bq_pool_name: Atom. BigQuery pool name
+        - opts: List. Optional list of options
 
     ### Returns
         - {:ok, count} with number of rows removed
         - {:error, reason} if cleaning fails
     """
-    def run_for_module(module, pid, opts \\ []) do
+    def run_for_module(module, bq_pool_name, opts \\ []) when is_atom(bq_pool_name) do
         webhook_url = Keyword.get(opts, :webhook_url)
 
         try do
@@ -83,7 +87,7 @@ defmodule Cleaning.Cleaner do
                 Logger.debug("Omitiendo limpieza de BigQuery para #{inspect(module)} - no hay definida bigquery_config")
                 {:ok, 0}
             else
-                run_bigquery_cleanup(module, bq_config, pid, webhook_url)
+                run_bigquery_cleanup(module, bq_config, bq_pool_name, webhook_url)
             end
         rescue
             error ->
@@ -94,26 +98,38 @@ defmodule Cleaning.Cleaner do
         end
     end
 
-    defp run_bigquery_cleanup(module, bq_config, pid, _webhook_url) do
+    defp run_bigquery_cleanup(module, bq_config, bq_pool_name, webhook_url) do
         start = Timex.now()
         business_key = module.business_key()
 
         Logger.debug("Iniciando limpieza para #{inspect(business_key)} - Tabla: #{bq_config.table}")
 
-        count =
-            get_duplicate_ids(pid, bq_config)
-            |> Enum.chunk_every(500)
-            |> Enum.reduce(0, fn batch, acc ->
-                batch
-                |> get_rows_to_keep(pid, bq_config)
-                |> delete_duplicates(pid, bq_config)
-                |> Kernel.+(acc)
-            end)
+        result = BigQuery.with_connection_safe(bq_pool_name, fn conn ->
+            count =
+                get_duplicate_ids(conn, bq_config)
+                |> Enum.chunk_every(500)
+                |> Enum.reduce(0, fn batch, acc ->
+                    batch
+                    |> get_rows_to_keep(conn, bq_config)
+                    |> delete_duplicates(conn, bq_config)
+                    |> Kernel.+(acc)
+                end)
 
-        duration = Timex.diff(Timex.now(), start, :second)
-        Logger.debug("Limpieza de #{inspect(business_key)} finalizada. Filas eliminadas: #{count}. Duración: #{convert_seconds_to_humans(duration)}")
+            {:ok, count}
+        end)
 
-        {:ok, count}
+        case result do
+            {:ok, count} ->
+                duration = Timex.diff(Timex.now(), start, :second)
+                Logger.debug("Limpieza de #{inspect(business_key)} finalizada. Filas eliminadas: #{count}. Duración: #{convert_seconds_to_humans(duration)}")
+                {:ok, count}
+
+            {:error, reason} = error ->
+                message = "Error al limpiar tabla de BigQuery #{bq_config.table}: #{inspect(reason)}"
+                Logger.error(message)
+                notify_error(webhook_url, message)
+                error
+        end
     end
 
 
@@ -126,21 +142,22 @@ defmodule Cleaning.Cleaner do
 
     ### Parameters
         - business_key: Atom. The business key (e.g., :record, :task)
-        - pid_pg: pid | Map. PostgreSQL connection
+        - pg_pool_name: Atom. PostgreSQL pool name
+        - opts: List. Optional list of options
 
     ### Returns
         - {:ok, count} on success with number of rows removed
         - {:error, :not_registered} if module not found
         - {:error, reason} if cleaning fails
     """
-    def run_postgres(business_key, pid_pg, opts \\ []) when is_atom(business_key) do
+    def run_postgres(business_key, pg_pool_name, opts \\ []) when is_atom(business_key) and is_atom(pg_pool_name) do
         case Cleaning.CleanableTableRegistry.get(business_key) do
             nil ->
                 Logger.warning("No hay CleanableTable registrada para la llave: #{inspect(business_key)}")
                 {:error, :not_registered}
 
             module ->
-                run_postgres_for_module(module, pid_pg, opts)
+                run_postgres_for_module(module, pg_pool_name, opts)
         end
     end
 
@@ -148,19 +165,20 @@ defmodule Cleaning.Cleaner do
     Runs PostgreSQL cleaning for all enabled CleanableTable modules.
 
     ### Parameters
-        - pid_pg: pid | Map. PostgreSQL connection
+        - pg_pool_name: Atom. PostgreSQL pool name
+        - opts: List. Optional list of options
 
     ### Returns
         - List of tuples {business_key, {:ok, count} | {:error, reason}}
     """
-    def run_all_postgres(pid_pg, opts \\ []) do
+    def run_all_postgres(pg_pool_name, opts \\ []) when is_atom(pg_pool_name) do
         start = Timex.now()
         total_deleted = :counters.new(1, [:atomics])
 
         results =
             Cleaning.CleanableTableRegistry.enabled()
             |> Enum.map(fn module ->
-                result = run_postgres_for_module(module, pid_pg, opts)
+                result = run_postgres_for_module(module, pg_pool_name, opts)
 
                 case result do
                     {:ok, count} -> :counters.add(total_deleted, 1, count)
@@ -183,13 +201,14 @@ defmodule Cleaning.Cleaner do
 
     ### Parameters
         - module: Module. A module implementing CleanableTable behaviour
-        - pid_pg: pid | Map. PostgreSQL connection
+        - pg_pool_name: Atom. PostgreSQL pool name
+        - opts: List. Optional list of options
 
     ### Returns
         - {:ok, count} with number of rows removed
         - {:error, reason} if cleaning fails
     """
-    def run_postgres_for_module(module, pid_pg, opts \\ []) do
+    def run_postgres_for_module(module, pg_pool_name, opts \\ []) when is_atom(pg_pool_name) do
         webhook_url = Keyword.get(opts, :webhook_url)
 
         try do
@@ -199,7 +218,7 @@ defmodule Cleaning.Cleaner do
                 Logger.debug("Omitiendo limpieza de PostgreSQL para #{inspect(module)} - no hay definida postgres_config")
                 {:ok, 0}
             else
-                run_postgres_cleanup(module, pg_config, pid_pg, webhook_url)
+                run_postgres_cleanup(module, pg_config, pg_pool_name, webhook_url)
             end
         rescue
             error ->
@@ -210,7 +229,7 @@ defmodule Cleaning.Cleaner do
         end
     end
 
-    defp run_postgres_cleanup(module, pg_config, pid_pg, webhook_url) do
+    defp run_postgres_cleanup(module, pg_config, pg_pool_name, webhook_url) do
         business_key = module.business_key()
         table_name = pg_config.table
         register_type = Map.get(pg_config, :register_type, nil)
@@ -219,7 +238,7 @@ defmodule Cleaning.Cleaner do
 
         delete_opts = if register_type, do: [register_type: register_type], else: []
 
-        Postgres.delete_analyzed_records(pid_pg, table_name, delete_opts)
+        PostgresPool.delete_analyzed_records(pg_pool_name, table_name, delete_opts)
         |> case do
             {:ok, count} ->
                 Logger.info("Limpieza de PostgreSQL para #{inspect(business_key)}: #{count} registros eliminados de #{table_name}")
