@@ -110,10 +110,10 @@ defmodule Genserver.Cleaning do
             try do
                 case business do
                     :all ->
-                        Cleaner.run_all_postgres(state.pg_pool_name, pg_mode, opts)
+                        Cleaner.run_all_postgres(state.pg_pool_name, opts)
 
                     business_key ->
-                        Cleaner.run_postgres(business_key, state.pg_pool_name, pg_mode, opts)
+                        Cleaner.run_postgres(business_key, state.pg_pool_name, opts)
                 end
             rescue
                 error ->
