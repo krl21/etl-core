@@ -29,7 +29,7 @@ defmodule PoolTest.PoolExhaustionTest do
     require Logger
 
     @pool_name :test_exhaustion_pool
-    @pool_size 5                # Número de conexiones a saturar
+    @pool_size 3               # Número de conexiones a saturar
     @total_concurrent_queries 30
     @hold_time_ms 2_000          # Tiempo que cada conexión se retiene
     @queue_timeout_ms 15_000     # Timeout para queries en cola (mayor que hold_time)

@@ -7,7 +7,7 @@ defmodule PoolTest.PoolRecoveryTest do
     require Logger
 
     @pool_name :test_recovery_pool
-    @pool_size 5
+    @pool_size 3
     @total_concurrent_queries 30
 
     def run do
