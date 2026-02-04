@@ -105,17 +105,14 @@ defmodule Cleaning.Cleaner do
         Logger.debug("Iniciando limpieza para #{inspect(business_key)} - Tabla: #{bq_config.table}")
 
         result = BigQuery.with_connection_safe(bq_pool_name, fn conn ->
-            count =
-                get_duplicate_ids(conn, bq_config)
-                |> Enum.chunk_every(500)
-                |> Enum.reduce(0, fn batch, acc ->
-                    batch
-                    |> get_rows_to_keep(conn, bq_config)
-                    |> delete_duplicates(conn, bq_config)
-                    |> Kernel.+(acc)
-                end)
-
-            {:ok, count}
+            get_duplicate_ids(conn, bq_config)
+            |> Enum.chunk_every(500)
+            |> Enum.reduce(0, fn batch, acc ->
+                batch
+                |> get_rows_to_keep(conn, bq_config)
+                |> delete_duplicates(conn, bq_config)
+                |> Kernel.+(acc)
+            end)
         end)
 
         case result do
