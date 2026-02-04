@@ -33,10 +33,11 @@ defmodule Pool.Postgres do
 
     - `:name` (atom, required) - Pool name
     - `:config` (map, required) - PostgreSQL connection configuration
-    - `:pool_size` (integer, optional) - Pool size (default: 10). Maximum number of connections.
+    - `:pool_size` (integer, optional) - Pool size (default: 3). Maximum number of connections.
       **Note:** `max_overflow` is set to 0 to ensure the pool never exceeds `pool_size`.
-    - `:queue_target` (integer, optional) - Queue target in ms (default: 50)
-    - `:queue_interval` (integer, optional) - Queue interval in ms (default: 1000)
+    - `:queue_target` (integer, optional) - Queue target in ms (default: 1000)
+    - `:queue_interval` (integer, optional) - Queue interval in ms (default: 30000)
+      **Note:** Total queue timeout = queue_target + queue_interval (default: 30 seconds)
     """
 
     use Supervisor
@@ -44,7 +45,7 @@ defmodule Pool.Postgres do
 
     @default_pool_size 3
     @default_queue_target 1000
-    @default_queue_interval 10000
+    @default_queue_interval 30000
 
 
     @doc """
@@ -73,9 +74,10 @@ defmodule Pool.Postgres do
                 - :username: String. Username (required)
                 - :password: String. Password (required)
                 - :ssl: Boolean. Use SSL (default: false)
-            - :pool_size: Integer. Pool size (default: 10)
-            - :queue_target: Integer. Queue target (default: 50)
-            - :queue_interval: Integer. Queue interval (default: 1000)
+            - :pool_size: Integer. Pool size (default: 3)
+            - :queue_target: Integer. Queue target in ms (default: 0)
+            - :queue_interval: Integer. Queue interval in ms (default: 30000)
+              Total queue timeout = queue_target + queue_interval (default: 30 seconds)
 
     ### Returns
         - {:ok, pid} Pool started successfully
