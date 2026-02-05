@@ -6,7 +6,7 @@ defmodule Cleaning.Cleaner do
     """
 
     require Logger
-    import Connection.Odbc, only: [select: 2, delete: 2]
+    import Connection.Odbc, only: [select: 2, update: 2]
     alias Statement.Sql
     alias Connection.PostgresPool
     alias Type.Type
@@ -105,21 +105,15 @@ defmodule Cleaning.Cleaner do
         Logger.debug("Iniciando limpieza para #{inspect(business_key)} - Tabla: #{bq_config.table}")
 
         result = BigQuery.with_connection_safe(bq_pool_name, fn conn ->
-            get_duplicate_ids(conn, bq_config)
-            |> Enum.chunk_every(500)
-            |> Enum.reduce(0, fn batch, acc ->
-                batch
-                |> get_rows_to_keep(conn, bq_config)
-                |> delete_duplicates(conn, bq_config)
-                |> Kernel.+(acc)
-            end)
+            cleanup_query = build_cleanup_query(bq_config)
+            update(conn, cleanup_query)
         end)
 
         case result do
-            {:ok, count} ->
+            {:ok, _} ->
                 duration = Timex.diff(Timex.now(), start, :second)
-                Logger.debug("Limpieza de #{inspect(business_key)} finalizada. Filas eliminadas: #{count}. Duración: #{convert_seconds_to_humans(duration)}")
-                {:ok, count}
+                Logger.debug("Limpieza de #{inspect(business_key)} finalizada. Duración: #{convert_seconds_to_humans(duration)}")
+                {:ok, 0}
 
             {:error, reason} = error ->
                 message = "Error al limpiar tabla de BigQuery #{bq_config.table}: #{inspect(reason)}"
@@ -255,171 +249,33 @@ defmodule Cleaning.Cleaner do
     # ============================================
 
     #
-    # Gets IDs that have duplicate rows in the table.
+    # Builds a CREATE OR REPLACE TABLE query with QUALIFY to remove duplicates.
     #
     # ### Parameters
-    #     - pid: Process. ODBC connection to BigQuery
-    #     - config: Map. Must contain :table and :id_fields keys (list of Struct.InfoAttr)
-    #
-    # ### Returns
-    #     - List of IDs (single values if one id_field, tuples if multiple)
-    #
-    defp get_duplicate_ids(pid, %{table: table, id_fields: id_fields}) do
-        id_columns = Enum.map(id_fields, fn info_attr -> to_string(info_attr.id) end) |> Enum.join(", ")
-
-        statement = """
-        SELECT #{id_columns}
-        FROM #{table}
-        GROUP BY #{id_columns}
-        HAVING COUNT(*) > 1
-        """
-
-        select(pid, statement)
-        |> Enum.map(fn row ->
-            values = Enum.map(row, fn {_col, value} -> value end)
-
-            case length(id_fields) do
-                1 -> hd(values)
-                _ -> List.to_tuple(values)
-            end
-        end)
-    end
-
-    #
-    # Gets the most recent row for each duplicate ID (the one to keep).
-    #
-    # ### Parameters
-    #     - ids: List. List of duplicate IDs to process
-    #     - pid: Process. ODBC connection to BigQuery
     #     - config: Map. Must contain :table, :id_fields (list of Struct.InfoAttr), and :timestamp_field (Struct.InfoAttr) keys
     #
     # ### Returns
-    #     - List of tuples containing (id_values..., timestamp) for rows to keep
+    #     - String. SQL query for CREATE OR REPLACE TABLE
     #
-    defp get_rows_to_keep([], _pid, _config), do: []
-
-    defp get_rows_to_keep(ids, pid, %{table: table, id_fields: id_fields, timestamp_field: ts_field}) do
-        id_columns = Enum.map(id_fields, fn info_attr -> to_string(info_attr.id) end) |> Enum.join(", ")
+    defp build_cleanup_query(%{table: table, id_fields: id_fields, timestamp_field: ts_field}) do
+        id_columns =
+            id_fields
+            |> Enum.map(fn info_attr ->
+                to_string(info_attr.id)
+            end)
+            |> Enum.join(", ")
         ts_column = to_string(ts_field.id)
-        all_columns = "#{id_columns}, #{ts_column}"
 
-        where_clause = build_where_clause(ids, id_fields)
-
-        statement = """
-        WITH ranked AS (
-            SELECT #{all_columns},
-                   ROW_NUMBER() OVER(PARTITION BY #{id_columns} ORDER BY #{ts_column} DESC) AS rn
-            FROM #{table}
-            WHERE #{where_clause}
-        )
-        SELECT #{all_columns}
-        FROM ranked
-        WHERE rn = 1
         """
-
-        select(pid, statement)
-        |> Enum.map(fn row ->
-            raw_values = Enum.map(row, fn {_col, value} -> value end)
-
-            id_values =
-                raw_values
-                |> Enum.take(length(id_fields))
-                |> Enum.zip(id_fields)
-                |> Enum.map(fn {val, info_attr} -> Type.convert(val, info_attr.type) end)
-
-            ts_value =
-                raw_values
-                |> List.last()
-                |> Type.convert(ts_field.type)
-
-            (id_values ++ [ts_value]) |> List.to_tuple()
-        end)
-    end
-
-    #
-    # Deletes duplicate rows, keeping the one with the most recent timestamp.
-    #
-    # ### Parameters
-    #     - rows_to_keep: List. List of tuples with (id_values..., timestamp) for rows to preserve
-    #     - pid: Process. ODBC connection to BigQuery
-    #     - config: Map. Must contain :table, :id_fields (list of Struct.InfoAttr), and :timestamp_field (Struct.InfoAttr) keys
-    #
-    # ### Returns
-    #     - Integer. Number of rows deleted
-    #
-    defp delete_duplicates([], _pid, _config), do: 0
-
-    defp delete_duplicates(rows_to_keep, pid, %{table: table, id_fields: id_fields, timestamp_field: ts_field}) do
-        conditions =
-            Enum.map(rows_to_keep, fn row_tuple ->
-                row_values = Tuple.to_list(row_tuple)
-                id_values = Enum.take(row_values, length(id_fields))
-                ts_value = List.last(row_values)
-
-                # Match on ID fields but NOT on the timestamp (delete older ones)
-                id_conditions =
-                    Enum.zip(id_fields, id_values)
-                    |> Enum.map(fn {info_attr, val} -> {info_attr.id, val, :eq} end)
-
-                ts_condition = {ts_field.id, ts_value, :neq}
-
-                id_conditions ++ [ts_condition]
-            end)
-
-        statement = Sql.delete(table, conditions, [:and, :or])
-
-        delete(pid, statement)
-        |> elem(1)
-    end
-
-    #
-    # Builds a WHERE clause for filtering rows by their IDs.
-    # Optimizes for single ID field using IN clause, otherwise uses OR conditions.
-    #
-    # ### Parameters
-    #     - ids: List. List of ID values or tuples
-    #     - id_fields: List. List of Struct.InfoAttr that form the ID
-    #
-    # ### Returns
-    #     - String. SQL WHERE clause content (without the WHERE keyword)
-    #
-    defp build_where_clause(ids, id_fields) when length(id_fields) == 1 do
-        info_attr = hd(id_fields)
-        field = info_attr.id |> to_string()
-        values = Enum.map(ids, &mconvert_for_bigquery(&1, info_attr.type)) |> Enum.join(", ")
-        "#{field} IN (#{values})"
-    end
-
-    defp build_where_clause(ids, id_fields) do
-        conditions =
-            Enum.map(ids, fn id_tuple ->
-                id_values = if is_tuple(id_tuple), do: Tuple.to_list(id_tuple), else: [id_tuple]
-
-                Enum.zip(id_fields, id_values)
-                |> Enum.map(fn {info_attr, val} -> "#{info_attr.id} = #{mconvert_for_bigquery(val, info_attr.type)}" end)
-                |> Enum.join(" AND ")
-                |> then(&"(#{&1})")
-            end)
-            |> Enum.join(" OR ")
-
-        "(#{conditions})"
-    end
-
-    #
-    # Converts a value to its BigQuery SQL representation based on the type from InfoAttr.
-    # First converts the value to the correct type, then formats it for BigQuery.
-    #
-    # ### Parameters
-    #     - value: Any. The value to convert
-    #     - type: Atom. The type from InfoAttr (:string, :integer, :float, :timestamp, etc.)
-    #
-    # ### Returns
-    #     - String. SQL-safe representation for BigQuery
-    #
-    defp mconvert_for_bigquery(value, type) do
-        value
-        |> Type.convert(type)
-        |> Type.convert_for_bigquery()
+        CREATE OR REPLACE TABLE #{table} AS
+        SELECT *
+        FROM #{table}
+        QUALIFY
+          ROW_NUMBER() OVER (
+            PARTITION BY #{id_columns}
+            ORDER BY #{ts_column} DESC
+          ) = 1
+        """
     end
 
     #
