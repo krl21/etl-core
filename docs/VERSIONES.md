@@ -6,14 +6,78 @@ Este documento describe las versiones de `etl-core`, sus características princi
 
 ## Tabla de Contenidos
 
-1. [Versión 2.2 (Actual)](#versión-22-actual)
-2. [Versión 2.1](#versión-21)
-3. [Versión 1.2.0](#versión-120)
-4. [Versiones Anteriores](#versiones-anteriores)
+1. [Versión 2.3 (Actual)](#versión-23-actual)
+2. [Versión 2.2](#versión-22)
+3. [Versión 2.1](#versión-21)
+4. [Versión 1.2.0](#versión-120)
+5. [Versiones Anteriores](#versiones-anteriores)
 
 ---
 
-## Versión 2.2 (Actual)
+## Versión 2.3 (Actual)
+
+### Características Principales
+
+- **Refactorización de Limpieza BigQuery**: Optimización de la eliminación de duplicados usando una sola consulta SQL
+- **Mejora de Rendimiento**: Reducción significativa en el tiempo de ejecución de limpieza
+- **Simplificación del Código**: Eliminación de lógica compleja de procesamiento por lotes
+
+### Nuevo en esta Versión
+
+#### Limpieza de BigQuery Optimizada
+
+- **Refactorización de `Cleaning.Cleaner.run_bigquery_cleanup/4`**:
+  - **Antes**: Múltiples consultas SQL con procesamiento por lotes
+    - Obtención de IDs duplicados
+    - Procesamiento en chunks de 500 registros
+    - Múltiples consultas SELECT y DELETE
+  - **Ahora**: Una sola consulta SQL atómica
+    - Uso de `CREATE OR REPLACE TABLE` con `QUALIFY` y `ROW_NUMBER()`
+    - Operación atómica y más eficiente
+    - Eliminación directa de duplicados manteniendo el registro más reciente
+
+- **Nueva función `build_cleanup_query/1`**:
+  - Construye la consulta SQL optimizada
+  - Usa `PARTITION BY` con los campos de ID únicos
+  - Ordena por timestamp descendente para mantener el registro más reciente
+
+#### Mejoras de Rendimiento
+
+- **Reducción de consultas**: De múltiples consultas por lote a una sola consulta
+- **Operación atómica**: La limpieza se realiza en una sola transacción
+- **Menor uso de memoria**: No requiere cargar todos los IDs duplicados en memoria
+
+### Módulos Afectados
+
+- `Cleaning.Cleaner`: Refactorización completa de `run_bigquery_cleanup/4`
+  - Eliminadas funciones: `get_duplicate_ids/2`, `get_rows_to_keep/3`, `delete_duplicates/3`, `build_where_clause/2`, `mconvert_for_bigquery/2`
+  - Nueva función: `build_cleanup_query/1`
+
+### Migración desde v2.2
+
+No se requieren cambios en el código existente. La API pública se mantiene igual:
+- `Cleaning.Cleaner.run/3` mantiene la misma interfaz
+- `Cleaning.Cleaner.run_all/2` mantiene la misma interfaz
+- `Cleaning.Cleaner.run_for_module/3` mantiene la misma interfaz
+
+**Nota**: El cambio es interno y transparente para los usuarios del módulo.
+
+### Ejemplo de Consulta Generada
+
+```sql
+CREATE OR REPLACE TABLE dataset.table_name AS
+SELECT *
+FROM dataset.table_name
+QUALIFY
+  ROW_NUMBER() OVER (
+    PARTITION BY unique_id
+    ORDER BY timestamp DESC
+  ) = 1;
+```
+
+---
+
+## Versión 2.2
 
 ### Características Principales
 
@@ -228,6 +292,18 @@ children = [
 
 3. **No se requieren cambios en el código existente**
 
+### De v2.2 a v2.3
+
+1. **Actualizar dependencias en `mix.exs`**:
+```elixir
+{:etl_core, git: "https://github.com/krl21/etl-core.git", branch: "v2.3"}
+```
+
+2. **No se requieren cambios en el código existente**
+   - La refactorización es interna y transparente
+   - La API pública se mantiene igual
+   - Mejoras de rendimiento automáticas
+
 ---
 
 ## Notas de Versión
@@ -251,6 +327,11 @@ children = [
 
 ### Breaking Changes
 
+**v2.2 → v2.3**: Ninguno
+- Refactorización interna transparente
+- API pública sin cambios
+- Mejoras de rendimiento automáticas
+
 **v2.1 → v2.2**: Ninguno
 - Cambios son aditivos
 - Compatibilidad total con código existente
@@ -263,7 +344,7 @@ children = [
 
 ## Roadmap Futuro
 
-### Versión 2.3 (Planeada)
+### Versión 2.4 (Planeada)
 
 - Mejoras en el sistema de constantes
 - Soporte para múltiples zonas horarias

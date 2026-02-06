@@ -1546,8 +1546,8 @@ defmodule MiEtl.Application do
   defp child_cleaning do
     {Genserver.Cleaning, %{
       business: :all,
-      bq_config: Application.get_env(:mi_etl, :bigquery)[:configuration],
-      pg_config: Application.get_env(:mi_etl, :postgres)[:connection],
+      bq_pool_name: :bigquery_pool,  # Nombre del pool de BigQuery
+      pg_pool_name: :postgres_pool,  # Nombre del pool de PostgreSQL
       periodicity: Application.get_env(:mi_etl, :activation_time)[:cleanup_in_bigquery][:periodicity] |> notification_frequency(),
       webhook_url: slack_webhook_url()
     }}

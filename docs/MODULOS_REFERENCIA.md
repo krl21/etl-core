@@ -304,7 +304,28 @@ Sube datos de PostgreSQL a BigQuery periódicamente. Soporta modo pool y modo le
 
 ### `Genserver.Cleaning`
 
-Limpia registros ya procesados de PostgreSQL periódicamente.
+GenServer que ejecuta la limpieza periódica de datos procesados en PostgreSQL y BigQuery.
+
+**Configuración:**
+```elixir
+{Genserver.Cleaning, %{
+  business: :all,  # O un business_key específico (:record, :task, etc.)
+  bq_pool_name: :bigquery_pool,  # Nombre del pool de BigQuery (requerido)
+  pg_pool_name: :postgres_pool,  # Nombre del pool de PostgreSQL (requerido)
+  periodicity: periodicidad,  # Intervalo en milisegundos
+  webhook_url: webhook_url  # URL de webhook para notificaciones (opcional)
+}}
+```
+
+**Modos de operación:**
+- **Modo `:all`**: Limpia todas las tablas registradas que implementan `CleanableTable`
+- **Modo específico**: Limpia solo la tabla del `business_key` especificado
+
+**Funcionalidad:**
+- Limpia duplicados en BigQuery usando `Cleaning.Cleaner` con consulta SQL optimizada
+- Elimina registros procesados de PostgreSQL (con `estado_analisis = "analizado_en_bq"`)
+- Ejecuta periódicamente según la configuración
+- Usa pools de conexiones para mejor rendimiento
 
 ---
 
@@ -759,6 +780,57 @@ defmodule MiApp.Record do
   end
 end
 ```
+
+---
+
+### `Cleaning.Cleaner`
+
+Módulo que ejecuta la lógica de limpieza para tablas que implementan `CleanableTable`.
+
+**Funciones principales:**
+
+| Función | Descripción |
+|---------|-------------|
+| `run/3` | Ejecuta limpieza de BigQuery para un business_key específico |
+| `run_all/2` | Ejecuta limpieza de BigQuery para todas las tablas habilitadas |
+| `run_for_module/3` | Ejecuta limpieza de BigQuery para un módulo específico |
+| `run_postgres/3` | Ejecuta limpieza de PostgreSQL para un business_key |
+| `run_all_postgres/2` | Ejecuta limpieza de PostgreSQL para todas las tablas |
+
+**Limpieza de BigQuery (v2.3+):**
+
+La limpieza de BigQuery utiliza una **consulta SQL optimizada** que elimina duplicados de forma atómica:
+
+```sql
+CREATE OR REPLACE TABLE dataset.table_name AS
+SELECT *
+FROM dataset.table_name
+QUALIFY
+  ROW_NUMBER() OVER (
+    PARTITION BY unique_id
+    ORDER BY timestamp DESC
+  ) = 1;
+```
+
+**Características:**
+- **Operación atómica**: Una sola consulta SQL en lugar de múltiples consultas
+- **Alto rendimiento**: Eliminación directa sin cargar todos los IDs en memoria
+- **Mantiene el más reciente**: Usa `ROW_NUMBER()` con `ORDER BY timestamp DESC` para conservar el registro más actualizado
+
+**Ejemplo de uso:**
+```elixir
+# Limpiar una tabla específica de BigQuery
+Cleaning.Cleaner.run(:record, :bigquery_pool, [webhook_url: webhook_url])
+
+# Limpiar todas las tablas habilitadas de BigQuery
+Cleaning.Cleaner.run_all(:bigquery_pool, [webhook_url: webhook_url])
+
+# Limpieza de PostgreSQL
+Cleaning.Cleaner.run_postgres(:record, :postgres_pool, [webhook_url: webhook_url])
+Cleaning.Cleaner.run_all_postgres(:postgres_pool, [webhook_url: webhook_url])
+```
+
+**Nota:** La API pública se mantiene igual desde v2.2. La optimización es interna y transparente para los usuarios.
 
 ---
 
