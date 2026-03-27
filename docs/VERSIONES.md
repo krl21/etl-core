@@ -6,15 +6,43 @@ Este documento describe las versiones de `etl-core`, sus características princi
 
 ## Tabla de Contenidos
 
-1. [Versión 2.3 (Actual)](#versión-23-actual)
-2. [Versión 2.2](#versión-22)
-3. [Versión 2.1](#versión-21)
-4. [Versión 1.2.0](#versión-120)
-5. [Versiones Anteriores](#versiones-anteriores)
+1. [Versión 2.4 (Actual)](#versión-24-actual)
+2. [Versión 2.3](#versión-23)
+3. [Versión 2.2](#versión-22)
+4. [Versión 2.1](#versión-21)
+5. [Versión 1.2.0](#versión-120)
+6. [Versiones Anteriores](#versiones-anteriores)
 
 ---
 
-## Versión 2.3 (Actual)
+## Versión 2.4 (Actual)
+
+### Características Principales
+
+- **Resiliencia RabbitMQ**: El consumidor AMQP se reinicia de forma coordinada cuando cae la conexión (p. ej. `socket_closed_unexpectedly`), evitando que el supervisor interno del cliente AMQP agote reinicios
+
+### Nuevo en esta Versión
+
+#### `Genserver.RabbitConsumer`
+
+- **`Process.monitor/1`** sobre el PID del proceso de conexión AMQP (`connection.pid`)
+- Al recibir **`{:DOWN, ref, :process, _pid, reason}`** (conexión cerrada o proceso muerto):
+  - Se registra error y opcionalmente se notifica a Slack (`webhook_url`)
+  - El GenServer termina con **`{:stop, {:amqp_connection_down, reason}, state}`** para que el **supervisor de la aplicación** vuelva a levantar el consumidor con `AMQP.Connection.open/1` nuevo
+- Los mensajes **sin ack** vuelven a la cola en RabbitMQ
+- **`terminate/2`**: cierre seguro de la conexión AMQP (`close_amqp_safely/1`) incluso si el proceso de conexión ya murió
+
+### Módulos Afectados
+
+- `Genserver.RabbitConsumer`: monitor de conexión, `handle_info` para `{:DOWN, ...}`, `terminate/2`, `close_amqp_safely/1`
+
+### Migración desde v2.3
+
+- **RabbitConsumer**: misma tupla de arranque; no hay nuevas claves en `info` obligatorias
+
+---
+
+## Versión 2.3
 
 ### Características Principales
 
@@ -304,6 +332,17 @@ children = [
    - La API pública se mantiene igual
    - Mejoras de rendimiento automáticas
 
+### De v2.3 a v2.4
+
+1. **Actualizar dependencias en `mix.exs`**:
+```elixir
+{:etl_core, git: "https://github.com/krl21/etl-core.git", branch: "v2.4"}
+```
+
+2. **No se requieren cambios de firma en el código existente**
+   - `Genserver.RabbitConsumer` se comporta igual ante arranque; mejora la recuperación cuando RabbitMQ o la red cortan el socket
+   - Si se interpretaba el entero de `{:ok, n}` en limpieza BigQuery como “filas borradas”, tener en cuenta que en éxito puede ser **0** (reemplazo de tabla)
+
 ---
 
 ## Notas de Versión
@@ -327,6 +366,10 @@ children = [
 
 ### Breaking Changes
 
+**v2.3 → v2.4**: Ninguno en firmas públicas
+- Comportamiento mejorado ante caída AMQP (reinicio del consumidor por el supervisor de la app)
+- Limpieza BigQuery: retorno `{:ok, 0}` en el camino de éxito (sin conteo de filas); si algún código dependía del número devuelto, revisar
+
 **v2.2 → v2.3**: Ninguno
 - Refactorización interna transparente
 - API pública sin cambios
@@ -344,7 +387,7 @@ children = [
 
 ## Roadmap Futuro
 
-### Versión 2.4 (Planeada)
+### Próximas mejoras (post v2.4)
 
 - Mejoras en el sistema de constantes
 - Soporte para múltiples zonas horarias
