@@ -146,11 +146,9 @@ defmodule Stuff do
     Generates a random string with the symbols '0123456789abcdefghijklmnopqrstuvwxyz'
 
     ### Parameter:
-
         - len: Integer. Chain length.
 
     ### Return:
-
         - String.
 
     """
@@ -161,7 +159,175 @@ defmodule Stuff do
         for _ <- 1..len, into: "", do: <<Enum.at(symbols, :crypto.rand_uniform(0, symbol_count))>>
     end
 
+    @doc"""
+    Searches for a file by its name, searching from the root
 
+    ### Parameter:
+        - filename: String. Filename or suffix to search for.
+
+    ### Return:
+        - String. Full path to the file, or raises an error if not found.
+    """
+    def find_project_file(filename) when is_binary(filename) do
+        search_paths = build_search_paths()
+
+        Enum.find_value(search_paths, fn path ->
+            find_file_recursive(path, filename)
+        end) || raise "File not found: #{filename}. Searched in: #{inspect(search_paths)}"
+    end
+
+    #
+    # Builds a list of search paths to look for project files
+    #
+    # ### Return:
+    #     - List of String. List of directory paths to search
+    #
+    defp build_search_paths() do
+        project_root = get_project_root_from_beam()
+
+        [
+            Path.join(__DIR__, "../constants"),
+            Path.join(__DIR__, "../../constants"),
+            Path.join(__DIR__, "../../../constants"),
+            Path.join(__DIR__, "../../../../constants"),
+            Path.join(__DIR__, "../../../../../constants"),
+            Path.join(__DIR__, "../../../../../../constants"),
+            Path.join(__DIR__, "../../../../../../../constants"),
+            Path.join(__DIR__, "../../../../../../../../constants"),
+            "/app",
+            get_deps_path_from_mix(),
+            get_deps_source_from_project_root(project_root),
+            get_deps_from_cwd(),
+            project_root,
+            File.cwd!()
+        ]
+        |> Enum.filter(&(&1 != nil))
+        |> Enum.uniq()
+    end
+
+    #
+    # Gets the etl_core dependency path from Mix.Project.deps_paths()
+    # This works when etl_core is used as a git dependency
+    #
+    # ### Return:
+    #     - String | nil. Path to deps/etl_core, or nil if not found
+    #
+    defp get_deps_path_from_mix do
+        try do
+            Mix.Project.deps_paths()
+            |> Map.get(:etl_core)
+        rescue
+            _ -> nil
+        end
+    end
+
+    #
+    # Gets the project root by navigating from the compiled beam file location
+    # When used as dependency, beam is in: _build/*/lib/etl_core/ebin
+    # Navigates up: ebin -> lib/etl_core -> _build/* -> project root
+    #
+    # ### Return:
+    #     - String | nil. Project root path, or nil if not found
+    #
+    defp get_project_root_from_beam do
+        try do
+            beam_path = :code.which(__MODULE__)
+            if beam_path do
+                beam_path
+                |> to_string()
+                |> Path.dirname()  # ebin
+                |> Path.join("..")  # lib/etl_core
+                |> Path.expand()
+                |> Path.join("..")  # _build/*
+                |> Path.expand()
+                |> Path.join("..")  # project root
+                |> Path.expand()
+            else
+                nil
+            end
+        rescue
+            _ -> nil
+        end
+    end
+
+    #
+    # Gets the deps/etl_core path from the project root
+    # Used when etl_core is compiled as a git dependency
+    #
+    # ### Parameter:
+    #     - project_root: String | nil. Project root path
+    #
+    # ### Return:
+    #     - String | nil. Path to deps/etl_core, or nil if not found
+    #
+    defp get_deps_source_from_project_root(project_root) do
+        try do
+            if project_root do
+                deps_etl_core = Path.join(project_root, "deps/etl_core")
+                if File.exists?(deps_etl_core), do: deps_etl_core, else: nil
+            else
+                nil
+            end
+        rescue
+            _ -> nil
+        end
+    end
+
+    #
+    # Gets the deps/etl_core path from the current working directory
+    # Used when compiling from the project root
+    #
+    # ### Return:
+    #     - String | nil. Path to deps/etl_core, or nil if not found
+    #
+    defp get_deps_from_cwd do
+        try do
+            cwd = File.cwd!()
+            deps_path = Path.join(cwd, "deps/etl_core")
+            if File.exists?(deps_path), do: deps_path, else: nil
+        rescue
+            _ -> nil
+        end
+    end
+
+    #
+    # Recursively searches for a file starting from a directory
+    #
+    # ### Parameters:
+    #     - dir: String. Directory to search in
+    #     - filename: String. Filename to search for
+    #
+    # ### Return:
+    #     - String. Full path to the file, or nil if not found
+    #
+    defp find_file_recursive(dir, filename) do
+        full_path = Path.join(dir, filename)
+
+        if File.exists?(full_path) do
+            Path.expand(full_path)
+        else
+            case File.ls(dir) do
+                {:ok, entries} ->
+                    entries
+                    |> Enum.reject(fn entry ->
+                        # entry in ["_build", "deps", "node_modules"] or
+                        String.starts_with?(entry, ".")
+                    end)
+                    |> Enum.find_value(fn entry ->
+                        entry_path = Path.join(dir, entry)
+
+                        if File.dir?(entry_path) do
+                            find_file_recursive(entry_path, filename)
+                        else
+                            nil
+                        end
+                    end)
+
+                {:error, _} ->
+                    nil
+            end
+        end
+    end
 
 
 end

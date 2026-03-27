@@ -7,41 +7,40 @@ defmodule Genserver.RabbitConsumerByBatch do
     """
 
     require Logger
-    import Genserver.Utils.PWorker
+    import Genserver.Protocols.PWorker
     import Stuff, only: [random_string_generate: 1]
-    import Connection.Odbc, only: [connect: 1]
+    alias Genserver.Monitor
 
 
-    def start_link({%{config: %{queue: queue}} = _queue_info, _configuration_amqp, _batch_size, _data_source, _milliseconds_timeout} = info) do
-        GenServer.start_link(__MODULE__, info, name: :"#{__MODULE__}.#{queue}")
+    def start_link({%{config: %{queue: queue}} = _queue_info, _configuration_amqp, _batch_size, _milliseconds_timeout, _info} = args) do
+        GenServer.start_link(__MODULE__, args, name: :"#{__MODULE__}.#{queue}")
     end
 
-    def init({%{business: business, config: %{queue: queue} = queue_info}, configuration_amqp, batch_size, data_source, milliseconds_timeout}) do
+    def init({%{business: business, config: %{queue: queue} = queue_info}, configuration_amqp, batch_size, milliseconds_timeout, info}) do
+        Monitor.register(self(), to_string(__MODULE__) <> "." <> to_string(business) <> "." <> to_string(queue))
+
         Logger.info("#{to_string(__MODULE__)}. Initializing. Associated queue: ---#{to_string(queue)}---. Batch size: #{to_string(batch_size)}")
 
         {:ok, connection} = configuration_amqp |> AMQP.Connection.open()
         {:ok, channel} = AMQP.Channel.open(connection)
 
-        Logger.info("#{to_string(__MODULE__)}. Created the process to communicate with ODBC-BigQuery")
-        pid_odbc = data_source |> connect()
-
         setup_queue(channel, queue_info)
         variable_wait(channel, queue, milliseconds_timeout)
 
-        {:ok, {channel, queue, pid_odbc, batch_size, milliseconds_timeout, business}}
+        {:ok, {channel, queue, batch_size, milliseconds_timeout, business, info}}
     end
 
-    def handle_info(:update, {channel, queue, pid_odbc, batch_size, milliseconds_timeout, business}) do
+    def handle_info(:update, {channel, queue, batch_size, milliseconds_timeout, business, info}) do
         get_messages(channel, queue, batch_size)
         |> perform(
             random_string_generate(15),
-            pid_odbc,
-            business
+            business,
+            info
         )
 
         variable_wait(channel, queue, milliseconds_timeout)
 
-        {:noreply, {channel, queue, pid_odbc, batch_size, milliseconds_timeout, business}}
+        {:noreply, {channel, queue, batch_size, milliseconds_timeout, business, info}}
     end
 
     #
