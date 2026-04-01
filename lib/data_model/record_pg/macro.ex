@@ -219,7 +219,7 @@ defmodule DataModel.RecordPg.Macro do
         - `group_by_unique_id/1` - Group payloads by unique_id
         - `build_data/3` - Build record data from payloads
         - `apply_post_processing/3` - Apply special post-processing
-        - `prepare_record/4` - Prepare a single record for insert
+        - `prepare_record/4` - Prepare one or more records for insert
         - `execute_insert/3` - Execute insert in PostgreSQL
         - `execute_insert_with_retry/3` - Execute with retry strategy
         - `handle_processing_error/4` - Handle errors
@@ -276,7 +276,7 @@ defmodule DataModel.RecordPg.Macro do
                 - additional_info (any) - Additional context
 
             ### Returns
-                - Keyword list with record data
+                - Keyword list with record data for a single row, or List of keyword lists (one keyword list per DB row) when the entity expands one message into several inserts
             """
             def build_data(payloads, stored_data, _additional_info) do
                 payload = List.last(payloads)
@@ -309,7 +309,7 @@ defmodule DataModel.RecordPg.Macro do
             defoverridable apply_post_processing: 3
 
             @doc """
-            Prepares a single record for PostgreSQL insert.
+            Prepares one or more PostgreSQL rows from `build_data/3`.
 
             ### Parameters
                 - unique_id (String) - Unique record identifier
@@ -318,28 +318,65 @@ defmodule DataModel.RecordPg.Macro do
                 - additional_info (any) - Additional context
 
             ### Returns
-                - `{:ok, record_map}` - Map ready for Postgres.insert
+                - `{:ok, :single, record_map}` when `build_data/3` returns a keyword list (one row), or `{:ok, :multi, [record_map, ...]}` when it returns a list of keyword lists (several rows)
                 - `{:error, reason}` - If there's an error
             """
             def prepare_record(unique_id, payloads, stored_data, additional_info) do
                 try do
                     data = build_data(payloads, stored_data, additional_info)
 
-                    # Convert keyword list to map for JSON storage
-                    informacion_map = Enum.into(data, %{})
+                    case records_from_build_data(unique_id, data) do
+                        {:single, record} ->
+                            {:ok, :single, record}
 
-                    record = %{
-                        id_nodo: unique_id,
-                        tipo: value_type(),
-                        informacion: informacion_map
-                    }
-
-                    {:ok, record}
+                        {:multi, records} ->
+                            {:ok, :multi, records}
+                    end
                 rescue
                     error -> {:error, error}
                 end
             end
             defoverridable prepare_record: 4
+
+            #
+            # Converts the build_data result into a record map or a list of record maps.
+            #
+            # ### Parameters:
+            #     - unique_id (String) - Unique record identifier
+            #     - data (Keyword list) - Record data
+            #
+            # ### Returns:
+            #     - `{:single, record_map}` when `data` is a keyword list (one row), or `{:multi, [record_map, ...]}` when it is a list of keyword lists (several rows)
+            #
+            defp records_from_build_data(unique_id, data) do
+                data
+                |> List.first()
+                |> is_list()
+                |> case do
+                    true ->
+                        {:multi, Enum.map(data, &record_from_row_keywords(unique_id, &1))}
+                    false ->
+                        {:single, record_from_row_keywords(unique_id, data)}
+                end
+            end
+
+            #
+            # Converts a list of keyword lists into a record map.
+            #
+            # ### Parameters:
+            #     - id (String) - Unique record identifier
+            #     - row_kw (Keyword list) - Record data
+
+            # ### Returns:
+            #     - Map
+            #
+            defp record_from_row_keywords(id, row_kw) when is_list(row_kw) do
+                %{
+                    id_nodo: id_nodo,
+                    tipo: value_type(),
+                    informacion: Enum.into(info_kw, %{})
+                }
+            end
 
             @doc """
             Executes the insert operation in PostgreSQL using insert_many.

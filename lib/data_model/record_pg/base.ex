@@ -42,8 +42,14 @@ defmodule DataModel.RecordPg.Base do
                     |> Enum.map(fn key ->
                         prepare_record(key, Map.get(grouped, key), [], [])
                     end)
-                    |> Enum.filter(&match?({:ok, _}, &1))
-                    |> Enum.map(fn {:ok, record} -> record end)
+                    |> Enum.filter(fn
+                        {:ok, _, _} -> true
+                        _ -> false
+                    end)
+                    |> Enum.flat_map(fn
+                        {:ok, :multi, rows} when is_list(rows) -> rows
+                        {:ok, :single, row} when is_map(row) -> [row]
+                    end)
 
                 execute_insert(records, pg_conn, batch_id)
             end
@@ -60,7 +66,7 @@ defmodule DataModel.RecordPg.Base do
     | `group_by_unique_id/1` | Group payloads by unique_id |
     | `build_data/3` | Build record from payloads |
     | `apply_post_processing/3` | Apply post-processing |
-    | `prepare_record/4` | Prepare single record for insert |
+    | `prepare_record/4` | Prepare one or more records for insert |
     | `execute_insert/3` | Execute insert in PostgreSQL |
     | `handle_processing_error/4` | Handle errors |
 
