@@ -364,17 +364,17 @@ defmodule DataModel.RecordPg.Macro do
             # Converts a list of keyword lists into a record map.
             #
             # ### Parameters:
-            #     - id (String) - Unique record identifier
-            #     - row_kw (Keyword list) - Record data
+            #     - id_nodo (String) - Unique record identifier
+            #     - data (Keyword list) - Record data
 
             # ### Returns:
             #     - Map
             #
-            defp record_from_row_keywords(id, row_kw) when is_list(row_kw) do
+            defp record_from_row_keywords(id_nodo, data) when is_list(data) do
                 %{
                     id_nodo: id_nodo,
                     tipo: value_type(),
-                    informacion: Enum.into(info_kw, %{})
+                    informacion: Enum.into(data, %{})
                 }
             end
 
