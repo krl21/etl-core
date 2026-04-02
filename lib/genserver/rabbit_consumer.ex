@@ -141,24 +141,41 @@ defmodule Genserver.RabbitConsumer do
           {:basic_deliver, payload, %{delivery_tag: delivery_tag}},
           %{channel: channel, queue: queue, business: business, info: info} = state
         ) do
-        payload
-        |> Poison.decode()
-        |> case do
-            {:ok, msg_decode} ->
-                [msg_decode]
-                |> perform(
-                    random_string_generate(15),
-                    business,
-                    info
-                )
 
-                AMQP.Basic.ack(channel, delivery_tag)
+        try do
+            payload
+            |> Poison.decode()
+            |> case do
+                {:ok, msg_decode} ->
+                    [msg_decode]
+                    |> perform(
+                        random_string_generate(15),
+                        business,
+                        info
+                    )
 
-            {:error, reason} ->
-                message = "#{to_string(__MODULE__)}. Error al decodificar mensaje: #{inspect(reason)}. Cola: #{queue}"
+                    AMQP.Basic.ack(channel, delivery_tag)
+
+                {:error, reason} ->
+                    message =
+                        "#{to_string(__MODULE__)}. Error al decodificar mensaje: #{inspect(reason)}. Cola: #{queue}"
+
+                    Logger.error(message)
+                    notify_error(info, message)
+                    AMQP.Basic.reject(channel, delivery_tag, requeue: false)
+            end
+        rescue
+            e ->
+                stacktrace = __STACKTRACE__
+
+                message =
+                    "#{to_string(__MODULE__)}. Error inesperado al procesar mensaje: #{Exception.message(e)}. Cola: #{queue} \nPayload: #{inspect(payload)}"
+
                 Logger.error(message)
-                notify_error(info, message)
+                Logger.error(Exception.format(:error, e, stacktrace))
                 AMQP.Basic.reject(channel, delivery_tag, requeue: false)
+                notify_error(info, message)
+
         end
 
         {:noreply, state}
