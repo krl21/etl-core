@@ -433,3 +433,17 @@ defimpl Type.PConvertTo, for: Tuple do
 
 
 end
+
+defimpl Type.PConvertTo, for: Date do
+
+    def convert_to(x, :date) do
+        x
+    end
+
+    def convert_to(x, :string) do
+        x
+        |> Poison.encode!()
+        |> Poison.decode!()
+    end
+
+end
