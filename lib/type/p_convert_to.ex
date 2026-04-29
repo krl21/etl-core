@@ -417,6 +417,11 @@ defimpl Type.PConvertTo, for: DateTime do
             |> Poison.encode!()
             |> Poison.decode!()
     end
+
+    def convert_to(x, :date) do
+        x
+        |> DateTime.to_date()
+    end
 end
 
 defimpl Type.PConvertTo, for: Tuple do
@@ -435,6 +440,10 @@ defimpl Type.PConvertTo, for: Tuple do
 end
 
 defimpl Type.PConvertTo, for: Date do
+
+    def convert_to(nil, _type) do
+        nil
+    end
 
     def convert_to(x, :date) do
         x
