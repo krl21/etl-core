@@ -6,16 +6,43 @@ Este documento describe las versiones de `etl-core`, sus características princi
 
 ## Tabla de Contenidos
 
-1. [Versión 2.4 (Actual)](#versión-24-actual)
-2. [Versión 2.3](#versión-23)
-3. [Versión 2.2](#versión-22)
-4. [Versión 2.1](#versión-21)
-5. [Versión 1.2.0](#versión-120)
-6. [Versiones Anteriores](#versiones-anteriores)
+1. [Versión 2.5 (Actual)](#versión-25-actual)
+2. [Versión 2.4](#versión-24)
+3. [Versión 2.3](#versión-23)
+4. [Versión 2.2](#versión-22)
+5. [Versión 2.1](#versión-21)
+6. [Versión 1.2.0](#versión-120)
+7. [Versiones Anteriores](#versiones-anteriores)
 
 ---
 
-## Versión 2.4 (Actual)
+## Versión 2.5 (Actual)
+
+### Características Principales
+
+- **Documentación BigQuery**: Guía de referencia centralizada para ODBC, imagen Docker del driver, ejemplos de conexión y consultas, y tablas/atributos por negocio
+
+### Nuevo en esta Versión
+
+#### `docs/BIGQUERY_GUIA_REFERENCIA.md`
+
+- Imagen Docker recomendada (`googlebigqueryodbc:3.0.0-prod`) y registros asociados
+- Pasos de conexión ODBC desde Elixir (`:odbc`, DSN, warehouse)
+- Ejemplos de consultas `SELECT`
+- Sección de tablas y atributos por proyecto ETL (New Vehicles, Transfer Vehicles, Leasing)
+
+### Módulos Afectados
+
+- Ningún cambio en firmas públicas de código obligatorio para esta versión documentada; el foco es documentación operativa de BigQuery
+
+### Migración desde v2.4
+
+- **Sin cambios de API**: las aplicaciones que ya usan `Pool.BigQuery` y `Connection.Odbc` siguen igual
+- Opcional: usar la guía para homogeneizar configuración DSN/warehouse y consultas de diagnóstico
+
+---
+
+## Versión 2.4
 
 ### Características Principales
 
@@ -343,6 +370,16 @@ children = [
    - `Genserver.RabbitConsumer` se comporta igual ante arranque; mejora la recuperación cuando RabbitMQ o la red cortan el socket
    - Si se interpretaba el entero de `{:ok, n}` en limpieza BigQuery como “filas borradas”, tener en cuenta que en éxito puede ser **0** (reemplazo de tabla)
 
+### De v2.4 a v2.5
+
+1. **Actualizar dependencias en `mix.exs`**:
+```elixir
+{:etl_core, git: "https://github.com/krl21/etl-core.git", branch: "v2.5"}
+```
+
+2. **Sin cambios obligatorios de código**
+   - Revisar opcionalmente `docs/BIGQUERY_GUIA_REFERENCIA.md` para operación y troubleshooting de BigQuery por ODBC
+
 ---
 
 ## Notas de Versión
@@ -366,6 +403,9 @@ children = [
 
 ### Breaking Changes
 
+**v2.4 → v2.5**: Ninguno
+- Incorporación de documentación (`BIGQUERY_GUIA_REFERENCIA.md`); sin cambios en contratos de módulos del core descritos en esta versión
+
 **v2.3 → v2.4**: Ninguno en firmas públicas
 - Comportamiento mejorado ante caída AMQP (reinicio del consumidor por el supervisor de la app)
 - Limpieza BigQuery: retorno `{:ok, 0}` en el camino de éxito (sin conteo de filas); si algún código dependía del número devuelto, revisar
@@ -387,7 +427,7 @@ children = [
 
 ## Roadmap Futuro
 
-### Próximas mejoras (post v2.4)
+### Próximas mejoras (post v2.5)
 
 - Mejoras en el sistema de constantes
 - Soporte para múltiples zonas horarias
@@ -405,6 +445,7 @@ children = [
 
 Para preguntas sobre versiones específicas o migración, consultar:
 - `docs/ARQUITECTURA.md` - Arquitectura del sistema
+- `docs/BIGQUERY_GUIA_REFERENCIA.md` - Referencia BigQuery (ODBC, Docker, tablas por negocio)
 - `docs/MODULOS_REFERENCIA.md` - Referencia de módulos
 - `docs/GUIA_CREAR_ETL.md` - Guía para crear nuevos ETLs
 
