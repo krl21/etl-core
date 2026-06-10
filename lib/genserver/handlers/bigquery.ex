@@ -67,8 +67,10 @@ defmodule Genserver.Handlers.Bigquery do
         - `{:ok, count}` - Number of records uploaded
         - `{:error, reason}` - Upload error
     """
-    def run(business, bq_conn, pg_conn, pg_table, bq_table, tipo, batch_id, batch_size, webhook_url) do
-        Postgres.get_pending_bq(pg_conn, pg_table, tipo)
+    def run(business, bq_conn, pg_conn, pg_table, bq_table, tipo, batch_id, batch_size, webhook_url, pending_limit \\ nil) do
+        pending_opts = if pending_limit, do: [limit: pending_limit], else: []
+
+        Postgres.get_pending_bq(pg_conn, pg_table, tipo, pending_opts)
         |> case do
             {:ok, records} when records == [] ->
                 {:ok, 0}
@@ -76,7 +78,7 @@ defmodule Genserver.Handlers.Bigquery do
             {:ok, records} ->
 
                 # Procesa cada grupo, insertando en Bigquery el registro más actualizado posible
-                {successful_ids, failed_ids, uploaded_count} =
+                {successful_id_nodos, failed_ids, uploaded_count} =
                     records
                     |> Enum.group_by(&Map.get(&1, :id_nodo))
                     |> process_grouped_records(
@@ -87,9 +89,8 @@ defmodule Genserver.Handlers.Bigquery do
                         webhook_url
                     )
 
-                # Marca como enviado en Bigquery los registros exitosos
-                if not Enum.empty?(successful_ids) do
-                    Postgres.mark_as_sent_to_bq(pg_conn, pg_table, successful_ids)
+                if not Enum.empty?(successful_id_nodos) do
+                    Postgres.mark_as_sent_to_bq_by_id_nodos(pg_conn, pg_table, successful_id_nodos, tipo)
                 end
 
                 # Marca como con problemas los registros fallidos que se analizaron antes de los exitosos
@@ -99,7 +100,7 @@ defmodule Genserver.Handlers.Bigquery do
 
                 run_post_process(business, tipo, %{
                     uploaded_count: uploaded_count,
-                    successful_ids: successful_ids,
+                    successful_id_nodos: successful_id_nodos,
                     failed_ids: failed_ids,
                     batch_id: batch_id,
                     bq_table: bq_table,
@@ -134,17 +135,19 @@ defmodule Genserver.Handlers.Bigquery do
         - `{:ok, count}` - Número de registros subidos
         - `{:error, reason}` - Error de carga
     """
-    def run_with_pool(business, bq_conn, pg_pool_name, pg_table, bq_table, tipo, batch_id, batch_size, webhook_url) do
+    def run_with_pool(business, bq_conn, pg_pool_name, pg_table, bq_table, tipo, batch_id, batch_size, webhook_url, pending_limit \\ nil) do
         alias Connection.PostgresPool
 
-        PostgresPool.get_pending_bq(pg_pool_name, pg_table, tipo)
+        pending_opts = if pending_limit, do: [limit: pending_limit], else: []
+
+        PostgresPool.get_pending_bq(pg_pool_name, pg_table, tipo, pending_opts)
         |> case do
             {:ok, records} when records == [] ->
                 {:ok, 0}
 
             {:ok, records} ->
                 # Procesa cada grupo, insertando en BigQuery el registro más actualizado
-                {successful_ids, failed_ids, uploaded_count} =
+                {successful_id_nodos, failed_ids, uploaded_count} =
                     records
                     |> Enum.group_by(&Map.get(&1, :id_nodo))
                     |> process_grouped_records(
@@ -155,9 +158,8 @@ defmodule Genserver.Handlers.Bigquery do
                         webhook_url
                     )
 
-                # Marca como enviado en BigQuery los registros exitosos
-                if not Enum.empty?(successful_ids) do
-                    PostgresPool.mark_as_sent_to_bq(pg_pool_name, pg_table, successful_ids)
+                if not Enum.empty?(successful_id_nodos) do
+                    PostgresPool.mark_as_sent_to_bq_by_id_nodos(pg_pool_name, pg_table, successful_id_nodos, tipo)
                 end
 
                 # Marca como con problemas los registros fallidos
@@ -167,7 +169,7 @@ defmodule Genserver.Handlers.Bigquery do
 
                 run_post_process(business, tipo, %{
                     uploaded_count: uploaded_count,
-                    successful_ids: successful_ids,
+                    successful_id_nodos: successful_id_nodos,
                     failed_ids: failed_ids,
                     batch_id: batch_id,
                     bq_table: bq_table,
@@ -236,7 +238,7 @@ defmodule Genserver.Handlers.Bigquery do
     #     - bq_table, bq_conn, batch_id, batch_size, webhook_url: Config params
     #
     # ### Returns:
-    #     - {list_of_successful_ids, list_of_failed_ids, count_of_uploaded_records}
+    #     - {list_of_successful_id_nodos, list_of_failed_ids, count_of_uploaded_records}
     #
     defp process_insert_results(results, group_info, bq_table, bq_conn, batch_id, batch_size, webhook_url) do
         # Crea un mapa de id_nodo => result para una búsqueda rápida
@@ -257,15 +259,14 @@ defmodule Genserver.Handlers.Bigquery do
             end)
 
         # Procesa cada grupo
-        {all_successful_ids, all_failed_ids, uploaded_count} =
+        {all_successful_id_nodos, all_failed_ids, uploaded_count} =
             group_info
             |> Enum.reduce(
                 {[], [], 0},
-                fn {id_nodo, all_ids, remaining_records}, {ids_acc, failed_acc, count_acc} ->
+                fn {id_nodo, _all_ids, remaining_records}, {id_nodos_acc, failed_acc, count_acc} ->
                     case Map.get(result_map, id_nodo) do
                         {:ok, _} ->
-                            # Éxito: marca todos los registros en este grupo como enviados
-                            {ids_acc ++ all_ids, failed_acc, count_acc + 1}
+                            {id_nodos_acc ++ [id_nodo], failed_acc, count_acc + 1}
 
                         {:error, first_failed_id} ->
                             # Primer registro fallido - intenta los registros restantes
@@ -278,17 +279,17 @@ defmodule Genserver.Handlers.Bigquery do
                                 batch_id,
                                 batch_size,
                                 webhook_url,
-                                {ids_acc, failed_acc, count_acc}
+                                {id_nodos_acc, failed_acc, count_acc}
                             )
 
                         nil ->
                             # Sin resultado para este id_nodo
-                            {ids_acc, failed_acc, count_acc}
+                            {id_nodos_acc, failed_acc, count_acc}
                     end
                 end
             )
 
-        {all_successful_ids, all_failed_ids, uploaded_count}
+        {all_successful_id_nodos, all_failed_ids, uploaded_count}
     end
 
     #
@@ -301,18 +302,19 @@ defmodule Genserver.Handlers.Bigquery do
     #     - {ids_acc, failed_acc, count_acc}: Accumulator for successful/failed ids and count
     #
     # ### Returns:
-    #     - {updated_ids_acc, updated_failed_acc, updated_count_acc}
+    #     - {updated_id_nodos_acc, updated_failed_acc, updated_count_acc}
     #
-    defp try_remaining_records([], tried_failed_ids, _bq_table, _bq_conn, _batch_id, _batch_size, _webhook_url, {ids_acc, failed_acc, count_acc}) do
+    defp try_remaining_records([], tried_failed_ids, _bq_table, _bq_conn, _batch_id, _batch_size, _webhook_url, {id_nodos_acc, failed_acc, count_acc}) do
         # No hay más registros para intentar - todos los registros intentados se marcan como fallidos
-        {ids_acc, failed_acc ++ tried_failed_ids, count_acc}
+        {id_nodos_acc, failed_acc ++ tried_failed_ids, count_acc}
     end
 
-    defp try_remaining_records([record | rest], tried_failed_ids, bq_table, bq_conn, batch_id, batch_size, webhook_url, {ids_acc, failed_acc, count_acc}) do
+    defp try_remaining_records([record | rest], tried_failed_ids, bq_table, bq_conn, batch_id, batch_size, webhook_url, {id_nodos_acc, failed_acc, count_acc}) do
         # Intenta insertar este registro individual
         current_id = Map.get(record, :id)
+        id_nodo = Map.get(record, :id_nodo)
         data = [{
-            Map.get(record, :id_nodo),
+            id_nodo,
             current_id,
             record,
             Sql.insert(bq_table, build_insert_values(record))
@@ -322,11 +324,7 @@ defmodule Genserver.Handlers.Bigquery do
 
         case results do
             [{:ok, _}] ->
-                # Exito: marca este registro y los registros restantes no intentados como enviados
-                # Marca los registros intentados previamente como fallidos
-                remaining_ids = Enum.map(rest, &Map.get(&1, :id))
-                successful_ids = [current_id | remaining_ids]
-                {ids_acc ++ successful_ids, failed_acc ++ tried_failed_ids, count_acc + 1}
+                {id_nodos_acc ++ [id_nodo], failed_acc ++ tried_failed_ids, count_acc + 1}
 
             _ ->
                 # Fallo: agrega el ID actual a la lista de fallidos y trata el siguiente registro
@@ -338,7 +336,7 @@ defmodule Genserver.Handlers.Bigquery do
                     batch_id,
                     batch_size,
                     webhook_url,
-                    {ids_acc, failed_acc, count_acc}
+                    {id_nodos_acc, failed_acc, count_acc}
                 )
         end
     end

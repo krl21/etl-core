@@ -49,7 +49,6 @@ defmodule Genserver.BigqueryUploader do
     import Time.Timem, only: [notification_frequency: 1]
     import Stuff, only: [random_string_generate: 1]
 
-
     @doc """
     Starts the GenServer to upload data to BigQuery.
 
@@ -68,6 +67,7 @@ defmodule Genserver.BigqueryUploader do
         - `:pg_table` (string) - Table name in PostgreSQL
         - `:periodicity` (map) - Activation periodicity
         - `:batch_size` (integer) - Number of records per batch
+        - `:pending_limit` (integer, optional) - Max distinct id_nodo per table per cycle (default: nil, no limit)
         - `:webhook_url` (string) - URL of the Slack webhook for errors
 
         ### Modo Legacy
@@ -78,6 +78,7 @@ defmodule Genserver.BigqueryUploader do
         - `:info` (list) - List of table configurations
         - `:periodicity` (map) - Activation periodicity
         - `:batch_size` (integer) - Number of records per batch
+        - `:pending_limit` (integer, optional) - Max distinct id_nodo per table per cycle (default: nil, no limit)
         - `:webhook_url` (string) - URL of the Slack webhook for errors
 
     ## Retorna
@@ -156,6 +157,7 @@ defmodule Genserver.BigqueryUploader do
             info: args.info,
             milliseconds_timeout: milliseconds_timeout,
             batch_size: args.batch_size,
+            pending_limit: Map.get(args, :pending_limit),
             webhook_url: args.webhook_url
         }
     end
@@ -180,6 +182,7 @@ defmodule Genserver.BigqueryUploader do
         info: args.info,
         milliseconds_timeout: milliseconds_timeout,
         batch_size: args.batch_size,
+        pending_limit: Map.get(args, :pending_limit),
         webhook_url: args.webhook_url
         }
     end
@@ -225,23 +228,37 @@ defmodule Genserver.BigqueryUploader do
             info: info,
             milliseconds_timeout: milliseconds_timeout,
             batch_size: batch_size,
+            pending_limit: pending_limit,
             webhook_url: webhook_url
         } = state
 
-        try do
-            Pool.BigQuery.with_connection(bq_pool_name, fn bq_conn ->
-                Enum.each(info, fn table_config ->
+        Enum.each(info, fn table_config ->
+            try do
+                Pool.BigQuery.with_connection(bq_pool_name, fn bq_conn ->
                     batch_id = random_string_generate(15)
                     bq_table = Map.fetch!(table_config, :bq_table)
                     tipo = Map.fetch!(table_config, :tipo)
                     pg_table = Map.fetch!(table_config, :pg_table)
-                    Bigquery.run_with_pool(business, bq_conn, pg_pool_name, pg_table, bq_table, tipo, batch_id, batch_size, webhook_url)
+
+                    Bigquery.run_with_pool(
+                        business,
+                        bq_conn,
+                        pg_pool_name,
+                        pg_table,
+                        bq_table,
+                        tipo,
+                        batch_id,
+                        batch_size,
+                        webhook_url,
+                        pending_limit
+                    )
                 end)
-            end)
-        rescue
-            error ->
-                Logger.error("#{to_string(__MODULE__)}. Error in cycle load (pool mode): #{inspect(error)}")
-        end
+            rescue
+                error ->
+                    bq_table = Map.get(table_config, :bq_table, "unknown")
+                    Logger.error("#{to_string(__MODULE__)}. Error procesando tabla #{bq_table}: #{inspect(error)}")
+            end
+        end)
 
         variable_wait(:later, milliseconds_timeout)
         {:noreply, state}
@@ -265,6 +282,7 @@ defmodule Genserver.BigqueryUploader do
             info: info,
             milliseconds_timeout: milliseconds_timeout,
             batch_size: batch_size,
+            pending_limit: pending_limit,
             webhook_url: webhook_url
         } = state
 
@@ -284,7 +302,7 @@ defmodule Genserver.BigqueryUploader do
                 tipo = Map.fetch!(table_config, :tipo)
                 pg_table = Map.fetch!(table_config, :pg_table)
 
-                Bigquery.run(business, bq_conn, pg_conn, pg_table, bq_table, tipo, batch_id, batch_size, webhook_url)
+                Bigquery.run(business, bq_conn, pg_conn, pg_table, bq_table, tipo, batch_id, batch_size, webhook_url, pending_limit)
             end)
 
             Logger.info("#{to_string(__MODULE__)}. Ciclo de carga a BigQuery finalizado para negocio: #{to_string(business)}")

@@ -14,7 +14,7 @@ defprotocol Genserver.Protocols.PBigqueryPostProcess do
         - type_: String. Type field value used to differentiate processing logic.
         - context: Map. Context information containing:
             - :uploaded_count (integer) - Number of records successfully uploaded
-            - :successful_ids (list) - List of IDs that were successfully uploaded
+            - :successful_id_nodos (list) - List of id_nodo values successfully uploaded
             - :failed_ids (list) - List of IDs that failed to upload
             - :batch_id (string) - Batch identifier
             - :bq_table (string) - BigQuery table name

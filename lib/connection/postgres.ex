@@ -410,34 +410,18 @@ defmodule Connection.Postgres do
         - conn (pid | Map) - Active connection
         - table_name (String) - Table name
         - register_type (String | nil) - Optional type filter. If nil, returns all pending records.
+        - opts (Keyword) - Optional. `:limit` caps distinct id_nodo per fetch (uses DISTINCT ON).
 
     ### Returns
         - {:ok, records} - List of maps with records
         - {:error, reason} - Query error
     """
-    def get_pending_bq(conn, table_name, register_type \\ nil) do
+    def get_pending_bq(conn, table_name, register_type \\ nil, opts \\ []) do
         read_conn = get_read_conn(conn)
         sanitized_name = PostgresHelpers.sanitize_identifier(table_name)
 
         {query, params} =
-            register_type
-            |> case do
-                nil ->
-                    {"""
-                    SELECT id, id_nodo, tipo, informacion, fecha_creado, estado_analisis
-                    FROM #{sanitized_name}
-                    WHERE estado_analisis = '#{@unanalyzed_state}'
-                    ORDER BY id_nodo, fecha_creado DESC;
-                    """, []}
-
-                _ ->
-                    {"""
-                    SELECT id, id_nodo, tipo, informacion, fecha_creado, estado_analisis
-                    FROM #{sanitized_name}
-                    WHERE tipo = $1 AND estado_analisis = '#{@unanalyzed_state}'
-                    ORDER BY id_nodo, fecha_creado DESC;
-                    """, [register_type]}
-            end
+            PostgresHelpers.pending_bq_query(sanitized_name, register_type, @unanalyzed_state, opts)
 
         Postgrex.query(read_conn, query, params)
         |> case do
@@ -570,6 +554,54 @@ defmodule Connection.Postgres do
 
                 {:error, reason} = error ->
                     Logger.error("Error al actualizar estado_analisis en #{table_name}: #{inspect(reason)}")
+                    error
+            end
+        end
+    end
+
+    @doc """
+    Marks all pending rows for the given id_nodo values as sent to BigQuery.
+
+    When `register_type` is provided, only rows matching that tipo are updated.
+    This ensures older pending versions of the same expediente are not re-uploaded.
+    """
+    def mark_as_sent_to_bq_by_id_nodos(conn, table_name, id_nodos, register_type \\ nil)
+        when is_list(id_nodos) do
+
+        if Enum.empty?(id_nodos) do
+            {:ok, 0}
+        else
+            write_conn = get_write_conn(conn)
+            sanitized_name = PostgresHelpers.sanitize_identifier(table_name)
+            placeholders = PostgresHelpers.build_placeholders(length(id_nodos))
+
+            {query, params} =
+                case register_type do
+                    nil ->
+                        {"""
+                        UPDATE #{sanitized_name}
+                        SET estado_analisis = '#{@state_analyzed_in_bq}'
+                        WHERE id_nodo IN (#{placeholders})
+                          AND estado_analisis = '#{@unanalyzed_state}';
+                        """, id_nodos}
+
+                    _ ->
+                        {"""
+                        UPDATE #{sanitized_name}
+                        SET estado_analisis = '#{@state_analyzed_in_bq}'
+                        WHERE id_nodo IN (#{placeholders})
+                          AND tipo = $#{length(id_nodos) + 1}
+                          AND estado_analisis = '#{@unanalyzed_state}';
+                        """, id_nodos ++ [register_type]}
+                end
+
+            Postgrex.query(write_conn, query, params)
+            |> case do
+                {:ok, %{num_rows: count}} ->
+                    {:ok, count}
+
+                {:error, reason} = error ->
+                    Logger.error("Error al actualizar estado_analisis por id_nodo en #{table_name}: #{inspect(reason)}")
                     error
             end
         end

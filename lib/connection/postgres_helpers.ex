@@ -152,6 +152,69 @@ defmodule Connection.PostgresHelpers do
         }
     end
 
+    @doc """
+    Builds the SELECT query for pending BigQuery upload records.
+
+    ### Parameters
+        - sanitized_name: Sanitized table name
+        - register_type: Type filter or nil for all types
+        - unanalyzed_state: Value of estado_analisis for pending records
+        - opts: Keyword list with optional `:limit` (integer)
+
+    ### Returns
+        - `{query_string, params_list}`
+    """
+    def pending_bq_query(sanitized_name, register_type, unanalyzed_state, opts \\ []) do
+        limit = Keyword.get(opts, :limit)
+
+        case {register_type, limit} do
+            {nil, nil} ->
+                {"""
+                SELECT id, id_nodo, tipo, informacion, fecha_creado, estado_analisis
+                FROM #{sanitized_name}
+                WHERE estado_analisis = '#{unanalyzed_state}'
+                ORDER BY id_nodo, fecha_creado DESC;
+                """, []}
+
+            {type, nil} when is_binary(type) ->
+                {"""
+                SELECT id, id_nodo, tipo, informacion, fecha_creado, estado_analisis
+                FROM #{sanitized_name}
+                WHERE tipo = $1 AND estado_analisis = '#{unanalyzed_state}'
+                ORDER BY id_nodo, fecha_creado DESC;
+                """, [type]}
+
+            {nil, limit} when is_integer(limit) ->
+                {"""
+                SELECT id, id_nodo, tipo, informacion, fecha_creado, estado_analisis
+                FROM #{sanitized_name}
+                WHERE estado_analisis = '#{unanalyzed_state}'
+                  AND id_nodo IN (
+                    SELECT id_nodo FROM #{sanitized_name}
+                    WHERE estado_analisis = '#{unanalyzed_state}'
+                    GROUP BY id_nodo
+                    ORDER BY MAX(fecha_creado) DESC
+                    LIMIT $1
+                  )
+                ORDER BY id_nodo, fecha_creado DESC;
+                """, [limit]}
+
+            {type, limit} when is_binary(type) and is_integer(limit) ->
+                {"""
+                SELECT id, id_nodo, tipo, informacion, fecha_creado, estado_analisis
+                FROM #{sanitized_name}
+                WHERE tipo = $1 AND estado_analisis = '#{unanalyzed_state}'
+                  AND id_nodo IN (
+                    SELECT id_nodo FROM #{sanitized_name}
+                    WHERE tipo = $1 AND estado_analisis = '#{unanalyzed_state}'
+                    GROUP BY id_nodo
+                    ORDER BY MAX(fecha_creado) DESC
+                    LIMIT $2
+                  )
+                ORDER BY id_nodo, fecha_creado DESC;
+                """, [type, limit]}
+        end
+    end
 
 
 end
