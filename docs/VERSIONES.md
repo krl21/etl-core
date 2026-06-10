@@ -6,17 +6,83 @@ Este documento describe las versiones de `etl-core`, sus características princi
 
 ## Tabla de Contenidos
 
-1. [Versión 2.5 (Actual)](#versión-25-actual)
-2. [Versión 2.4](#versión-24)
-3. [Versión 2.3](#versión-23)
-4. [Versión 2.2](#versión-22)
-5. [Versión 2.1](#versión-21)
-6. [Versión 1.2.0](#versión-120)
-7. [Versiones Anteriores](#versiones-anteriores)
+1. [Versión 2.5.1 (Actual)](#versión-251-actual)
+2. [Versión 2.5](#versión-25)
+3. [Versión 2.4](#versión-24)
+4. [Versión 2.3](#versión-23)
+5. [Versión 2.2](#versión-22)
+6. [Versión 2.1](#versión-21)
+7. [Versión 1.2.0](#versión-120)
+8. [Versiones Anteriores](#versiones-anteriores)
 
 ---
 
-## Versión 2.5 (Actual)
+## Versión 2.5.1 (Actual)
+
+### Características Principales
+
+- **Carga masiva a BigQuery**: Límite configurable de expedientes pendientes por ciclo para evitar saturar memoria y conexiones cuando hay grandes volúmenes en PostgreSQL
+- **Marcado por `id_nodo`**: Tras una subida exitosa, se marcan todas las versiones pendientes del mismo expediente, evitando reenvíos de filas obsoletas
+- **Operaciones PostgreSQL ampliadas**: Consultas pendientes centralizadas y función para vaciar tablas vía pool
+
+### Nuevo en esta Versión
+
+#### Consultas de registros pendientes con límite
+
+- **`Connection.PostgresHelpers.pending_bq_query/4`**: Construye la consulta SELECT de registros con `estado_analisis = "sin_analizar"`, con soporte opcional de `:limit` sobre `id_nodo` distintos (ordenados por `MAX(fecha_creado) DESC`)
+- **`Connection.Postgres.get_pending_bq/4`** y **`Connection.PostgresPool.get_pending_bq/4`**: Nuevo cuarto argumento `opts` (p. ej. `[limit: 500]`). La firma anterior con 3 argumentos sigue siendo válida
+
+#### Marcado masivo por expediente
+
+- **`Connection.Postgres.mark_as_sent_to_bq_by_id_nodos/4`**
+- **`Connection.PostgresPool.mark_as_sent_to_bq_by_id_nodos/4`**
+
+Actualizan a `analizado_en_bq` todas las filas pendientes (`sin_analizar`) de los `id_nodo` indicados, opcionalmente filtradas por `tipo`. Sustituyen el marcado fila a fila por `id` en el flujo de subida a BigQuery.
+
+#### Eliminación total de tabla (pool)
+
+- **`Connection.PostgresPool.delete_all/2`**: Ejecuta `DELETE FROM tabla` usando el pool de PostgreSQL
+
+#### BigQuery Uploader y Handler
+
+- **`Genserver.BigqueryUploader`**: Nueva clave opcional `:pending_limit` (pool y legacy). Limita cuántos `id_nodo` distintos se procesan por tabla en cada ciclo
+- **`Genserver.Handlers.Bigquery.run/10`** y **`run_with_pool/10`**: Nuevo parámetro opcional `pending_limit` (default `nil`, sin límite)
+- **Modo pool**: Cada tabla en `:info` se procesa en su propio bloque `try/rescue`; un fallo en una tabla no aborta el ciclo completo
+- Tras insertar con éxito, el handler usa `mark_as_sent_to_bq_by_id_nodos/4` en lugar de `mark_as_sent_to_bq/3`
+
+#### Protocolo post-proceso
+
+- **`Genserver.Protocols.PBigqueryPostProcess`**: En el mapa `context` de `after_upload/3`, la clave `:successful_ids` pasa a ser `:successful_id_nodos` (lista de `id_nodo`, no de `id` de fila)
+
+### Módulos Afectados
+
+- `Connection.PostgresHelpers`: `pending_bq_query/4`
+- `Connection.Postgres`: `get_pending_bq/4`, `mark_as_sent_to_bq_by_id_nodos/4`
+- `Connection.PostgresPool`: `get_pending_bq/4`, `mark_as_sent_to_bq_by_id_nodos/4`, `delete_all/2`
+- `Genserver.Handlers.Bigquery`: `run/10`, `run_with_pool/10`, lógica de agrupación por `id_nodo`
+- `Genserver.BigqueryUploader`: `:pending_limit`, manejo de errores por tabla en modo pool
+- `Genserver.Protocols.PBigqueryPostProcess`: documentación y contrato del contexto
+
+### Migración desde v2.5
+
+- **Sin cambios obligatorios** si no se personaliza el uploader ni el protocolo post-proceso
+- **Opcional — limitar carga por ciclo** (recomendado con tablas grandes):
+
+```elixir
+{Genserver.BigqueryUploader, %{
+  business: :my_business,
+  pg_pool_name: :postgres_pool,
+  bq_pool_name: :bigquery_pool,
+  pending_limit: 500,
+  # ... resto de config
+}}
+```
+
+- **Si implementas `PBigqueryPostProcess`**: reemplazar `context.successful_ids` por `context.successful_id_nodos`
+
+---
+
+## Versión 2.5
 
 ### Características Principales
 
@@ -380,6 +446,17 @@ children = [
 2. **Sin cambios obligatorios de código**
    - Revisar opcionalmente `docs/BIGQUERY_GUIA_REFERENCIA.md` para operación y troubleshooting de BigQuery por ODBC
 
+### De v2.5 a v2.5.1
+
+1. **Actualizar dependencias en `mix.exs`**:
+```elixir
+{:etl_core, git: "https://github.com/krl21/etl-core.git", branch: "v2.5.1"}
+```
+
+2. **Sin cambios obligatorios** para el flujo estándar de subida a BigQuery
+   - Opcional: configurar `:pending_limit` en `Genserver.BigqueryUploader` si hay muchos registros pendientes en PostgreSQL
+   - Si existe implementación custom de `PBigqueryPostProcess`, actualizar `:successful_ids` → `:successful_id_nodos`
+
 ---
 
 ## Notas de Versión
@@ -402,6 +479,10 @@ children = [
 - `ecto_sql` - SQL para Ecto
 
 ### Breaking Changes
+
+**v2.5 → v2.5.1**: Cambio menor en protocolo post-proceso
+- `Genserver.Protocols.PBigqueryPostProcess`: el contexto usa `:successful_id_nodos` en lugar de `:successful_ids`. Solo afecta implementaciones custom de `after_upload/3`
+- Firmas existentes de `get_pending_bq/3`, `run/9` y `run_with_pool/9` siguen siendo compatibles (nuevos argumentos opcionales con default)
 
 **v2.4 → v2.5**: Ninguno
 - Incorporación de documentación (`BIGQUERY_GUIA_REFERENCIA.md`); sin cambios en contratos de módulos del core descritos en esta versión
@@ -427,7 +508,7 @@ children = [
 
 ## Roadmap Futuro
 
-### Próximas mejoras (post v2.5)
+### Próximas mejoras (post v2.5.1)
 
 - Mejoras en el sistema de constantes
 - Soporte para múltiples zonas horarias
