@@ -6,18 +6,95 @@ Este documento describe las versiones de `etl-core`, sus características princi
 
 ## Tabla de Contenidos
 
-1. [Versión 2.5.1 (Actual)](#versión-251-actual)
-2. [Versión 2.5](#versión-25)
-3. [Versión 2.4](#versión-24)
-4. [Versión 2.3](#versión-23)
-5. [Versión 2.2](#versión-22)
-6. [Versión 2.1](#versión-21)
-7. [Versión 1.2.0](#versión-120)
-8. [Versiones Anteriores](#versiones-anteriores)
+1. [Versión 2.6.0 (Actual)](#versión-260-actual)
+2. [Versión 2.5.1](#versión-251)
+3. [Versión 2.5](#versión-25)
+4. [Versión 2.4](#versión-24)
+5. [Versión 2.3](#versión-23)
+6. [Versión 2.2](#versión-22)
+7. [Versión 2.1](#versión-21)
+8. [Versión 1.2.0](#versión-120)
+9. [Versiones Anteriores](#versiones-anteriores)
 
 ---
 
-## Versión 2.5.1 (Actual)
+## Versión 2.6.0 (Actual)
+
+### Características Principales
+
+- **Control manual de consumers RabbitMQ en runtime**: Nuevo `Genserver.ConsumerSupervisor` que permite detener, iniciar y reiniciar consumers por nombre de cola sin reiniciar la aplicación
+
+### Nuevo en esta Versión
+
+#### `Genserver.ConsumerSupervisor`
+
+`DynamicSupervisor` que gestiona el ciclo de vida de `Genserver.RabbitConsumer` y `Genserver.RabbitConsumerByBatch`. Mantiene un registro ETS interno con el módulo y los args originales de cada consumer, de modo que pueden reiniciarse sin que el caller conserve la configuración.
+
+**API pública:**
+
+- **`start_consumer/2`**: Inicia un consumer hijo bajo el supervisor.
+  - Parámetros: `module` (átomo), `args` (tupla pasada directamente a `module.start_link/1`).
+  - Retorna `{:ok, pid}`, `{:error, :already_running}` o `{:error, reason}`.
+
+- **`start_consumers/1`**: Inicia múltiples consumers de una vez a partir de una lista de tuplas `{module, args}`. Usado desde `Application.start/2` tras levantar el árbol de supervisión.
+
+- **`stop_consumer/1`**: Detiene el consumer de la cola indicada de forma limpia (ejecuta `terminate/2`, cierra la conexión AMQP, mensajes sin ack vuelven a la cola). El consumer no se reinicia automáticamente.
+
+- **`restart_consumer/1`**: Detiene y reinicia el consumer usando los args originales retenidos en el registro ETS.
+
+- **`list_consumers/0`**: Devuelve todos los consumers registrados con sus campos `:queue`, `:module`, `:pid` y `:status`.
+
+- **`consumer_status/1`**: Devuelve `:running`, `:stopped` o `:not_found` para una cola dada.
+
+**Comportamiento ante crashes:** Los consumers siguen con estrategia `:permanent`, por lo que un crash inesperado (p. ej. caída de la conexión AMQP) es reiniciado automáticamente por el `ConsumerSupervisor`. Solo una llamada explícita a `stop_consumer/1` evita el reinicio.
+
+### Módulos Afectados
+
+- `Genserver.ConsumerSupervisor`: módulo nuevo
+
+### Migración desde v2.5.1
+
+1. **Actualizar dependencias en `mix.exs`**:
+```elixir
+{:etl_core, git: "https://github.com/krl21/etl-core.git", branch: "v2.6.0"}
+```
+
+2. **Agregar `Genserver.ConsumerSupervisor` al árbol de supervisión** (después de los pools):
+```elixir
+children = [
+  child_postgres_pool(),
+  child_bigquery_pool(),
+  Genserver.ConsumerSupervisor
+]
+{:ok, pid} = Supervisor.start_link(children, strategy: :one_for_one)
+```
+
+3. **Inicializar los consumers tras levantar el supervisor**:
+```elixir
+Genserver.ConsumerSupervisor.start_consumers(rabbit_consumer_configs())
+```
+
+4. **Adaptar la función que construye los consumers** — en lugar de devolver child specs para el supervisor raíz, debe devolver tuplas `{module, args}`:
+```elixir
+# Antes
+defp rabbit_consumer_children do
+  Enum.map(queues, fn {_key, queue_info} ->
+    %{id: :"RabbitConsumer.#{queue_info.config.queue}",
+      start: {Genserver.RabbitConsumer, :start_link, [{queue_info, amqp, info}]}}
+  end)
+end
+
+# Después
+defp rabbit_consumer_configs do
+  Enum.map(queues, fn {_key, queue_info} ->
+    {Genserver.RabbitConsumer, {queue_info, amqp, info}}
+  end)
+end
+```
+
+---
+
+## Versión 2.5.1
 
 ### Características Principales
 
@@ -457,6 +534,17 @@ children = [
    - Opcional: configurar `:pending_limit` en `Genserver.BigqueryUploader` si hay muchos registros pendientes en PostgreSQL
    - Si existe implementación custom de `PBigqueryPostProcess`, actualizar `:successful_ids` → `:successful_id_nodos`
 
+### De v2.5.1 a v2.6.0
+
+1. **Actualizar dependencias en `mix.exs`**:
+```elixir
+{:etl_core, git: "https://github.com/krl21/etl-core.git", branch: "v2.6.0"}
+```
+
+2. **Agregar `Genserver.ConsumerSupervisor` al árbol de supervisión** y mover la inicialización de consumers fuera del `build_children/0`. Ver sección [Migración desde v2.5.1](#migración-desde-v251) en la descripción de v2.6.0.
+
+3. **Sin cambios obligatorios** si se prefiere mantener los consumers como hijos directos del supervisor raíz
+
 ---
 
 ## Notas de Versión
@@ -479,6 +567,11 @@ children = [
 - `ecto_sql` - SQL para Ecto
 
 ### Breaking Changes
+
+**v2.5.1 → v2.6.0**: Ninguno
+- `Genserver.ConsumerSupervisor` es un módulo nuevo y aditivo
+- Los consumers existentes siguen funcionando sin cambios si no se adopta el nuevo supervisor
+- La migración es opcional: las aplicaciones que gestionen sus consumers directamente en el supervisor raíz no necesitan cambios
 
 **v2.5 → v2.5.1**: Cambio menor en protocolo post-proceso
 - `Genserver.Protocols.PBigqueryPostProcess`: el contexto usa `:successful_id_nodos` en lugar de `:successful_ids`. Solo afecta implementaciones custom de `after_upload/3`
@@ -508,7 +601,7 @@ children = [
 
 ## Roadmap Futuro
 
-### Próximas mejoras (post v2.5.1)
+### Próximas mejoras (post v2.6.0)
 
 - Mejoras en el sistema de constantes
 - Soporte para múltiples zonas horarias
