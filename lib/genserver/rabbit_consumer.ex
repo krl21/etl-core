@@ -314,16 +314,12 @@ defmodule Genserver.RabbitConsumer do
     defp close_channel_safely(%AMQP.Channel{pid: pid} = channel) when is_pid(pid) do
         if Process.alive?(pid) do
             try do
-                r = AMQP.Channel.close(channel)
-                Logger.info("#{to_string(__MODULE__)}. Canal AMQP cerrado para cola: #{channel}")
-                r
+                AMQP.Channel.close(channel)
             catch
                 _, _ ->
-                    Logger.error("#{to_string(__MODULE__)}. Error al cerrar canal AMQP para cola: #{channel}")
                     :ok
             end
         else
-            Logger.warning("#{to_string(__MODULE__)}. Canal AMQP ya estaba cerrado para cola: #{channel}")
             :ok
         end
     end
@@ -337,16 +333,12 @@ defmodule Genserver.RabbitConsumer do
     defp close_amqp_safely(%AMQP.Connection{pid: pid} = connection) when is_pid(pid) do
         if Process.alive?(pid) do
             try do
-                r = AMQP.Connection.close(connection)
-                Logger.info("#{to_string(__MODULE__)}. Conexión AMQP cerrada para cola: #{connection}")
-                r
+                AMQP.Connection.close(connection)
             catch
                 _, _ ->
-                    Logger.error("#{to_string(__MODULE__)}. Error al cerrar conexión AMQP para cola: #{connection}")
                     :ok
             end
         else
-            Logger.warning("#{to_string(__MODULE__)}. Conexión AMQP ya estaba cerrada para cola: #{connection}")
             :ok
         end
     end
