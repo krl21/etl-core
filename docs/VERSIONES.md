@@ -23,34 +23,48 @@ Este documento describe las versiones de `etl-core`, sus características princi
 ### Características Principales
 
 - **Control manual de consumers RabbitMQ en runtime**: Nuevo `Genserver.ConsumerSupervisor` que permite detener, iniciar y reiniciar consumers por nombre de cola sin reiniciar la aplicación
+- **Ciclo de vida del canal AMQP garantizado**: `Genserver.RabbitConsumer` linkea el canal a su propio proceso, asegurando que el canal se cierre siempre que el GenServer muera
 
 ### Nuevo en esta Versión
 
 #### `Genserver.ConsumerSupervisor`
 
-`DynamicSupervisor` que gestiona el ciclo de vida de `Genserver.RabbitConsumer` y `Genserver.RabbitConsumerByBatch`. Mantiene un registro ETS interno con el módulo y los args originales de cada consumer, de modo que pueden reiniciarse sin que el caller conserve la configuración.
+`DynamicSupervisor` que gestiona el ciclo de vida de `Genserver.RabbitConsumer` y `Genserver.RabbitConsumerByBatch`. Mantiene un registro ETS interno con el módulo y los args originales de cada consumer, de modo que pueden reiniciarse sin que el caller conserve la configuración. El `init/1` es seguro ante reinicios del supervisor (no falla si la tabla ETS ya existe).
 
 **API pública:**
 
-- **`start_consumer/2`**: Inicia un consumer hijo bajo el supervisor.
-  - Parámetros: `module` (átomo), `args` (tupla pasada directamente a `module.start_link/1`).
-  - Retorna `{:ok, pid}`, `{:error, :already_running}` o `{:error, reason}`.
+- **`start_consumer/2`**: Inicia un consumer hijo bajo el supervisor. Comportamiento según el estado actual de la cola:
+  - `:not_found` → arranca el consumer con los args proporcionados.
+  - `:running` → devuelve el pid existente sin reiniciar.
+  - `:stopped` → limpia la entrada y reinicia con los nuevos args.
+  - Retorna `{:ok, pid}` o `{:error, reason}`.
 
 - **`start_consumers/1`**: Inicia múltiples consumers de una vez a partir de una lista de tuplas `{module, args}`. Usado desde `Application.start/2` tras levantar el árbol de supervisión.
 
 - **`stop_consumer/1`**: Detiene el consumer de la cola indicada de forma limpia (ejecuta `terminate/2`, cierra la conexión AMQP, mensajes sin ack vuelven a la cola). El consumer no se reinicia automáticamente.
 
-- **`restart_consumer/1`**: Detiene y reinicia el consumer usando los args originales retenidos en el registro ETS.
+- **`restart_consumer/1`**: Reinicia el consumer usando los args originales retenidos en el registro ETS. Útil para recuperar un consumer en estado `:stopped`.
+
+- **`restart_consumer/3`**: Reinicia el consumer con un nuevo `module` y `args`. Actualiza el registro ETS con los nuevos valores.
+
+- **`remove_consumer/1`**: Detiene el consumer y lo elimina permanentemente del registro. A diferencia de `stop_consumer/1`, tras esta llamada `restart_consumer/1` retornará `{:error, :not_found}`.
 
 - **`list_consumers/0`**: Devuelve todos los consumers registrados con sus campos `:queue`, `:module`, `:pid` y `:status`.
 
 - **`consumer_status/1`**: Devuelve `:running`, `:stopped` o `:not_found` para una cola dada.
 
-**Comportamiento ante crashes:** Los consumers siguen con estrategia `:permanent`, por lo que un crash inesperado (p. ej. caída de la conexión AMQP) es reiniciado automáticamente por el `ConsumerSupervisor`. Solo una llamada explícita a `stop_consumer/1` evita el reinicio.
+**Comportamiento ante crashes:** Los consumers usan estrategia `:transient`, por lo que un crash inesperado (p. ej. caída de la conexión AMQP) es reiniciado automáticamente por el `ConsumerSupervisor`. Las salidas `:normal` y `:shutdown` no provocan reinicio automático.
+
+#### `Genserver.RabbitConsumer`
+
+- **`Process.link(channel.pid)`** en `init/1`: el proceso de canal AMQP queda vinculado al GenServer. Si el GenServer muere (incluyendo `:kill`), el canal muere con él y RabbitMQ desregistra el consumer de inmediato.
+- **`Process.flag(:trap_exit, true)`** en `init/1`: las señales de exit de procesos linkeados llegan como mensajes, permitiendo que `terminate/2` se ejecute siempre en un shutdown limpio.
+- **`terminate/2`**: cierra la conexión AMQP, lo que por protocolo cierra en cascada todos sus canales.
 
 ### Módulos Afectados
 
 - `Genserver.ConsumerSupervisor`: módulo nuevo
+- `Genserver.RabbitConsumer`: ciclo de vida del canal AMQP
 
 ### Migración desde v2.5.1
 
@@ -568,10 +582,11 @@ children = [
 
 ### Breaking Changes
 
-**v2.5.1 → v2.6.0**: Ninguno
-- `Genserver.ConsumerSupervisor` es un módulo nuevo y aditivo
+**v2.5.1 → v2.6.0**:
+- `Genserver.ConsumerSupervisor` es un módulo nuevo y aditivo; la migración es opcional
+- `start_consumer/2` ya no retorna `{:error, :already_running}`; si la cola está `:running` devuelve `{:ok, pid}` del proceso existente
+- Los consumers usan `restart: :transient` en lugar de `:permanent`; las salidas `:normal` y `:shutdown` ya no provocan reinicio automático
 - Los consumers existentes siguen funcionando sin cambios si no se adopta el nuevo supervisor
-- La migración es opcional: las aplicaciones que gestionen sus consumers directamente en el supervisor raíz no necesitan cambios
 
 **v2.5 → v2.5.1**: Cambio menor en protocolo post-proceso
 - `Genserver.Protocols.PBigqueryPostProcess`: el contexto usa `:successful_id_nodos` en lugar de `:successful_ids`. Solo afecta implementaciones custom de `after_upload/3`
