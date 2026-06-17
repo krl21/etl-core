@@ -100,19 +100,37 @@ defmodule Genserver.ConsumerSupervisor do
                 {:error, :not_found}
 
             [{^queue_name, module, _args}] ->
-                :ets.delete(@table, queue_name)
-
                 case find_pid(queue_name, module) do
                     nil ->
-                        Logger.warning("#{__MODULE__} Consumer for #{queue_name} was registered but has no live process.")
+                        Logger.warning("#{__MODULE__} Consumer para #{queue_name} ya estaba detenido.")
                         :ok
 
                     pid ->
                         result = DynamicSupervisor.terminate_child(__MODULE__, pid)
-                        Logger.info("#{__MODULE__} Consumer stopped for queue: #{queue_name}")
+                        Logger.info("#{__MODULE__} Consumer detenido para cola: #{queue_name}")
                         result
                 end
         end
+    end
+
+    @doc """
+    Stops the consumer and removes it permanently from the registry.
+
+    Unlike `stop_consumer/1`, which keeps the entry so `restart_consumer/1` can bring it
+    back, this function deletes the record entirely. After this call,
+    `restart_consumer/1` will return `{:error, :not_found}`.
+
+    ## Parameters
+      - `queue_name` — name of the RabbitMQ queue whose consumer should be removed.
+
+    ## Returns
+      - `:ok` — consumer stopped and removed.
+      - `{:error, :not_found}` — no consumer was registered for that queue name.
+    """
+    def remove_consumer(queue_name) do
+        result = stop_consumer(queue_name)
+        :ets.delete(@table, queue_name)
+        result
     end
 
     @doc """
