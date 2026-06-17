@@ -63,6 +63,8 @@ defmodule Genserver.RabbitConsumer do
     Initializes the GenServer.
     """
     def init({%{business: business, config: %{queue: queue} = queue_info}, configuration_amqp, info}) do
+        Process.flag(:trap_exit, true)
+
         Monitor.register(self(), to_string(__MODULE__) <> "." <> to_string(business) <> "." <> to_string(queue))
 
         Logger.info("#{to_string(__MODULE__)}. Inicializando. Cola asociada: ---#{to_string(queue)}---")
@@ -313,15 +315,15 @@ defmodule Genserver.RabbitConsumer do
         if Process.alive?(pid) do
             try do
                 r = AMQP.Channel.close(channel)
-                Logger.info("#{to_string(__MODULE__)}. Canal AMQP cerrado para cola: #{channel.name}")
+                Logger.info("#{to_string(__MODULE__)}. Canal AMQP cerrado para cola: #{channel}")
                 r
             catch
                 _, _ ->
-                    Logger.error("#{to_string(__MODULE__)}. Error al cerrar canal AMQP para cola: #{channel.name}")
+                    Logger.error("#{to_string(__MODULE__)}. Error al cerrar canal AMQP para cola: #{channel}")
                     :ok
             end
         else
-            Logger.warning("#{to_string(__MODULE__)}. Canal AMQP ya estaba cerrado para cola: #{channel.name}")
+            Logger.warning("#{to_string(__MODULE__)}. Canal AMQP ya estaba cerrado para cola: #{channel}")
             :ok
         end
     end
@@ -336,15 +338,15 @@ defmodule Genserver.RabbitConsumer do
         if Process.alive?(pid) do
             try do
                 r = AMQP.Connection.close(connection)
-                Logger.info("#{to_string(__MODULE__)}. Conexión AMQP cerrada para cola: #{connection.name}")
+                Logger.info("#{to_string(__MODULE__)}. Conexión AMQP cerrada para cola: #{connection}")
                 r
             catch
                 _, _ ->
-                    Logger.error("#{to_string(__MODULE__)}. Error al cerrar conexión AMQP para cola: #{connection.name}")
+                    Logger.error("#{to_string(__MODULE__)}. Error al cerrar conexión AMQP para cola: #{connection}")
                     :ok
             end
         else
-            Logger.warning("#{to_string(__MODULE__)}. Conexión AMQP ya estaba cerrada para cola: #{connection.name}")
+            Logger.warning("#{to_string(__MODULE__)}. Conexión AMQP ya estaba cerrada para cola: #{connection}")
             :ok
         end
     end
