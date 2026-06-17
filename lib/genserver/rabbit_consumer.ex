@@ -291,7 +291,7 @@ defmodule Genserver.RabbitConsumer do
     @doc """
     Handles the termination of the GenServer.
     """
-    def terminate(reason, %{queue: queue, info: info, connection: connection}) do
+    def terminate(reason, %{queue: queue, info: info, connection: connection, channel: channel}) do
         Logger.info("#{to_string(__MODULE__)}. Terminando (#{inspect(reason)}). Cola: ---#{queue}---")
 
         close_channel_safely(channel)
