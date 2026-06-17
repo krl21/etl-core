@@ -316,8 +316,9 @@ defmodule Genserver.RabbitConsumer do
                 Logger.info("#{to_string(__MODULE__)}. Canal AMQP cerrado para cola: #{channel.name}")
                 r
             catch
-                Logger.error("#{to_string(__MODULE__)}. Error al cerrar canal AMQP para cola: #{channel.name}")
-                _, _ -> :ok
+                _, _ ->
+                    Logger.error("#{to_string(__MODULE__)}. Error al cerrar canal AMQP para cola: #{channel.name}")
+                    :ok
             end
         else
             Logger.warning("#{to_string(__MODULE__)}. Canal AMQP ya estaba cerrado para cola: #{channel.name}")
@@ -338,8 +339,9 @@ defmodule Genserver.RabbitConsumer do
                 Logger.info("#{to_string(__MODULE__)}. Conexión AMQP cerrada para cola: #{connection.name}")
                 r
             catch
-                Logger.error("#{to_string(__MODULE__)}. Error al cerrar conexión AMQP para cola: #{connection.name}")
-                _, _ -> :ok
+                _, _ ->
+                    Logger.error("#{to_string(__MODULE__)}. Error al cerrar conexión AMQP para cola: #{connection.name}")
+                    :ok
             end
         else
             Logger.warning("#{to_string(__MODULE__)}. Conexión AMQP ya estaba cerrada para cola: #{connection.name}")
