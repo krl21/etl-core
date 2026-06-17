@@ -69,6 +69,7 @@ defmodule Genserver.RabbitConsumer do
 
         {:ok, connection} = configuration_amqp |> AMQP.Connection.open()
         {:ok, channel} = AMQP.Channel.open(connection)
+        Process.link(channel.pid)
 
         setup_queue(channel, queue_info)
 
@@ -290,9 +291,10 @@ defmodule Genserver.RabbitConsumer do
     @doc """
     Handles the termination of the GenServer.
     """
-    def terminate(reason, %{queue: queue, info: info, connection: connection}) do
+    def terminate(reason, %{channel: channel, queue: queue, info: info, connection: connection}) do
         Logger.info("#{to_string(__MODULE__)}. Terminando (#{inspect(reason)}). Cola: ---#{queue}---")
 
+        close_channel_safely(channel)
         close_amqp_safely(connection)
 
         if info[:pg_mode] == :legacy and info[:pg_conn] do
@@ -303,6 +305,26 @@ defmodule Genserver.RabbitConsumer do
         :ok
     end
 
+    #
+    # Closes the AMQP channel safely.
+    #
+    defp close_channel_safely(%AMQP.Channel{pid: pid} = channel) when is_pid(pid) do
+        if Process.alive?(pid) do
+            try do
+                AMQP.Channel.close(channel)
+            catch
+                _, _ -> :ok
+            end
+        else
+            :ok
+        end
+    end
+
+    defp close_channel_safely(_), do: :ok
+
+    #
+    # Closes the AMQP connection safely.
+    #
     defp close_amqp_safely(%AMQP.Connection{pid: pid} = connection) when is_pid(pid) do
         if Process.alive?(pid) do
             try do
