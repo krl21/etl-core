@@ -96,6 +96,20 @@
         "october": [11, 31],
         "november": [1],
         "december": [8, 25]
+    },
+    "2028": {
+        "january": [1],
+        "february": [],
+        "march": [],
+        "april": [14, 15],
+        "may": [1, 21],
+        "june": [20, 26],
+        "july": [9, 16],
+        "august": [15],
+        "september": [18, 19],
+        "october": [9, 27, 29],
+        "november": [1],
+        "december": [8, 25]
     }
 }
 
