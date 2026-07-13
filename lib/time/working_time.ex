@@ -85,19 +85,40 @@ defmodule Time.WorkingTime do
             {:error, "Start date #{inspect start_date} is later than end date #{inspect end_date}"}
 
         else
-            start_date = convert_to_business_datetime(start_date, business, params, change_timezone, :start)
-            end_date = convert_to_business_datetime(end_date, business, params, change_timezone, :end)
+            {local_start, local_end} = localize(start_date, end_date, change_timezone)
 
-            if Timex.diff(end_date, start_date, :seconds) < 0 do
-                # start_date and end_date both collapsed into the same non-working
-                # stretch (e.g. both fall after closing on the same day): nothing elapsed.
-                {:ok, 0}
+            if same_day?(local_start, local_end) do
+                # Both boundaries fall on the same calendar day: count the raw
+                # elapsed time as-is. Rounding either end to business hours only
+                # matters when the interval actually spans more than one day.
+                {:ok, Timex.diff(local_end, local_start, :seconds)}
             else
-                result = Timex.diff(end_date, start_date, :seconds) - get_non_working_time(start_date, end_date, business, params)
-                {:ok, result}
+                start_date = convert_to_business_datetime(local_start, business, params, false, :start)
+                end_date = convert_to_business_datetime(local_end, business, params, false, :end)
+
+                if Timex.diff(end_date, start_date, :seconds) < 0 do
+                    # start_date and end_date both collapsed into the same non-working
+                    # stretch (e.g. both fall after closing on the same day): nothing elapsed.
+                    {:ok, 0}
+                else
+                    result = Timex.diff(end_date, start_date, :seconds) - get_non_working_time(start_date, end_date, business, params)
+                    {:ok, result}
+                end
             end
         end end end
     end
+
+    defp localize(start_date, end_date, true) do
+        {
+            Timex.Timezone.convert(start_date, "America/Santiago"),
+            Timex.Timezone.convert(end_date, "America/Santiago")
+        }
+    end
+
+    defp localize(start_date, end_date, false), do: {start_date, end_date}
+
+    defp same_day?(%{year: year, month: month, day: day}, %{year: year, month: month, day: day}), do: true
+    defp same_day?(_start_date, _end_date), do: false
 
     #
     # Calculate the non-labor time between two dates, in seconds
