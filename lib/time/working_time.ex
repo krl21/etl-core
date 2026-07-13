@@ -116,38 +116,16 @@ defmodule Time.WorkingTime do
     #
     #     - Integer
     #
-    defp get_non_working_time(%{year: year, month: month, day: day}, %{year: year, month: month, day: day} = end_date, business, params) do
-        end_of_day_overflow(end_date, business, params)
+    defp get_non_working_time(%{year: year, month: month, day: day}, %{year: year, month: month, day: day}, _business, _params) do
+        0
     end
 
-    defp get_non_working_time(%{year: year, month: month, day: day}, %{year: year, month: month, day: day} = end_date, business, params, %{year: year, month: month, day: day}) do
-        end_of_day_overflow(end_date, business, params)
+    defp get_non_working_time(%{year: year, month: month, day: day}, %{year: year, month: month, day: day}, _business, _params, %{year: year, month: month, day: day}) do
+        0
     end
 
     defp get_non_working_time(start_date, end_date, business, params) do
         get_non_working_time(start_date, end_date, business, params, start_date)
-    end
-
-    #
-    # Seconds between the working day's closing time and end_date's actual time, when
-    # end_date falls after closing on a working day. Zero when end_date is within
-    # working hours (the usual case, since convert_to_business_datetime no longer
-    # clamps the end boundary past closing).
-    #
-    defp end_of_day_overflow(%{hour: hour, minute: minute, second: second} = end_date, business, params) do
-        {_, end_time} = working_hours(end_date, business, params)
-
-        if {hour, minute, second} > end_time do
-            {end_hour, end_minute, end_second} = end_time
-
-            Timex.diff(
-                end_date,
-                Timex.set(end_date, [hour: end_hour, minute: end_minute, second: end_second, microsecond: 0]),
-                :seconds
-            )
-        else
-            0
-        end
     end
 
     defp get_non_working_time(start_date, end_date, business, params, last_working_start_date) do
@@ -197,7 +175,8 @@ defmodule Time.WorkingTime do
         - boundary: Atom (:start | :end). Whether this date is a start or an end
           boundary. Start boundaries round forward to the next working moment; end
           boundaries whose time falls after closing on a working day are left
-          untouched (the hour is respected; get_non_working_time accounts for it).
+          untouched instead of rolling into the next working day (the hour, and
+          any overflow past closing, is respected and counted as elapsed).
 
     ### Return:
 
@@ -219,8 +198,9 @@ defmodule Time.WorkingTime do
 
         # Particular case of the {true, false} branch below: this is the end boundary,
         # the day is a working day, and the time is past closing. The actual hour must
-        # be respected (not rounded/clamped) — get_non_working_time accounts for the
-        # extra non-working seconds between closing and this exact moment.
+        # be respected (not rounded/clamped): it stays on this same day instead of
+        # rolling into the next working day, and the overflow past closing counts as
+        # elapsed (it is not subtracted as non-working time).
         if boundary == :end and is_working_day and not is_working_hours and end_time < {hour, minute, seconds} do
             date
 
