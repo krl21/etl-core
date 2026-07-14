@@ -6,6 +6,7 @@ Este documento describe las versiones de `etl-core`, sus características princi
 
 ## Tabla de Contenidos
 
+0. [Rama `development` (pendiente de versión) — Fix `Time.WorkingTime`](#rama-development-pendiente-de-versión--fix-timeworkingtime)
 1. [Versión 2.6.0 (Actual)](#versión-260-actual)
 2. [Versión 2.5.1](#versión-251)
 3. [Versión 2.5](#versión-25)
@@ -15,6 +16,38 @@ Este documento describe las versiones de `etl-core`, sus características princi
 7. [Versión 2.1](#versión-21)
 8. [Versión 1.2.0](#versión-120)
 9. [Versiones Anteriores](#versiones-anteriores)
+
+---
+
+## Rama `development` (pendiente de versión) — Fix `Time.WorkingTime`
+
+> **Nota:** esta sección documenta cambios que viven hoy en la rama `development` de `etl-core` y **todavía no están asociados a un número de versión formal**. Debe actualizarse en cuanto este arreglo se propague o se mergee a las ramas de versión vigentes.
+
+### Características Principales
+
+- **Cálculo correcto del tiempo laboral transcurrido en casos límite**: se corrige `Time.WorkingTime.elapsed_time/5` para que el tiempo no laboral se descuente de forma correcta cuando el extremo final del intervalo cae fuera del horario de atención de su propio día, en vez de desplazarlo artificialmente a otro día.
+
+### Nuevo en esta Versión
+
+#### `Time.WorkingTime.elapsed_time/5`
+
+- **Arreglo**: cuando `end_date` caía en un día laboral pero en una hora **posterior al cierre**, la implementación anterior empujaba `end_date` al horario de apertura del **próximo día hábil**. Esto asumía horario uniforme entre días y podía calcular mal el tiempo transcurrido en negocios con horarios variables (feriados, cierres de fin de mes con horario extendido, etc.)
+- Ahora, si `start_date` y `end_date` caen en el **mismo día calendario original** (antes de cualquier conversión a horario de negocio), se devuelve la diferencia cruda entre ambas fechas directamente, sin aplicar ningún redondeo de horario laboral. Esto cubre de forma consistente los casos donde el inicio, el fin, o ambos, caen fuera de horario (antes de la apertura o después del cierre) dentro del mismo día.
+- Cuando el intervalo sí abarca más de un día calendario y `end_date` cae después del cierre en su propio día, ese sobrante ahora se **cuenta como tiempo transcurrido** (ya no se descuenta ni se reubica en otro día).
+
+#### `Time.WorkingTime.convert_to_business_datetime/4`
+
+- Pasa a ser `/5`: nuevo parámetro opcional `boundary` (`:start | :end`, default `:start`). La aridad-4 existente sigue funcionando exactamente igual.
+- `boundary: :start` (comportamiento histórico, sin cambios): si la fecha cae en día no laboral o fuera de horario, se redondea hacia adelante al próximo momento laboral válido.
+- `boundary: :end` (nuevo): si la fecha cae en un día laboral después del cierre, se respeta tal cual — ya no se desplaza al próximo día hábil.
+
+### Módulos Afectados
+
+- `Time.WorkingTime`: `elapsed_time/5` (lógica interna `elapsed_timep/5`), `convert_to_business_datetime/4` → `/5`, funciones privadas `get_non_working_time/4-5`
+
+### Migración
+
+- Si algún llamador dependía del comportamiento anterior (incorrecto) de empujar `end_date` fuera de su día real después del cierre, debe revisar los valores que consume, ya que el resultado numérico de `elapsed_time/5` cambia en esos casos puntuales
 
 ---
 
