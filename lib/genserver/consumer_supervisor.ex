@@ -28,7 +28,10 @@ defmodule Genserver.ConsumerSupervisor do
                 @table
         end
 
-        DynamicSupervisor.init(strategy: :one_for_one)
+        # Intensidad más alta que el default (3 reinicios / 5s): cuando RabbitMQ o la red
+        # tienen un corte, varios consumidores pueden caer casi simultáneamente y el default
+        # se agota en el primer golpe, escalando el crash a este supervisor.
+        DynamicSupervisor.init(strategy: :one_for_one, max_restarts: 10, max_seconds: 30)
     end
 
     @doc """
