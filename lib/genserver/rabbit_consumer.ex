@@ -134,6 +134,12 @@ defmodule Genserver.RabbitConsumer do
 
         Logger.error(message)
         notify_error(info, message)
+
+        # Jitter antes de dejar que el supervisor reinicie: evita que muchos consumidores
+        # reconecten al mismo instante (tormenta de reconexión) cuando RabbitMQ o la red
+        # tienen un corte que afecta a varias colas a la vez.
+        Process.sleep(reconnect_backoff_ms())
+
         {:stop, {:amqp_connection_down, reason}, state}
     end
 
@@ -232,6 +238,11 @@ defmodule Genserver.RabbitConsumer do
     end
 
     defp notify_error(_, _), do: :ok
+
+    #
+    # Random delay (1-5s) before the supervisor restarts this consumer.
+    #
+    defp reconnect_backoff_ms, do: 1_000 + :rand.uniform(4_000)
 
     #
     # Opens a PostgreSQL connection (only legacy mode)
