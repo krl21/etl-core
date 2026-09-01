@@ -1,5 +1,5 @@
 
-defprotocol Genserver.Utils.PPostgresDb do
+defprotocol Genserver.Protocols.PPostgresDb do
     @moduledoc"""
     Protocol oriented to load data from a table in a database in postgres
     """

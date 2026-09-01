@@ -168,7 +168,10 @@ defimpl Type.PConvertTo, for: BitString do
         when datetime in [:datetime, :DateTime, :timestamp] do
             x
             |> String.replace("/", "-")
-            |> Timex.Parse.DateTime.Parser.parse("{ISO:Extended:Z}")
+            |> try_parse_formats([
+                "{ISO:Extended:Z}",
+                "{YYYY}-{0M}-{0D} {h24}:{m}:{s}{ss} UTC"
+            ])
             |> case do
                 {:ok, value} ->
                     value
@@ -176,6 +179,14 @@ defimpl Type.PConvertTo, for: BitString do
                     raise("Error: Convert `#{x}` to `#{inspect datetime}`. Information: #{error}")
             end
     end
+
+    defp try_parse_formats(str, [format | rest]) do
+        case Timex.Parse.DateTime.Parser.parse(str, format) do
+            {:ok, dt} -> {:ok, dt}
+            {:error, _} -> try_parse_formats(str, rest)
+        end
+    end
+    defp try_parse_formats(_str, []), do: {:error, "no matching format found"}
 
     def convert_to(x, :date) do
         x
@@ -295,7 +306,10 @@ defimpl Type.PConvertTo, for: Binary do
         when datetime in [:datetime, :DateTime, :timestamp] do
             x
             |> String.replace("/", "-")
-            |> Timex.Parse.DateTime.Parser.parse("{ISO:Extended:Z}")
+            |> try_parse_formats([
+                "{ISO:Extended:Z}",
+                "{YYYY}-{0M}-{0D} {h24}:{m}:{s}{ss} UTC"
+            ])
             |> case do
                 {:ok, value} ->
                     value
@@ -303,6 +317,14 @@ defimpl Type.PConvertTo, for: Binary do
                     raise("Error: Convert `#{x}` to `#{inspect datetime}`. Information: #{error}")
             end
     end
+
+    defp try_parse_formats(str, [format | rest]) do
+        case Timex.Parse.DateTime.Parser.parse(str, format) do
+            {:ok, dt} -> {:ok, dt}
+            {:error, _} -> try_parse_formats(str, rest)
+        end
+    end
+    defp try_parse_formats(_str, []), do: {:error, "no matching format found"}
 
     def convert_to(x, :date) do
         x
