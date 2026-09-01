@@ -7,15 +7,16 @@ Este documento describe las versiones de `etl-core`, sus características princi
 ## Tabla de Contenidos
 
 0. [Rama `development` (pendiente de versión) — Fix `Time.WorkingTime`](#rama-development-pendiente-de-versión--fix-timeworkingtime)
-1. [Versión 2.6.0 (Actual)](#versión-260-actual)
-2. [Versión 2.5.1](#versión-251)
-3. [Versión 2.5](#versión-25)
-4. [Versión 2.4](#versión-24)
-5. [Versión 2.3](#versión-23)
-6. [Versión 2.2](#versión-22)
-7. [Versión 2.1](#versión-21)
-8. [Versión 1.2.0](#versión-120)
-9. [Versiones Anteriores](#versiones-anteriores)
+1. [Versión 2.6.1 (Actual)](#versión-261-actual)
+2. [Versión 2.6.0](#versión-260)
+3. [Versión 2.5.1](#versión-251)
+4. [Versión 2.5](#versión-25)
+5. [Versión 2.4](#versión-24)
+6. [Versión 2.3](#versión-23)
+7. [Versión 2.2](#versión-22)
+8. [Versión 2.1](#versión-21)
+9. [Versión 1.2.0](#versión-120)
+10. [Versiones Anteriores](#versiones-anteriores)
 
 ---
 
@@ -51,7 +52,71 @@ Este documento describe las versiones de `etl-core`, sus características princi
 
 ---
 
-## Versión 2.6.0 (Actual)
+## Versión 2.6.1 (Actual)
+
+### Características Principales
+
+- **Resiliencia ante caídas masivas de conexión AMQP**: mitiga el escenario observado en producción donde varios consumers caían casi simultáneamente por `:socket_closed_unexpectedly`, agotaban la intensidad de reinicio por defecto de OTP y escalaban el crash hasta dejar colas sin consumidor
+- **Jitter en la reconexión**: `Genserver.RabbitConsumer` espera un intervalo aleatorio antes de dejar que el supervisor lo reinicie, evitando que todos los consumers reconecten en el mismo instante
+- **Mayor tolerancia a ráfagas de reinicio**: `Genserver.ConsumerSupervisor` soporta más reinicios en una ventana más amplia antes de escalar el crash a su supervisor padre
+- **Recuperación automática del registro de consumers**: nuevo `Genserver.ConsumerBootstrap`, pensado para vivir junto a `ConsumerSupervisor` dentro de un supervisor `:rest_for_one`, de modo que si `ConsumerSupervisor` llega a caer y reiniciarse, los consumers se vuelven a registrar automáticamente
+
+### Nuevo en esta Versión
+
+#### `Genserver.RabbitConsumer`
+
+- Al recibir `{:DOWN, ref, :process, _pid, reason}` (conexión AMQP caída), ahora se espera un jitter de **1 a 5 segundos** (`Process.sleep/1` con un delay aleatorio) antes de retornar `{:stop, {:amqp_connection_down, reason}, state}`
+- Objetivo: cuando RabbitMQ o la red cortan el socket de varias colas a la vez, evita que todos los consumers golpeen la reconexión en el mismo instante ("tormenta de reconexión")
+
+#### `Genserver.ConsumerSupervisor`
+
+- `init/1` ahora inicializa el `DynamicSupervisor` con `max_restarts: 10, max_seconds: 30`, en lugar del default de OTP (`max_restarts: 3, max_seconds: 5`)
+- Objetivo: tolerar que varios consumers caigan casi simultáneamente (p. ej. un corte de red o un reinicio del broker) sin agotar la intensidad de reinicio y escalar el crash al supervisor de la aplicación
+
+#### `Genserver.ConsumerBootstrap` (módulo nuevo)
+
+`GenServer` cuyo único propósito es, en su `init/1`, invocar `Genserver.ConsumerSupervisor.start_consumers/1` con la lista de consumers configurados.
+
+Pensado para ejecutarse como el hijo inmediatamente después de `Genserver.ConsumerSupervisor` dentro de un supervisor con estrategia `:rest_for_one`:
+
+```elixir
+%{
+    id: MyApp.ConsumersTree,
+    type: :supervisor,
+    start: {Supervisor, :start_link, [
+        [
+            Genserver.ConsumerSupervisor,
+            {Genserver.ConsumerBootstrap, consumers}
+        ],
+        [strategy: :rest_for_one, name: MyApp.ConsumersTree]
+    ]}
+}
+```
+
+Con `:rest_for_one`, si `ConsumerSupervisor` cae (p. ej. agotó su intensidad de reinicio), se reinicia junto con `ConsumerBootstrap`, que en su nuevo `init/1` vuelve a registrar todos los consumers. Sin este mecanismo, `ConsumerSupervisor` solo recrea su tabla ETS interna al reiniciarse — no sabe qué consumers debía tener corriendo — y las colas quedarían sin consumidor hasta un reinicio manual o de la aplicación completa.
+
+`start_consumer/2` es idempotente ante colas ya `:running`, por lo que volver a llamar `start_consumers/1` en cada `init/1` es seguro incluso si algunos consumers seguían vivos.
+
+### Módulos Afectados
+
+- `Genserver.RabbitConsumer`: jitter antes de `{:stop, {:amqp_connection_down, reason}, state}`
+- `Genserver.ConsumerSupervisor`: intensidad de reinicio del `DynamicSupervisor`
+- `Genserver.ConsumerBootstrap`: módulo nuevo
+
+### Migración desde v2.6.0
+
+1. **Actualizar dependencias en `mix.exs`**:
+```elixir
+{:etl_core, git: "https://github.com/krl21/etl-core.git", branch: "v2.6.1"}
+```
+
+2. **Sin cambios obligatorios**: `Genserver.RabbitConsumer` y `Genserver.ConsumerSupervisor` mantienen la misma API pública; el jitter y la intensidad de reinicio son transparentes para el llamador.
+
+3. **Recomendado — cerrar el gap de re-registro**: envolver `Genserver.ConsumerSupervisor` junto con `Genserver.ConsumerBootstrap` en un supervisor `:rest_for_one` (ver ejemplo arriba), en lugar de montar `Genserver.ConsumerSupervisor` como hijo directo del supervisor raíz y llamar `start_consumers/1` una sola vez tras `Supervisor.start_link/2`. Si se mantiene el patrón anterior, el comportamiento es el mismo que en v2.6.0 (sin el fix del gap de re-registro).
+
+---
+
+## Versión 2.6.0
 
 ### Características Principales
 
@@ -592,6 +657,16 @@ children = [
 
 3. **Sin cambios obligatorios** si se prefiere mantener los consumers como hijos directos del supervisor raíz
 
+### De v2.6.0 a v2.6.1
+
+1. **Actualizar dependencias en `mix.exs`**:
+```elixir
+{:etl_core, git: "https://github.com/krl21/etl-core.git", branch: "v2.6.1"}
+```
+
+2. **Sin cambios obligatorios de código** para conservar el comportamiento anterior (con las mejoras de jitter e intensidad de reinicio ya activas)
+3. **Opcional — recomendado**: adoptar `Genserver.ConsumerBootstrap` en un supervisor `:rest_for_one` junto a `Genserver.ConsumerSupervisor` para cerrar el gap de re-registro de consumers. Ver sección [Migración desde v2.6.0](#migración-desde-v260) en la descripción de v2.6.1
+
 ---
 
 ## Notas de Versión
@@ -614,6 +689,10 @@ children = [
 - `ecto_sql` - SQL para Ecto
 
 ### Breaking Changes
+
+**v2.6.0 → v2.6.1**: Ninguno
+- `Genserver.ConsumerBootstrap` es un módulo nuevo y aditivo; adoptarlo (envolviendo `ConsumerSupervisor` en un supervisor `:rest_for_one`) es opcional pero recomendado
+- El jitter de 1-5s antes de reiniciar un consumer y la mayor intensidad de reinicio de `ConsumerSupervisor` son cambios de comportamiento interno, sin impacto en la API pública
 
 **v2.5.1 → v2.6.0**:
 - `Genserver.ConsumerSupervisor` es un módulo nuevo y aditivo; la migración es opcional
@@ -649,7 +728,7 @@ children = [
 
 ## Roadmap Futuro
 
-### Próximas mejoras (post v2.6.0)
+### Próximas mejoras (post v2.6.1)
 
 - Mejoras en el sistema de constantes
 - Soporte para múltiples zonas horarias
