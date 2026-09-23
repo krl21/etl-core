@@ -73,7 +73,7 @@ defmodule Connection.Odbc do
         data_source
         |> Enum.reduce("", fn {key, value}, acc -> acc <> "#{key}=#{value};" end)
         |> Kernel.to_charlist()
-        |> :odbc.connect([])
+        |> :odbc.connect(binary_strings: :on)
         |> case do
             {:ok, pid} -> pid
             {:error, error} ->
@@ -115,11 +115,11 @@ defmodule Connection.Odbc do
 
     """
     def get_uuid(pid) when is_pid(pid) do
-        query = Statement.Sql.generate_uuid() |> Kernel.to_charlist()
+        query = Statement.Sql.generate_uuid() |> :binary.bin_to_list()
 
         :odbc.sql_query(pid, query)
         |> case do
-            {_, _, [{uuid}]} -> List.to_string(uuid)
+            {_, _, [{uuid}]} -> to_string(uuid)
             {:error, error} -> raise(inspect error)
             unknown -> raise("Not match. Entity: #{inspect __MODULE__}. Environment: #{inspect __ENV__.function}. Value: #{inspect unknown}.")
         end
@@ -142,7 +142,7 @@ defmodule Connection.Odbc do
     def insert(pid, statement)
         when is_pid(pid) and is_binary(statement)
         do
-            query = Kernel.to_charlist(statement)
+            query = :binary.bin_to_list(statement)
 
             :odbc.sql_query(pid, query)
             |> case do
@@ -166,7 +166,7 @@ defmodule Connection.Odbc do
 
     """
     def select(pid, statement) when is_pid(pid) and is_binary(statement) do
-        query = Kernel.to_charlist(statement)
+        query = :binary.bin_to_list(statement)
 
         :odbc.sql_query(pid, query)
         |> build_format()
@@ -187,7 +187,7 @@ defmodule Connection.Odbc do
     """
     @decorate retry()
     def update(pid, statement) when is_pid(pid) and is_binary(statement) do
-        query = Kernel.to_charlist(statement)
+        query = :binary.bin_to_list(statement)
 
         :odbc.sql_query(pid, query)
         |> case do
@@ -211,7 +211,7 @@ defmodule Connection.Odbc do
 
     """
     def delete(pid, statement) when is_pid(pid) and is_binary(statement) do
-        query = Kernel.to_charlist(statement)
+        query = :binary.bin_to_list(statement)
 
         :odbc.sql_query(pid, query)
         |> case do
