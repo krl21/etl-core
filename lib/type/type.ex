@@ -100,6 +100,7 @@ defmodule Type.Type do
     defp escape_bigquery_string(x) do
         escaped =
             x
+            |> String.replace(["’", "‘", "′", "‹", "›"], "'")
             |> String.replace("\\", "\\\\")
             |> String.replace("'", "\\'")
             |> String.replace("\n", "\\n")
