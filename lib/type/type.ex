@@ -5,7 +5,7 @@ defmodule Type.Type do
     """
 
     import Type.PConvertTo
-    alias Type.Normalize
+    # alias Type.Normalize
 
 
     @doc"""
@@ -65,7 +65,7 @@ defmodule Type.Type do
     """
     def convert_for_bigquery(x) when is_binary(x) do
         x
-        |> Normalize.normalize_special_chars()
+        # |> Normalize.normalize_special_chars()
         |> escape_bigquery_string()
     end
 
@@ -86,19 +86,32 @@ defmodule Type.Type do
             end
         rescue
             _ ->
-                "JSON '#{x |> Poison.encode!() |> Normalize.normalize_special_chars()}'"
+                # "JSON '#{x |> Poison.encode!() |> Normalize.normalize_special_chars()}'"
+                "JSON #{x |> Poison.encode!() |> escape_bigquery_string()}"
         end
     end
 
     def convert_for_bigquery(nil), do: "NULL"
     def convert_for_bigquery(x), do: convert(x, :string)
 
-    defp escape_bigquery_string(x), do:
-        "'#{x}'"
+    #
+    # Escapes a string as a BigQuery string literal. The backslash must be escaped first.
+    #
+    defp escape_bigquery_string(x) do
+        escaped =
+            x
+            |> String.replace("\\", "\\\\")
+            |> String.replace("'", "\\'")
+            |> String.replace("\n", "\\n")
+            |> String.replace("\r", "\\r")
+            |> String.replace("\t", "\\t")
 
-    defp unescape_bigquery_string(x) do
-        Normalize.denormalize_special_chars(x)
+        "'#{escaped}'"
     end
+
+    # defp unescape_bigquery_string(x) do
+    #     Normalize.denormalize_special_chars(x)
+    # end
 
     defp time_to_bigquery({h, m, s}), do:
         "TIME(#{h}, #{m}, #{s})"
@@ -115,7 +128,8 @@ defmodule Type.Type do
 
     """
     def convert_from_bigquery(x) when is_binary(x), do:
-        unescape_bigquery_string(x)
+        x
+        # unescape_bigquery_string(x)
 
 
 
