@@ -85,13 +85,40 @@ defmodule Time.WorkingTime do
             {:error, "Start date #{inspect start_date} is later than end date #{inspect end_date}"}
 
         else
-            start_date = convert_to_business_datetime(start_date, business, params, change_timezone)
-            end_date = convert_to_business_datetime(end_date, business, params, change_timezone)
+            {local_start, local_end} = localize(start_date, end_date, change_timezone)
 
-            result = Timex.diff(end_date, start_date, :seconds) - get_non_working_time(start_date, end_date, business, params)
-            {:ok, result}
+            if same_day?(local_start, local_end) do
+                # Both boundaries fall on the same calendar day: count the raw
+                # elapsed time as-is. Rounding either end to business hours only
+                # matters when the interval actually spans more than one day.
+                {:ok, Timex.diff(local_end, local_start, :seconds)}
+            else
+                start_date = convert_to_business_datetime(local_start, business, params, false, :start)
+                end_date = convert_to_business_datetime(local_end, business, params, false, :end)
+
+                if Timex.diff(end_date, start_date, :seconds) < 0 do
+                    # start_date and end_date both collapsed into the same non-working
+                    # stretch (e.g. both fall after closing on the same day): nothing elapsed.
+                    {:ok, 0}
+                else
+                    result = Timex.diff(end_date, start_date, :seconds) - get_non_working_time(start_date, end_date, business, params)
+                    {:ok, result}
+                end
+            end
         end end end
     end
+
+    defp localize(start_date, end_date, true) do
+        {
+            Timex.Timezone.convert(start_date, "America/Santiago"),
+            Timex.Timezone.convert(end_date, "America/Santiago")
+        }
+    end
+
+    defp localize(start_date, end_date, false), do: {start_date, end_date}
+
+    defp same_day?(%{year: year, month: month, day: day}, %{year: year, month: month, day: day}), do: true
+    defp same_day?(_start_date, _end_date), do: false
 
     #
     # Calculate the non-labor time between two dates, in seconds
@@ -125,7 +152,7 @@ defmodule Time.WorkingTime do
     defp get_non_working_time(start_date, end_date, business, params, last_working_start_date) do
         tomorrow = Timex.shift(start_date, days: 1)
         {_, {end_hour, end_minute, end_second}} = working_hours(last_working_start_date, business, params)
-        {{start_hour, start_minute, start_second}, _} = working_hours(end_date, business, params)
+        {{start_hour, start_minute, start_second}, _} = working_hours(tomorrow, business, params)
 
         # It is assumed that the start time is the same for all work days
         if not is_working_day?(tomorrow, business, params) do
@@ -166,51 +193,69 @@ defmodule Time.WorkingTime do
 
         - change_timezone: Boolean. Indicate if you have to change the dates to the time use defined in the configuration.
 
+        - boundary: Atom (:start | :end). Whether this date is a start or an end
+          boundary. Start boundaries round forward to the next working moment; end
+          boundaries whose time falls after closing on a working day are left
+          untouched instead of rolling into the next working day (the hour, and
+          any overflow past closing, is respected and counted as elapsed).
+
     ### Return:
 
         - DateTime
     """
-    def convert_to_business_datetime(date, business, params, true) do
+    def convert_to_business_datetime(date, business, params, change_timezone, boundary \\ :start)
+
+    def convert_to_business_datetime(date, business, params, true, boundary) do
         date
         |> Timex.Timezone.convert("America/Santiago")
-        |> convert_to_business_datetime(business, params, false)
+        |> convert_to_business_datetime(business, params, false, boundary)
     end
 
-    def convert_to_business_datetime(%{hour: hour, minute: minute, second: seconds} = date, business, params, false) do
+    def convert_to_business_datetime(%{hour: hour, minute: minute, second: seconds} = date, business, params, false, boundary) do
         is_working_hours = is_working_hours?(date, business, params)
         is_working_day = is_working_day?(date, business, params)
 
-        {start_time, _} = date |> working_hours(business, params)
+        {start_time, end_time} = date |> working_hours(business, params)
 
-        new_date =
-            case {is_working_day, is_working_hours} do
-                {false, _} ->
-                    date
-                    |> next_working_day(business, params)
-
-                {true, false} ->
-                    if {0, 0, 0} <= {hour, minute, seconds} and {hour, minute, seconds} <= start_time do
-                        date
-
-                    else
-                        date
-                        |> next_working_day(business, params)
-                    end
-
-                {true, true} ->
-                    date
-            end
-
-        if not(is_working_day and is_working_hours) do
-            {{start_hour, start_minute, start_second}, _} =
-                new_date
-                |> working_hours(business, params)
-
-            new_date
-            |> Timex.set([hour: start_hour, minute: start_minute, second: start_second, microsecond: 0])
+        # Particular case of the {true, false} branch below: this is the end boundary,
+        # the day is a working day, and the time is past closing. The actual hour must
+        # be respected (not rounded/clamped): it stays on this same day instead of
+        # rolling into the next working day, and the overflow past closing counts as
+        # elapsed (it is not subtracted as non-working time).
+        if boundary == :end and is_working_day and not is_working_hours and end_time < {hour, minute, seconds} do
+            date
 
         else
-            new_date
+            new_date =
+                case {is_working_day, is_working_hours} do
+                    {false, _} ->
+                        date
+                        |> next_working_day(business, params)
+
+                    {true, false} ->
+                        if {0, 0, 0} <= {hour, minute, seconds} and {hour, minute, seconds} <= start_time do
+                            date
+
+                        else
+                            date
+                            |> next_working_day(business, params)
+                        end
+
+                    {true, true} ->
+                        date
+                end
+
+            if not(is_working_day and is_working_hours) do
+                {{start_hour, start_minute, start_second}, _} =
+                    new_date
+                    |> working_hours(business, params)
+
+                new_date
+                |> Timex.set([hour: start_hour, minute: start_minute, second: start_second, microsecond: 0])
+
+            else
+                new_date
+            end
         end
     end
 

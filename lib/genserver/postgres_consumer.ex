@@ -3,13 +3,14 @@ defmodule Genserver.PostgresConsumer do
     @moduledoc"""
     Genserver oriented to consume from a table in a database in Postgres
 
-    For the correct operation, you must implement the Genserver.Utils.PPostgresDb protocol
+    For the correct operation, you must implement the Genserver.Protocols.PPostgresDb protocol
     """
 
     require Logger
-    import Genserver.Utils.PPostgresDb
+    import Genserver.Protocols.PPostgresDb
     import Connection.Odbc, only: [connect: 1]
     import Stuff, only: [random_string_generate: 1]
+    alias Genserver.Monitor
 
 
     def start_link(data) do
@@ -17,6 +18,8 @@ defmodule Genserver.PostgresConsumer do
     end
 
     def init({%{table_name: table_name, business: business}, data_source, milliseconds_timeout}) do
+        Monitor.register(self(), to_string(__MODULE__) <> "." <> to_string(business) <> "." <> to_string(table_name))
+
         Logger.info("#{inspect __MODULE__}. Initializing ConsumerFromPostgres. Table name: ---#{inspect table_name}---. Business: ---#{inspect business}---")
 
         Logger.info("#{inspect __MODULE__}. Created the process to communicate with ODBC-BigQuery")

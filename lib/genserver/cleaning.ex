@@ -7,13 +7,17 @@ defmodule Genserver.Cleaning do
     use GenServer
     require Logger
     import Connection.Odbc, only: [connect: 1]
-    import Genserver.Utils.PAutomaticClean
+    import Genserver.Protocols.PAutomaticClean
+    alias Genserver.Monitor
+
 
     def start_link({business, _data_source, _milliseconds_timeout} = info) do
         GenServer.start_link(__MODULE__, info, name: :"#{__MODULE__}.#{business}")
     end
 
     def init({business, data_source, milliseconds_timeout}) do
+        Monitor.register(self(), to_string(__MODULE__) <> "." <> to_string(business))
+
         Logger.info("#{to_string(__MODULE__)}. Initializing. Business: ---#{to_string(business)}---")
 
         Logger.info("#{to_string(__MODULE__)}. Created the process to communicate with ODBC-BigQuery")
