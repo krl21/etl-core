@@ -7,16 +7,17 @@ Este documento describe las versiones de `etl-core`, sus características princi
 ## Tabla de Contenidos
 
 0. [Rama `development` (pendiente de versión) — Fix `Time.WorkingTime`](#rama-development-pendiente-de-versión--fix-timeworkingtime)
-1. [Versión 2.6.1 (Actual)](#versión-261-actual)
-2. [Versión 2.6.0](#versión-260)
-3. [Versión 2.5.1](#versión-251)
-4. [Versión 2.5](#versión-25)
-5. [Versión 2.4](#versión-24)
-6. [Versión 2.3](#versión-23)
-7. [Versión 2.2](#versión-22)
-8. [Versión 2.1](#versión-21)
-9. [Versión 1.2.0](#versión-120)
-10. [Versiones Anteriores](#versiones-anteriores)
+1. [Versión 2.7 (Actual)](#versión-27-actual)
+2. [Versión 2.6.1](#versión-261)
+3. [Versión 2.6.0](#versión-260)
+4. [Versión 2.5.1](#versión-251)
+5. [Versión 2.5](#versión-25)
+6. [Versión 2.4](#versión-24)
+7. [Versión 2.3](#versión-23)
+8. [Versión 2.2](#versión-22)
+9. [Versión 2.1](#versión-21)
+10. [Versión 1.2.0](#versión-120)
+11. [Versiones Anteriores](#versiones-anteriores)
 
 ---
 
@@ -52,7 +53,54 @@ Este documento describe las versiones de `etl-core`, sus características princi
 
 ---
 
-## Versión 2.6.1 (Actual)
+## Versión 2.7 (Actual)
+
+### Características Principales
+
+- **Texto UTF-8 real en BigQuery**: los valores de texto se envían y se guardan tal cual (con `ñ`, tildes, comillas, emojis, etc.), sin reemplazarlos por la plantilla de caracteres especiales (`ñ` → `%nn%`, `'` → `%r_%`, …)
+- **Queries codificadas como bytes UTF-8**: las sentencias se envían al driver ODBC con `:binary.bin_to_list/1` en lugar de `Kernel.to_charlist/1`. Esto evita que los caracteres fuera de ASCII lleguen como bytes inválidos y queden guardados como `�` (U+FFFD)
+- **Resultados como binarios**: la conexión ODBC se abre con `binary_strings: :on`, por lo que el driver devuelve los textos como binarios de Elixir en vez de charlists
+- **Escape correcto de literales**: al no existir la plantilla, los strings se escapan como literales de BigQuery para no romper el SQL ni abrir inyección (p. ej. `O'Higgins` → `'O\'Higgins'`)
+
+### Nuevo en esta Versión
+
+#### `Connection.Odbc`
+
+- `connect/1`: abre la conexión con `:odbc.connect(conn_str, binary_strings: :on)` (antes `[]`)
+- `insert/2`, `update/2`, `delete/2`, `select/2` y `get_uuid/1`: convierten la sentencia con `:binary.bin_to_list/1` (antes `Kernel.to_charlist/1`)
+- `get_uuid/1`: usa `to_string/1` en lugar de `List.to_string/1` para soportar el UUID devuelto como binario
+
+#### `Type.Type`
+
+- `convert_for_bigquery/1` (strings): ya no llama a `Type.Normalize.normalize_special_chars/1`
+- `convert_for_bigquery/1` (mapas → `JSON`): ya no normaliza el JSON generado por `Poison.encode!/1`; ahora se escapa con `escape_bigquery_string/1`
+- `escape_bigquery_string/1` (privada): escapa `\`, `'`, `\n`, `\r` y `\t` como literal de BigQuery. El backslash se escapa primero
+- `convert_from_bigquery/1`: devuelve el valor sin desnormalizar (se comenta `unescape_bigquery_string/1`)
+- Se comenta el `alias Type.Normalize`, que queda sin uso
+
+`Type.Normalize` y `lib/type/char_mappings.json` se mantienen en el código, pero ya no se invocan al subir ni al leer.
+
+### Módulos Afectados
+
+- `Connection.Odbc`: `connect/1`, `insert/2`, `update/2`, `delete/2`, `select/2`, `get_uuid/1`
+- `Type.Type`: `convert_for_bigquery/1`, `convert_from_bigquery/1`, `escape_bigquery_string/1`
+
+### Migración desde v2.6.1
+
+1. **Actualizar dependencias en `mix.exs`**:
+```elixir
+{:etl_core, git: "https://github.com/krl21/etl-core.git", branch: "v2.7"}
+```
+
+2. **Registros históricos**: los datos que ya están en BigQuery con plantilla (`%nn%`, `%aa%`, `%r_%`, …) **ya no se desnormalizan al leer** y se verán literal. Si un proceso necesita mostrarlos correctamente, debe aplicar `Type.Normalize.denormalize_special_chars/1` de forma explícita o migrar esos datos.
+
+3. **Uso directo de `:odbc`**: quien use el `pid` de `Connection.Odbc.connect/1` con `:odbc.sql_query/2` directamente recibirá los textos como **binarios** en lugar de charlists, y debe enviar sus queries con `:binary.bin_to_list/1`. Quienes usan `Connection.Odbc.select/2` no se ven afectados.
+
+4. **Caracteres fuera de ASCII**: los caracteres que antes se descartaban (emojis, símbolos no mapeados, etc.) ahora se guardan. Revisar si algún consumidor aguas abajo asumía texto solo ASCII.
+
+---
+
+## Versión 2.6.1
 
 ### Características Principales
 
