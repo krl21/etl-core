@@ -23,13 +23,18 @@ defmodule Connection.Gcs.Helpers do
     @api_url "https://storage.googleapis.com/storage/v1/b"
     @upload_url "https://storage.googleapis.com/upload/storage/v1/b"
 
+    # Size of each chunk of a resumable upload. GCS requires a multiple of 256 KiB (except for the last chunk)
+    @resumable_chunk_bytes 8 * 1024 * 1024
+    # Time to wait for a response. Finishing a large resumable upload may take more than hackney's default (5 s)
+    @recv_timeout_ms 60_000
+
 
     ################
     ### Functions
     ################
 
     @doc"""
-    Builds a Tesla client authenticated with the current token. Uses hackney as adapter (already a dependency through httpoison), which verifies TLS certificates.
+    Builds a Tesla client authenticated with the current token. Uses hackney as adapter (already a dependency through httpoison), which verifies TLS certificates, with a response timeout of `@recv_timeout_ms`.
 
     ### Parameters:
         - None.
@@ -40,7 +45,7 @@ defmodule Connection.Gcs.Helpers do
     def conn() do
         Tesla.client(
             [{Tesla.Middleware.Headers, [{"authorization", "Bearer #{token()}"}]}],
-            Tesla.Adapter.Hackney
+            {Tesla.Adapter.Hackney, recv_timeout: @recv_timeout_ms}
         )
     end
 
@@ -63,6 +68,196 @@ defmodule Connection.Gcs.Helpers do
             body: body
         )
     end
+
+    @doc"""
+    Uploads one file of `Connection.Gcs.upload_files/4` to a folder and turns an exception into `{:error, message}`, so it does not stop the other uploads.
+
+    ### Parameters:
+        - bucket: String. Name of the bucket.
+        - path: String. Local path of the file.
+        - folder: String. Destination folder in the bucket.
+        - opts: Keyword. Options of `Connection.Gcs.upload_file/4`.
+
+    ### Return:
+        - {:ok, String} with the GCS URI | {:error, String} with the error message
+    """
+    def upload_one(bucket, path, folder, opts) do
+        {:ok, Gcs.upload_to_folder(bucket, path, folder, opts)}
+    rescue
+        error ->
+            Logger.error("Error al subir #{path} a GCS: #{Exception.message(error)}")
+            {:error, Exception.message(error)}
+    end
+
+    @doc"""
+    Uploads a local file with a resumable upload: it opens an upload session and sends the file in chunks of `@resumable_chunk_bytes`. If a chunk fails with a transient error, it asks GCS how many bytes were stored and resumes from there, instead of uploading the whole file again. Only one chunk is kept in memory.
+
+    ### Parameters:
+        - bucket: String. Name of the bucket.
+        - object: String. Full name of the object.
+        - path: String. Local path of the file.
+        - content_type: String. MIME type of the file.
+
+    ### Return:
+        - :ok | Exception
+    """
+    def resumable_upload(bucket, object, path, content_type) do
+        %File.Stat{size: size} = File.stat!(path)
+        operation = "resumable_upload #{Gcs.gcs_uri(bucket, object)}"
+
+        session_url =
+            with_retry("#{operation} (inicio de sesión)", fn ->
+                start_resumable_session(bucket, object, content_type, size)
+            end)
+
+        File.open!(path, [:read, :binary, :raw], fn file ->
+            send_chunks(session_url, file, 0, size, operation, 1)
+        end)
+    end
+
+    @doc"""
+    Starts a resumable upload session.
+
+    ### Parameters:
+        - bucket: String. Name of the bucket.
+        - object: String. Full name of the object.
+        - content_type: String. MIME type of the file.
+        - size: Integer. Size of the file, in bytes.
+
+    ### Return:
+        - {:ok, String} with the session URL | {:error, Tesla.Env.t() | term()}
+    """
+    def start_resumable_session(bucket, object, content_type, size) do
+        request(:post, "#{@upload_url}/#{encode_path(bucket)}/o",
+            query: [uploadType: "resumable", name: object],
+            headers: [
+                {"content-type", "application/json"},
+                {"x-upload-content-type", content_type},
+                {"x-upload-content-length", Integer.to_string(size)}
+            ],
+            body: ""
+        )
+        |> case do
+            {:ok, env} ->
+                case get_header(env, "location") do
+                    nil -> {:error, "GCS no devolvió la URL de la sesión resumable. Respuesta: #{inspect(env)}"}
+                    session_url -> {:ok, session_url}
+                end
+
+            error ->
+                error
+        end
+    end
+
+    @doc"""
+    Sends the chunks of a file to a resumable upload session, starting at `offset`. After a transient error, it asks GCS for the stored offset and resumes from it, up to `@max_attempts` attempts per chunk.
+
+    ### Parameters:
+        - session_url: String. URL of the resumable session.
+        - file: File descriptor. File opened in `:raw` and `:binary` mode.
+        - offset: Integer. First byte to send.
+        - size: Integer. Size of the file, in bytes.
+        - operation: String. Description of the operation, used in logs and error messages.
+        - attempt: Integer. Current attempt number for the chunk.
+
+    ### Return:
+        - :ok | Exception
+    """
+    def send_chunks(session_url, file, offset, size, operation, attempt) do
+        length = min(@resumable_chunk_bytes, size - offset)
+        {:ok, data} = :file.pread(file, offset, length)
+
+        result =
+            conn()
+            |> Tesla.request(
+                method: :put,
+                url: session_url,
+                headers: [
+                    {"content-range", "bytes #{offset}-#{offset + length - 1}/#{size}"},
+                    {"content-length", Integer.to_string(length)}
+                ],
+                body: data
+            )
+
+        case result do
+            {:ok, %Tesla.Env{status: status}} when status in [200, 201] ->
+                :ok
+
+            {:ok, %Tesla.Env{status: 308} = env} ->
+                send_chunks(session_url, file, stored_offset(env), size, operation, 1)
+
+            # {:ok, env} with another status, or {:error, reason} from the adapter
+            {_, reason} ->
+                if retryable?(reason) and attempt < @max_attempts do
+                    delay = backoff(attempt)
+                    Logger.warning("GCS #{operation}: bloque desde el byte #{offset} falló (#{format_error(reason)}). Reintentando en #{delay} ms")
+                    Process.sleep(delay)
+
+                    case query_upload_status(session_url, size) do
+                        :complete -> :ok
+                        {:ok, stored} -> send_chunks(session_url, file, stored, size, operation, attempt + 1)
+                        {:error, _} -> send_chunks(session_url, file, offset, size, operation, attempt + 1)
+                    end
+                else
+                    raise("Error en GCS #{operation}. Error: #{format_error(reason)}")
+                end
+        end
+    end
+
+    @doc"""
+    Asks GCS how many bytes of a resumable upload were stored.
+
+    ### Parameters:
+        - session_url: String. URL of the resumable session.
+        - size: Integer. Size of the file, in bytes.
+
+    ### Return:
+        - :complete if the upload already finished | {:ok, Integer} with the next byte to send | {:error, Tesla.Env.t() | term()}
+    """
+    def query_upload_status(session_url, size) do
+        conn()
+        |> Tesla.request(
+            method: :put,
+            url: session_url,
+            headers: [{"content-range", "bytes */#{size}"}, {"content-length", "0"}],
+            body: ""
+        )
+        |> case do
+            {:ok, %Tesla.Env{status: status}} when status in [200, 201] -> :complete
+            {:ok, %Tesla.Env{status: 308} = env} -> {:ok, stored_offset(env)}
+            {:ok, env} -> {:error, env}
+            error -> error
+        end
+    end
+
+    @doc"""
+    Reads the next byte to send from the `range` header of a `308 Resume Incomplete` response (`bytes=0-N` -> `N + 1`).
+
+    ### Parameters:
+        - env: Tesla.Env.t(). Response of GCS.
+
+    ### Return:
+        - Integer. `0` if GCS has not stored any byte yet.
+    """
+    def stored_offset(env) do
+        case get_header(env, "range") do
+            "bytes=0-" <> last -> String.to_integer(last) + 1
+            _ -> 0
+        end
+    end
+
+    @doc"""
+    Finds a response header, ignoring the case of its name.
+
+    ### Parameters:
+        - env: Tesla.Env.t(). Response.
+        - name: String. Header name, in lowercase.
+
+    ### Return:
+        - String | nil
+    """
+    def get_header(%Tesla.Env{headers: headers}, name), do:
+        Enum.find_value(headers, fn {key, value} -> if String.downcase(key) == name, do: value end)
 
     @doc"""
     Executes a request against the GCS API.
