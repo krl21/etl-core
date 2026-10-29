@@ -42,7 +42,14 @@ defmodule EtlCore.MixProject do
       {:ecto_sql, "~> 3.9.0"},
       {:postgrex, "~> 0.16.0"},
       {:nimble_pool, "~> 1.0"},
-      {:poolboy, "~> 1.5"}
+      {:poolboy, "~> 1.5"},
+      {:goth, "~> 1.4"},
+      # finch >= 0.22, mint >= 1.9.2 and hpax >= 1.0.4 require Elixir 1.15; the image uses Elixir 1.14
+      {:finch, "~> 0.21.0"},
+      {:mint, "1.9.1"},
+      {:hpax, "1.0.3"},
+      # GCS client (Connection.Gcs), with the hackney adapter
+      {:tesla, "~> 1.22"}
     ]
   end
 end
