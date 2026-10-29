@@ -15,12 +15,16 @@ defmodule Connection.Gcs do
 
     alias Connection.Gcs.ContentType
     import Connection.Gcs.Helpers, only: [
-        load_credentials!: 1, store_credentials: 1, token: 0, media_upload: 4, request: 2, request: 3,
-        bucket_url: 1, object_url: 2, list_page: 4, with_retry: 2, ensure_trailing_slash: 1, validate_name!: 2
+        load_credentials!: 1, store_credentials: 1, token: 0, media_upload: 4, resumable_upload: 4, request: 2, request: 3,
+        bucket_url: 1, object_url: 2, list_page: 4, upload_one: 4, with_retry: 2, ensure_trailing_slash: 1, validate_name!: 2
     ]
 
     # Size of the chunks read from disk when uploading a file
     @upload_chunk_bytes 256 * 1024
+    # Files larger than this are uploaded with a resumable upload
+    @resumable_threshold_bytes 8 * 1024 * 1024
+    # Files uploaded at the same time by upload_files/4
+    @default_max_concurrency 4
 
 
     ################
@@ -90,7 +94,96 @@ defmodule Connection.Gcs do
     end
 
     @doc"""
+    Uploads several local files to a folder of the bucket, keeping their file names. When there is more than one file, they are uploaded in parallel (up to `:max_concurrency` at a time). A failed file does not stop the others.
+
+    ### Parameters:
+        - bucket: String. Name of the bucket.
+        - paths: list of String. Local paths of the files.
+        - folder: String. Destination folder in the bucket.
+        - opts: Keyword.
+            - `:max_concurrency` - Integer. Files uploaded at the same time. Default: `4`.
+            - `:content_type` - String. MIME type for every file. By default, it is detected from each file extension.
+
+    ### Return:
+        - list of {String, {:ok, String} | {:error, String}} | Exception. For each local path, in the same order as `paths`, the GCS URI of the uploaded file or the error message. Raises an exception if the parameters are invalid or two files have the same name (they would overwrite the same object).
+
+    """
+    def upload_files(bucket, paths, folder, opts \\ [])
+
+    def upload_files(bucket, paths, folder, opts) when is_list(paths) and paths != [] do
+        validate_name!(bucket, "bucket")
+        validate_name!(folder, "folder")
+        Enum.each(paths, &validate_name!(&1, "local path"))
+
+        duplicated =
+            paths
+            |> Enum.frequencies_by(&Path.basename/1)
+            |> Enum.filter(fn {_, count} -> count > 1 end)
+            |> Enum.map(fn {name, _} -> name end)
+
+        if duplicated != [] do
+            raise(ArgumentError, "Hay archivos con el mismo nombre, se sobrescribirían en #{gcs_uri(bucket, ensure_trailing_slash(folder))}: #{inspect(duplicated)}")
+        end
+
+        {max_concurrency, upload_opts} = Keyword.pop(opts, :max_concurrency, @default_max_concurrency)
+
+        case paths do
+            [path] ->
+                [{path, upload_one(bucket, path, folder, upload_opts)}]
+
+            _ ->
+                paths
+                |> Task.async_stream(
+                    fn path -> {path, upload_one(bucket, path, folder, upload_opts)} end,
+                    max_concurrency: max_concurrency,
+                    timeout: :infinity,
+                    ordered: true
+                )
+                |> Enum.map(fn {:ok, result} -> result end)
+        end
+    end
+
+    def upload_files(_bucket, paths, _folder, _opts), do:
+        raise(ArgumentError, "Valor inválido para paths: se espera una lista no vacía de rutas locales. Valor: #{inspect(paths)}")
+
+    @doc"""
+    Uploads every file of a local directory to a folder of the bucket, keeping their file names. Files are uploaded in parallel with `upload_files/4`. Only the files directly inside the directory are uploaded: sub-directories are skipped.
+
+    ### Parameters:
+        - bucket: String. Name of the bucket.
+        - directory: String. Local directory.
+        - folder: String. Destination folder in the bucket.
+        - opts: Keyword. Same options as `upload_files/4`.
+
+    ### Return:
+        - list of {String, {:ok, String} | {:error, String}} | Exception. Same result as `upload_files/4`. Empty list if the directory has no files. Raises an exception if the directory does not exist.
+
+    """
+    def upload_directory(bucket, directory, folder, opts \\ []) do
+        validate_name!(directory, "local directory")
+
+        if not File.dir?(directory) do
+            raise(File.Error, reason: :enoent, action: "upload directory to GCS", path: directory)
+        end
+
+        directory
+        |> File.ls!()
+        |> Enum.sort()
+        |> Enum.map(&Path.join(directory, &1))
+        |> Enum.filter(&File.regular?/1)
+        |> case do
+            [] ->
+                Logger.debug("No hay archivos para subir en #{directory}")
+                []
+            paths ->
+                upload_files(bucket, paths, folder, opts)
+        end
+    end
+
+    @doc"""
     Uploads a local file to the bucket. The file is streamed from disk, it is not loaded into memory.
+
+    Files up to 8 MiB are uploaded in a single request. Larger files use a resumable upload: they are sent in chunks and, if the connection fails, the upload resumes from the last byte stored by GCS instead of starting again.
 
     ### Parameters:
         - bucket: String. Name of the bucket.
@@ -115,17 +208,21 @@ defmodule Connection.Gcs do
         content_type = Keyword.get_lazy(opts, :content_type, fn -> ContentType.from_path(path) end)
         %File.Stat{size: size} = File.stat!(path)
 
-        with_retry(
-            "upload_file #{gcs_uri(bucket, object)}",
-            fn ->
-                body =
-                    path
-                    |> File.stream!([], @upload_chunk_bytes)
-                    |> Stream.map(& &1)
+        if size > @resumable_threshold_bytes do
+            resumable_upload(bucket, object, path, content_type)
+        else
+            with_retry(
+                "upload_file #{gcs_uri(bucket, object)}",
+                fn ->
+                    body =
+                        path
+                        |> File.stream!([], @upload_chunk_bytes)
+                        |> Stream.map(& &1)
 
-                media_upload(bucket, object, body, [{"content-type", content_type}, {"content-length", Integer.to_string(size)}])
-            end
-        )
+                    media_upload(bucket, object, body, [{"content-type", content_type}, {"content-length", Integer.to_string(size)}])
+                end
+            )
+        end
 
         Logger.debug("Archivo #{path} subido a #{gcs_uri(bucket, object)}")
         gcs_uri(bucket, object)
@@ -325,7 +422,7 @@ defmodule Connection.Gcs do
         validate_name!(bucket, "bucket")
         validate_name!(object, "object")
 
-        with_retry("delete #{gcs_uri(bucket, object)}", fn ->
+        with_retry("delete_object #{gcs_uri(bucket, object)}", fn ->
             request(:delete, object_url(bucket, object))
             |> case do
                 {:error, %Tesla.Env{status: 404}} -> {:ok, :not_found}
@@ -353,7 +450,7 @@ defmodule Connection.Gcs do
 
         bucket
         |> list_objects(ensure_trailing_slash(folder))
-        |> Enum.map(&delete(bucket, &1))
+        |> Enum.map(&delete_object(bucket, &1))
         |> length()
     end
 
