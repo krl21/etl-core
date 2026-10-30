@@ -81,16 +81,16 @@ defmodule ForcedLoad.Handler do
         - `:notification_fn` - Function. `(message, level) -> :ok`. Custom notification function
 
     ### Optional - Direct load to BigQuery via GCS
-        When the forced load ends, it loads into BigQuery the records of the temporary Postgres table, through files uploaded to GCS: waits for the used queues to be empty (up to 5 minutes), writes the pending records of each type to a JSONL file in `:files_path` and deletes them from Postgres, uploads the files to GCS and loads them into their BigQuery tables.
+        When the forced load ends, it loads into BigQuery the records of the temporary Postgres table, through files uploaded to GCS: waits for the used queues to be empty (up to 5 minutes), writes the pending records of each type to a JSONL file in `:files_path` and marks them as `analizado_en_bq` in Postgres, uploads the files to GCS and loads them into their BigQuery tables.
         - `:bigquery_direct_load` - Boolean. Enables the direct load (default: false)
         - `:bigquery_tables_by_type` - List of `{type, table}`. BigQuery table of each record type (default: [])
         - `:postgres_pool` - Atom. Name of the `Pool.Postgres` pool (default: :postgres_pool)
         - `:postgres_temp_table` - String. Temporary Postgres table with the records. Required if the direct load is enabled
-        - `:postgres_export_batch_size` - Integer. Records read, written to the file and deleted from Postgres per batch (default: 10000)
+        - `:postgres_export_batch_size` - Integer. Records read, written to the file and marked in Postgres per batch (default: 10000)
         - `:files_path` - String. Local directory where the record files are written (default: "./tmp")
         - `:gcs_bucket` - String. Bucket where the files are uploaded. Required if the direct load is enabled
         - `:gcs_folder` - String | nil. Folder of the bucket. With nil or "", the files are uploaded to the root of the bucket
-        - `:gcs_credentials_path` - String. Service account JSON credentials for GCS and BigQuery. Required if the direct load is enabled
+        - `:gcs_credentials` - Map | String. Service account JSON credentials for GCS and BigQuery, as a decoded map or as a string. Required if the direct load is enabled
 
     ## Example Usage
 
