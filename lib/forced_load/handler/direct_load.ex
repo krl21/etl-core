@@ -12,6 +12,7 @@ defmodule ForcedLoad.Handler.DirectLoad do
 
 
     @unanalyzed_state "sin_analizar"
+    @analyzed_in_bq_state "analizado_en_bq"
     @queue_wait_timeout 5 * 60_000
     @queue_check_interval 10_000
     @queue_empty_delay 5_000
@@ -160,7 +161,7 @@ defmodule ForcedLoad.Handler.DirectLoad do
 
 
     #
-    # Writes the pending records (`sin_analizar`) of a type to a JSONL file and deletes them from the temporary Postgres table, in one transaction. The records are read, written and deleted in batches of `:postgres_export_batch_size`. Each line is the `informacion` column of a record. If something fails, the transaction is rolled back and the file is deleted.
+    # Writes the pending records (`sin_analizar`) of a type to a JSONL file and marks them as `analizado_en_bq` in the temporary Postgres table, in one transaction. The records are read, written and marked in batches of `:postgres_export_batch_size`. Each line is the `informacion` column of a record. If something fails, the transaction is rolled back and the file is deleted.
     #
     # The file is named `<business_name>_<type>-<yyyyMMddHHmmssSSS>.jsonl` (UTC time).
     #
@@ -192,7 +193,7 @@ defmodule ForcedLoad.Handler.DirectLoad do
                         |> Enum.reduce(0, fn result, count ->
                             records = PostgresHelpers.parse_query_result(result)
                             IO.binwrite(file, Enum.map(records, fn record -> [Poison.encode!(record.informacion), "\n"] end))
-                            Postgrex.query!(conn, "DELETE FROM #{table} WHERE id = ANY($1)", [Enum.map(records, & &1.id)])
+                            Postgrex.query!(conn, "UPDATE #{table} SET estado_analisis = '#{@analyzed_in_bq_state}' WHERE id = ANY($1)", [Enum.map(records, & &1.id)])
                             count + length(records)
                         end)
                     end)
