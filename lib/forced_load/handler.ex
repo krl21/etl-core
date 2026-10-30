@@ -80,6 +80,18 @@ defmodule ForcedLoad.Handler do
         - `:skip_bigquery` - Boolean. Skip BigQuery queries (default: false)
         - `:notification_fn` - Function. `(message, level) -> :ok`. Custom notification function
 
+    ### Optional - Direct load to BigQuery via GCS
+        When the forced load ends, it loads into BigQuery the records of the temporary Postgres table, through files uploaded to GCS: waits for the used queues to be empty (up to 5 minutes), writes the pending records of each type to a JSONL file in `:files_path` and deletes them from Postgres, uploads the files to GCS and loads them into their BigQuery tables.
+        - `:bigquery_direct_load` - Boolean. Enables the direct load (default: false)
+        - `:bigquery_tables_by_type` - List of `{type, table}`. BigQuery table of each record type (default: [])
+        - `:postgres_pool` - Atom. Name of the `Pool.Postgres` pool (default: :postgres_pool)
+        - `:postgres_temp_table` - String. Temporary Postgres table with the records. Required if the direct load is enabled
+        - `:postgres_export_batch_size` - Integer. Records read, written to the file and deleted from Postgres per batch (default: 10000)
+        - `:files_path` - String. Local directory where the record files are written (default: "./tmp")
+        - `:gcs_bucket` - String. Bucket where the files are uploaded. Required if the direct load is enabled
+        - `:gcs_folder` - String | nil. Folder of the bucket. With nil or "", the files are uploaded to the root of the bucket
+        - `:gcs_credentials_path` - String. Service account JSON credentials for GCS and BigQuery. Required if the direct load is enabled
+
     ## Example Usage
 
     ```elixir
@@ -113,17 +125,11 @@ defmodule ForcedLoad.Handler do
     """
 
     require Logger
-    alias Connection.ElasticSearch
-    alias Connection.NodeService
-    alias Connection.WorkflowService
     alias Connection.Odbc
-    alias Statement.Sql
     alias ForcedLoad.Helpers
+    alias ForcedLoad.Handler.DirectLoad
+    alias ForcedLoad.Handler.Loader
     import Time.Timem, only: [by_intervals: 3]
-
-
-    @default_batch_size 200
-    @default_batch_delay 0
 
 
     # ============================================
@@ -206,18 +212,30 @@ defmodule ForcedLoad.Handler do
         end
 
         try do
-            intervals
-            |> Enum.each(fn {start_date_, end_date_} ->
-                process_interval(
-                    start_date_,
-                    end_date_,
-                    channel,
-                    bq_pid,
-                    includes_record,
-                    includes_task,
-                    config
-                )
-            end)
+            # The BigQuery connection is only used to fetch the IDs: it is closed before the direct load
+            try do
+                intervals
+                |> Enum.each(fn {start_date_, end_date_} ->
+                    Loader.process_interval(
+                        start_date_,
+                        end_date_,
+                        channel,
+                        bq_pid,
+                        includes_record,
+                        includes_task,
+                        config
+                    )
+                end)
+            after
+                if bq_pid do
+                    Helpers.notify(config, "Cerrando conexión a BigQuery...", :info)
+                    Odbc.disconnect(bq_pid)
+                end
+            end
+
+            if Map.get(config, :bigquery_direct_load, false) do
+                DirectLoad.run(channel, includes_record, includes_task, config)
+            end
 
             Helpers.notify(config,
                 """
@@ -231,444 +249,8 @@ defmodule ForcedLoad.Handler do
             )
             :ok
         after
-            if bq_pid do
-                Helpers.notify(config, "Cerrando conexión a BigQuery...", :info)
-                Odbc.disconnect(bq_pid)
-            end
             # Close AMQP connection
             if connection, do: AMQP.Connection.close(connection)
-        end
-    end
-
-
-    # ============================================
-    # INTERVAL PROCESSING
-    # ============================================
-
-    #
-    # Processes a single time interval: fetches IDs, splits into batches, and loads records/tasks.
-    #
-    # ### Parameters
-    #     - start_date: DateTime. Start of the interval
-    #     - end_date: DateTime. End of the interval
-    #     - channel: AMQP.Channel. Channel for publishing messages
-    #     - bq_pid: pid | nil. BigQuery ODBC connection process
-    #     - includes_record: boolean. Whether to load records
-    #     - includes_task: boolean. Whether to load tasks
-    #     - config: map. Configuration options
-    #
-    defp process_interval(start_date, end_date, channel, bq_pid, includes_record, includes_task, config) do
-        Helpers.notify(config,
-            "Inicio de carga forzada entre #{to_string(start_date)} y #{to_string(end_date)}",
-            :info
-        )
-
-        ids = fetch_all_ids(start_date, end_date, bq_pid, config)
-
-        batch_size = Map.get(config, :batch_size, @default_batch_size)
-        batch_delay = Map.get(config, :batch_delay, @default_batch_delay)
-
-        batches = Enum.chunk_every(ids, batch_size)
-        total_batches = length(batches)
-
-        Helpers.notify(config, "Total de IDs a procesar: #{length(ids)} en #{total_batches} lotes", :info)
-
-        batches
-        |> Enum.with_index(1)
-        |> Enum.each(fn {batch, batch_number} ->
-            Helpers.notify(config, "Lote #{batch_number}/#{total_batches} - Procesando #{length(batch)} IDs", :info)
-
-            # Callback: on_batch_start
-            if callback = Map.get(config, :on_batch_start) do
-                callback.(batch, batch_number)
-            end
-
-            ticket = Helpers.get_ticket(config)
-
-            # Load records
-            records_loaded = if includes_record do
-                Helpers.notify(config, "\tCargando expedientes...", :info)
-                count = load_records(batch, ticket, channel, true, config)
-                Helpers.notify(config, "\tExpedientes cargados: #{count}/#{length(batch)}", :info)
-                count
-            else
-                0
-            end
-
-            # Load tasks
-            tasks_loaded = if includes_task do
-                Helpers.notify(config, "\tCargando tareas...", :info)
-                count = load_tasks(batch, ticket, channel, true, config)
-                Helpers.notify(config, "\tTareas cargadas: #{count}/#{length(batch)}", :info)
-                count
-            else
-                0
-            end
-
-            results = %{records_loaded: records_loaded, tasks_loaded: tasks_loaded}
-
-            # Callback: on_batch_end
-            if callback = Map.get(config, :on_batch_end) do
-                callback.(batch, batch_number, results)
-            end
-
-            Helpers.notify(config, "Lote #{batch_number}/#{total_batches} - Completado", :info)
-
-            if batch_delay > 0, do: :timer.sleep(batch_delay)
-        end)
-
-        Helpers.notify(config,
-            "Fin de carga forzada entre #{to_string(start_date)} y #{to_string(end_date)}. Número de registros procesados: #{length(ids)}",
-            :info
-        )
-    end
-
-
-    # ============================================
-    # ID FETCHING
-    # ============================================
-
-
-    #
-    # Fetches unique IDs from both BigQuery and ElasticSearch, applies optional filter.
-    #
-    # ### Parameters
-    #     - start_date: DateTime. Start of date range
-    #     - end_date: DateTime. End of date range
-    #     - bq_pid: pid | nil. BigQuery ODBC connection process
-    #     - config: map. Configuration options
-    #
-    # ### Returns
-    #     - list. Unique IDs from both sources, optionally filtered
-    #
-    defp fetch_all_ids(start_date, end_date, bq_pid, config) do
-        bq_ids = fetch_ids_from_bigquery(start_date, end_date, bq_pid, config)
-        es_ids = fetch_ids_from_elasticsearch(start_date, end_date, config)
-
-        all_ids = (bq_ids ++ es_ids) |> Enum.uniq()
-
-        # Apply ID filter if configured
-        case Map.get(config, :id_filter) do
-            nil -> all_ids
-            filter_fn when is_function(filter_fn, 1) -> filter_fn.(all_ids)
-        end
-    end
-
-
-    #
-    # Fetches IDs from BigQuery using the provided connection or custom function.
-    #
-    # ### Parameters
-    #     - start_date: DateTime. Start of date range
-    #     - end_date: DateTime. End of date range
-    #     - bq_pid: pid. BigQuery ODBC connection process
-    #     - config: map. Configuration options
-    #
-    # ### Returns
-    #     - list. List of unique IDs from BigQuery
-    #
-    defp fetch_ids_from_bigquery(_start_date, _end_date, nil, _config), do: []
-
-    defp fetch_ids_from_bigquery(start_date, end_date, bq_pid, config) do
-        case Map.get(config, :get_ids_fn) do
-            nil -> default_get_ids_bq(start_date, end_date, bq_pid, config)
-            custom_fn -> custom_fn.(start_date, end_date, bq_pid, config)
-        end
-    end
-
-
-    #
-    # Fetches IDs from BigQuery using the provided connection or custom function.
-    # Returns empty list if bq_pid is nil (BigQuery skipped).
-    #
-    # ### Parameters
-    #     - start_date: DateTime. Start of date range
-    #     - end_date: DateTime. End of date range
-    #     - bq_pid: pid. BigQuery ODBC connection process
-    #     - config: map. Configuration options
-    #
-    # ### Returns
-    #     - list. List of unique IDs from BigQuery
-    #
-    defp fetch_ids_from_elasticsearch(start_date, end_date, config) do
-        if Map.get(config, :skip_elasticsearch, false) do
-            []
-        else
-            case Map.get(config, :get_ids_es_fn) do
-                nil -> default_get_ids_es(start_date, end_date, config)
-                custom_fn -> custom_fn.(start_date, end_date, config)
-            end
-        end
-    end
-
-
-    #
-    # Default implementation for fetching IDs from BigQuery.
-    # Builds SQL SELECT query and executes against BigQuery via ODBC.
-    #
-    # ### Parameters
-    #     - start_date: DateTime. Start of date range
-    #     - end_date: DateTime. End of date range
-    #     - bq_pid: pid. BigQuery ODBC connection process
-    #     - config: map. Must contain :bigquery_table, :unique_id_field, :last_update_field
-    #
-    # ### Returns
-    #     - list. List of unique IDs from BigQuery
-    #
-    defp default_get_ids_bq(start_date, end_date, bq_pid, config) do
-        bigquery_table = Map.fetch!(config, :bigquery_table)
-        unique_id_field = Map.fetch!(config, :unique_id_field)
-        last_update_field = Map.fetch!(config, :last_update_field)
-
-        statement = Sql.select(
-            bigquery_table,
-            [unique_id_field],
-            [[
-                {
-                    last_update_field,
-                    start_date |> Poison.encode!() |> Poison.decode!(),
-                    :gte,
-                    :timestamp
-                },
-                {
-                    last_update_field,
-                    end_date |> Poison.encode!() |> Poison.decode!(),
-                    :lte,
-                    :timestamp
-                }
-            ]],
-            [:and]
-        )
-
-        try do
-            Odbc.select(bq_pid, statement)
-            |> Enum.map(fn [{_, id}] -> id end)
-        rescue
-            error ->
-                Helpers.notify(config, "Error al obtener IDs de BigQuery: #{inspect(error)}", :error)
-                []
-        end
-    end
-
-
-    #
-    # Default implementation for fetching IDs from ElasticSearch.
-    # Queries ElasticSearch for documents within the date range.
-    #
-    # ### Parameters
-    #     - start_date: DateTime. Start of date range
-    #     - end_date: DateTime. End of date range
-    #     - config: map. Must contain :documentary_type, :unique_id_payload_field, :last_update_payload_field
-    #
-    # ### Returns
-    #     - list. List of unique IDs from ElasticSearch
-    #
-    defp default_get_ids_es(start_date, end_date, config) do
-        documentary_type = Map.fetch!(config, :documentary_type)
-        unique_id_payload_field = Map.fetch!(config, :unique_id_payload_field)
-        last_update_payload_field = Map.fetch!(config, :last_update_payload_field)
-        es_config = Helpers.get_elasticsearch_config(config)
-
-        ElasticSearch.get_from_range(
-            es_config.url,
-            es_config.headers,
-            documentary_type,
-            ElasticSearch.mode(),
-            start_date |> Poison.encode!() |> Poison.decode!(),
-            end_date |> Poison.encode!() |> Poison.decode!(),
-            last_update_payload_field,
-            unique_id_payload_field
-        )
-        |> case do
-            {:ok, list} -> list
-            {:error, error} ->
-                Helpers.notify(config, "Error al obtener IDs de ElasticSearch: #{inspect(error)}", :error)
-                []
-        end
-    end
-
-
-    # ============================================
-    # RECORD LOADING
-    # ============================================
-
-    #
-    # Loads records for a batch of IDs and publishes them to AMQP queue.
-    #
-    # ### Parameters
-    #     - ids: list. List of unique IDs to load
-    #     - ticket: String | nil. Authentication ticket for NodeService
-    #     - channel: AMQP.Channel. Channel for publishing messages
-    #     - enabled: boolean. If false, returns 0 immediately
-    #     - config: map. Configuration options
-    #
-    # ### Returns
-    #     - integer. Number of records successfully loaded
-    #
-    defp load_records(_ids, _ticket, _channel, false, _config), do: 0
-
-    defp load_records(ids, ticket, channel, true, config) do
-        load_fn = Map.get(config, :load_record_fn, &default_load_record/4)
-
-        ids
-        |> Enum.reduce(0, fn unique_id, acc ->
-            case load_fn.(unique_id, ticket, channel, config) do
-                :ok -> acc + 1
-                {:error, _} -> acc
-            end
-        end)
-    end
-
-
-    #
-    # Default implementation for loading a single record.
-    # Fetches record from NodeService and publishes to AMQP queue.
-    #
-    # ### Parameters
-    #     - unique_id: String. Unique identifier of the record
-    #     - ticket: String | nil. Authentication ticket
-    #     - channel: AMQP.Channel. Channel for publishing
-    #     - config: map. Must contain :record_queue, optionally :record_filter, :build_record_message_fn
-    #
-    # ### Returns
-    #     - :ok on success
-    #     - {:error, reason} on failure
-    #
-    defp default_load_record(unique_id, ticket, channel, config) do
-        record_queue = Map.fetch!(config, :record_queue)
-        ns_config = Helpers.get_nodeservice_config(config)
-
-        try do
-            NodeService.get_details(unique_id, ns_config.url, ns_config.headers, ticket)
-            |> case do
-                {:error, error} ->
-                    if callback = Map.get(config, :on_record_error) do
-                        callback.(unique_id, error)
-                    else
-                        Helpers.notify(config, "Error al obtener expediente #{unique_id} de NodeService: #{inspect(error)}", :error)
-                    end
-                    {:error, error}
-
-                {:ok, %{"response" => %{"msg" => payload}}} ->
-                    should_publish = case Map.get(config, :record_filter) do
-                        nil -> true
-                        filter_fn -> filter_fn.(payload)
-                    end
-
-                    if should_publish do
-                        msg = case Map.get(config, :build_record_message_fn) do
-                            nil -> %{"action" => "poblar_datos", "current" => payload}
-                            builder_fn -> builder_fn.(payload)
-                        end
-
-                        AMQP.Basic.publish(channel, record_queue, "", Poison.encode!(msg))
-
-                        if callback = Map.get(config, :on_record_success) do
-                            callback.(unique_id, payload)
-                        end
-                    end
-
-                    :ok
-            end
-        rescue
-            error ->
-                Helpers.notify(config, "Error al cargar expediente #{unique_id} de NodeService: #{inspect(error)}", :error)
-                {:error, error}
-        end
-    end
-
-
-    # ============================================
-    # TASK LOADING
-    # ============================================
-
-    #
-    # Loads tasks for a batch of content references and publishes them to AMQP queue.
-    #
-    # ### Parameters
-    #     - ids: list. List of content references to load tasks for
-    #     - ticket: String | nil. Authentication ticket for WorkflowService
-    #     - channel: AMQP.Channel. Channel for publishing messages
-    #     - enabled: boolean. If false, returns 0 immediately
-    #     - config: map. Configuration options
-    #
-    # ### Returns
-    #     - integer. Number of content references with tasks successfully loaded
-    #
-    defp load_tasks(_ids, _ticket, _channel, false, _config), do: 0
-
-    defp load_tasks(ids, ticket, channel, true, config) do
-        load_fn = Map.get(config, :load_task_fn, &default_load_task/4)
-
-        ids
-        |> Enum.reduce(0, fn contentref, acc ->
-            case load_fn.(contentref, ticket, channel, config) do
-                :ok -> acc + 1
-                {:error, _} -> acc
-            end
-        end)
-    end
-
-
-    #
-    # Default implementation for loading tasks for a single content reference.
-    # Fetches tasks from WorkflowService and publishes each to AMQP queue.
-    #
-    # ### Parameters
-    #     - contentref: String. Content reference to fetch tasks for
-    #     - ticket: String | nil. Authentication ticket
-    #     - channel: AMQP.Channel. Channel for publishing
-    #     - config: map. Must contain :task_queue, :documentary_type, optionally :task_name_filter
-    #
-    # ### Returns
-    #     - :ok on success
-    #     - {:error, reason} on failure
-    #
-    defp default_load_task(contentref, ticket, channel, config) do
-        task_queue = Map.fetch!(config, :task_queue)
-        documentary_type = Map.fetch!(config, :documentary_type)
-        ws_config = Helpers.get_workflowservice_config(config)
-
-        try do
-            WorkflowService.get_details(ws_config.url, ws_config.headers, documentary_type, contentref, ticket)
-            |> case do
-                {:error, error} ->
-                    if callback = Map.get(config, :on_task_error) do
-                        callback.(contentref, error)
-                    else
-                        Helpers.notify(config, "Error al obtener tareas para #{contentref} de WorkflowService: #{inspect(error)}", :error)
-                    end
-                    {:error, error}
-
-                {:ok, tasks} ->
-                    filtered_tasks = case Map.get(config, :task_name_filter) do
-                        nil -> tasks
-                        allowed_names when is_list(allowed_names) ->
-                            Enum.filter(tasks, fn task ->
-                                task_name = Map.get(task, "name") || Map.get(task, "nombre")
-                                task_name in allowed_names
-                            end)
-                    end
-
-                    Enum.each(filtered_tasks, fn task ->
-                        msg = case Map.get(config, :build_task_message_fn) do
-                            nil -> task
-                            builder_fn -> builder_fn.(task)
-                        end
-
-                        AMQP.Basic.publish(channel, task_queue, "", Poison.encode!(msg))
-                    end)
-
-                    if callback = Map.get(config, :on_task_success) do
-                        callback.(contentref, filtered_tasks)
-                    end
-
-                    :ok
-            end
-        rescue
-            error ->
-                Helpers.notify(config, "Error al cargar tareas para #{contentref} de WorkflowService: #{inspect(error)}", :error)
-                {:error, error}
         end
     end
 
