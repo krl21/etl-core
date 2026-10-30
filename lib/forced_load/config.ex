@@ -68,7 +68,7 @@ defmodule ForcedLoad.Config do
         def gcs_folder, do: "carga_forzada"
 
         @impl true
-        def gcs_credentials_path, do: "/ruta/credentials.json"
+        def gcs_credentials, do: Application.get_env(:mi_app, :gcs)[:credentials]
     end
     ```
 
@@ -186,7 +186,7 @@ defmodule ForcedLoad.Config do
     @doc "Returns the temporary Postgres table where the records are stored (default: nil)"
     @callback postgres_temp_table() :: String.t() | nil
 
-    @doc "Returns the number of records read, written to the file and deleted from Postgres per batch (default: 10000)"
+    @doc "Returns the number of records read, written to the file and marked in Postgres per batch (default: 10000)"
     @callback postgres_export_batch_size() :: pos_integer()
 
     @doc "Returns the local directory where the record files are written (default: \"./tmp\")"
@@ -198,8 +198,8 @@ defmodule ForcedLoad.Config do
     @doc "Returns the folder of the bucket where the record files are uploaded. With nil or an empty string, they are uploaded to the root of the bucket (default: nil)"
     @callback gcs_folder() :: String.t() | nil
 
-    @doc "Returns the path of the service account JSON credentials for GCS and BigQuery (default: nil)"
-    @callback gcs_credentials_path() :: String.t() | nil
+    @doc "Returns the service account JSON credentials for GCS and BigQuery, as a decoded map or as a string (default: nil)"
+    @callback gcs_credentials() :: map() | String.t() | nil
 
 
     # ============================================
@@ -323,7 +323,7 @@ defmodule ForcedLoad.Config do
         files_path: 0,
         gcs_bucket: 0,
         gcs_folder: 0,
-        gcs_credentials_path: 0,
+        gcs_credentials: 0,
         webhook_url_path: 0,
         bigquery_config_path: 0,
         elasticsearch_url_path: 0,
@@ -388,7 +388,7 @@ defmodule ForcedLoad.Config do
             def files_path, do: ForcedLoad.Config.default(:files_path)
             def gcs_bucket, do: nil
             def gcs_folder, do: nil
-            def gcs_credentials_path, do: nil
+            def gcs_credentials, do: nil
             def webhook_url_path, do: nil
             def bigquery_config_path, do: [:bigquery, :configuration]
             def elasticsearch_url_path, do: [:elasticsearch, :url]
@@ -426,7 +426,7 @@ defmodule ForcedLoad.Config do
                 files_path: 0,
                 gcs_bucket: 0,
                 gcs_folder: 0,
-                gcs_credentials_path: 0,
+                gcs_credentials: 0,
                 webhook_url_path: 0,
                 bigquery_config_path: 0,
                 elasticsearch_url_path: 0,
@@ -503,7 +503,7 @@ defmodule ForcedLoad.Config do
                     files_path: files_path(),
                     gcs_bucket: gcs_bucket(),
                     gcs_folder: gcs_folder(),
-                    gcs_credentials_path: gcs_credentials_path()
+                    gcs_credentials: gcs_credentials()
                 }
 
                 # Add optional configs if they return non-nil
