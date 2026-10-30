@@ -25,10 +25,10 @@ defmodule Connection.Odbc do
         :odbc.start()
         |> case do
             :ok ->
-                Logger.debug("Conexión ODBC iniciada")
+                Logger.debug("Aplicación ODBC iniciada")
                 :ok
             {:error, {:already_started, :odbc}} ->
-                Logger.debug("Conexión ODBC previamente iniciada")
+                Logger.debug("Aplicación ODBC ya estaba iniciada")
                 :ok
             {:error, error} ->
                 raise("Unhandled error trying to \":odbc.start/0\", Error: #{inspect error}")
@@ -47,10 +47,10 @@ defmodule Connection.Odbc do
         :odbc.stop()
         |> case do
             :ok ->
-                Logger.debug("Conexión ODBC detenida")
+                Logger.debug("Aplicación ODBC detenida")
                 :ok
             {:error, {:not_started, :odbc}} ->
-                Logger.debug("Conexión ODBC previamente detenida")
+                Logger.debug("Aplicación ODBC ya estaba detenida")
                 :ok
             {:error, error} ->
                 raise("Unhandled error trying to \":odbc.stop/0\", Error: #{inspect error}")
@@ -75,7 +75,9 @@ defmodule Connection.Odbc do
         |> Kernel.to_charlist()
         |> :odbc.connect(binary_strings: :on)
         |> case do
-            {:ok, pid} -> pid
+            {:ok, pid} ->
+                Logger.debug("Conexión ODBC abierta: #{inspect(pid)}")
+                pid
             {:error, error} ->
                 raise("Unhandled error trying to \":odbc.connect/2\", Error: #{inspect error}")
         end
@@ -95,7 +97,7 @@ defmodule Connection.Odbc do
         :odbc.disconnect(pid)
         |> case do
             :ok ->
-                Logger.debug("Conexión ODBC cerrada")
+                Logger.debug("Conexión ODBC cerrada: #{inspect(pid)}")
                 :ok
             {:error, error} ->
                 raise("Unhandled error trying to \":odbc.disconnect/1\", Error: #{inspect error}")
@@ -215,6 +217,28 @@ defmodule Connection.Odbc do
 
         :odbc.sql_query(pid, query)
         |> case do
+            {:error, error} -> raise(inspect error)
+            result -> result
+        end
+    end
+
+    @doc"""
+    Executes any SQL statement (e.g. a `LOAD DATA` or a `BEGIN ... END;` script), without assuming its type and without retries.
+
+    ### Parameters:
+        - pid: Process. Process connecting Elixir and ODBC.
+        - statement: String. SQL Statement.
+
+    ### Return:
+        - t() | Exception. Result of `:odbc.sql_query/2` (e.g. `{:updated, n}`, `{:updated, :undefined}` for a script, or `{:selected, columns, rows}`). Raises an exception with the ODBC error message if the statement fails.
+
+    """
+    def execute(pid, statement) when is_pid(pid) and is_binary(statement) do
+        query = :binary.bin_to_list(statement)
+
+        :odbc.sql_query(pid, query)
+        |> case do
+            {:error, error} when is_list(error) -> raise(to_string(error))
             {:error, error} -> raise(inspect error)
             result -> result
         end
