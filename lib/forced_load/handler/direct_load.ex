@@ -192,7 +192,11 @@ defmodule ForcedLoad.Handler.DirectLoad do
                         |> Postgrex.stream(query, params, max_rows: batch_size, timeout: :infinity)
                         |> Enum.reduce(0, fn result, count ->
                             records = PostgresHelpers.parse_query_result(result)
-                            IO.binwrite(file, Enum.map(records, fn record -> [Poison.encode!(record.informacion), "\n"] end))
+                            IO.binwrite(file, Enum.map(records, fn record ->
+                                # `informacion` is stored as a JSON string: it is decoded so each line is a JSON object
+                                informacion = if is_binary(record.informacion), do: Poison.decode!(record.informacion), else: record.informacion
+                                [Poison.encode!(informacion), "\n"]
+                            end))
                             Postgrex.query!(conn, "UPDATE #{table} SET estado_analisis = '#{@analyzed_in_bq_state}' WHERE id = ANY($1)", [Enum.map(records, & &1.id)])
                             count + length(records)
                         end)
