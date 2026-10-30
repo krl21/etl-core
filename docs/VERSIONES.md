@@ -68,17 +68,17 @@ Este documento describe las versiones de `etl-core`, sus características princi
 | `bigquery_tables_by_type` | `[]` | Lista de `{tipo, tabla}` |
 | `postgres_pool` | `:postgres_pool` | Pool de `Pool.Postgres` |
 | `postgres_temp_table` | `nil` | Tabla temporal con los registros (obligatoria) |
-| `postgres_export_batch_size` | `10_000` | Registros por lote al exportar y borrar |
+| `postgres_export_batch_size` | `10_000` | Registros por lote al exportar y marcar |
 | `files_path` | `"./tmp"` | Directorio local de los archivos |
 | `gcs_bucket` | `nil` | Bucket (obligatorio) |
 | `gcs_folder` | `nil` | Carpeta del bucket; con `nil` o `""`, la raíz |
-| `gcs_credentials_path` | `nil` | Credenciales de la cuenta de servicio (obligatorio) |
+| `gcs_credentials` | `nil` | JSON de credenciales de la cuenta de servicio, como mapa o string (obligatorio) |
 
 - `ForcedLoad.Config.default/1`: valores por defecto de `postgres_pool`, `postgres_export_batch_size` y `files_path`
 - `ForcedLoad.Helpers.validate_direct_load!/1`: valida los campos, que el pool esté iniciado y que exista la tabla temporal; crea el directorio y configura `Connection.Gcs` y `Connection.GcsToBigQuery`
 - `ForcedLoad.Handler.DirectLoad.run/4` (nuevo), al terminar la carga a RabbitMQ:
   1. Espera a que se vacíen las colas usadas (cada 10 s, hasta 5 minutos; 5 s más al vaciarse). Si no se vacían, continúa; si falla la consulta, notifica y termina
-  2. Por cada tipo, exporta los registros `sin_analizar` a `<business_name>_<tipo>-<yyyyMMddHHmmssSSS>.jsonl` (una línea por columna `informacion`) y los borra de Postgres, por lotes y en una transacción por tipo. Si falla, se revierte
+  2. Por cada tipo, exporta los registros `sin_analizar` a `<business_name>_<tipo>-<yyyyMMddHHmmssSSS>.jsonl` (una línea por columna `informacion`) y los marca como `analizado_en_bq` en Postgres, por lotes y en una transacción por tipo. Si falla, se revierte
   3. Sube los archivos a GCS con hasta 3 reintentos cada 5 s, y borra del directorio local los subidos
   4. Carga cada archivo en su tabla y borra de GCS los cargados
   5. Notifica un resumen de éxitos y fallos. Los archivos no subidos quedan en `files_path` y los no cargados, en GCS
@@ -108,7 +108,7 @@ Si el proyecto fija `finch`, `mint` o `hpax` en versiones que requieren Elixir 1
 2. **Sin cambios obligatorios de código**: la carga directa está desactivada por defecto y la API pública de `ForcedLoad.Handler` no cambia.
 
 3. **Para activar la carga directa** (opcional):
-   - Definir en la configuración `bigquery_direct_load`, `bigquery_tables_by_type`, `postgres_temp_table`, `gcs_bucket` y `gcs_credentials_path` (y, si aplica, `gcs_folder`, `postgres_pool`, `postgres_export_batch_size` y `files_path`)
+   - Definir en la configuración `bigquery_direct_load`, `bigquery_tables_by_type`, `postgres_temp_table`, `gcs_bucket` y `gcs_credentials` (y, si aplica, `gcs_folder`, `postgres_pool`, `postgres_export_batch_size` y `files_path`)
    - La cuenta de servicio debe tener acceso al bucket y a BigQuery: el driver ODBC se autentica con ella, no con la cuenta del DSN
    - El pool de Postgres debe iniciarse antes que `Genserver.ForcedLoad` en el árbol de supervisión
    - Las tablas de BigQuery deben existir
