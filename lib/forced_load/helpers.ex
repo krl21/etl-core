@@ -6,6 +6,11 @@ defmodule ForcedLoad.Helpers do
 
     require Logger
     alias Connection.Ticket
+    alias Connection.Gcs
+    alias Connection.GcsToBigQuery
+    alias Connection.PostgresHelpers
+    alias Connection.PostgresPool
+    alias ForcedLoad.Config
 
 
     @doc """
@@ -34,6 +39,60 @@ defmodule ForcedLoad.Helpers do
                 notify(config, "Error getting ticket: #{inspect(error)}", :error)
                 nil
         end
+    end
+
+
+    @doc """
+    Validates the configuration of the direct load to BigQuery and prepares it: creates the files directory and configures `Connection.Gcs` and `Connection.GcsToBigQuery` with the credentials. Does nothing if `:bigquery_direct_load` is not `true`.
+
+    ### Parameters
+        - config: map. Handler configuration
+
+    ### Returns
+        - :ok | Exception. Raises an exception if:
+            - `:bigquery_tables_by_type` is not a non-empty list of `{type, table}` strings
+            - `:gcs_bucket`, `:gcs_credentials_path` or `:postgres_temp_table` is missing or empty
+            - `:postgres_export_batch_size` is not a positive integer
+            - the Postgres pool is not running or the temporary table does not exist
+            - the credentials are invalid for GCS or BigQuery
+    """
+    def validate_direct_load!(config) do
+        if Map.get(config, :bigquery_direct_load, false) do
+            tables = Map.get(config, :bigquery_tables_by_type)
+            pool = Map.get(config, :postgres_pool, Config.default(:postgres_pool))
+            temp_table = Map.get(config, :postgres_temp_table)
+            credentials_path = Map.get(config, :gcs_credentials_path)
+
+            if not (is_list(tables) and tables != [] and Enum.all?(tables, &match?({type, table} when is_binary(type) and is_binary(table), &1))) do
+                raise(ArgumentError, "bigquery_tables_by_type inválido: se espera una lista no vacía de {tipo, tabla}. Valor: #{inspect(tables)}")
+            end
+
+            Enum.each([gcs_bucket: Map.get(config, :gcs_bucket), gcs_credentials_path: credentials_path, postgres_temp_table: temp_table], fn {key, value} ->
+                if not (is_binary(value) and value != "") do
+                    raise(ArgumentError, "#{key} es obligatorio para la carga directa a BigQuery. Valor: #{inspect(value)}")
+                end
+            end)
+
+            batch_size = Map.get(config, :postgres_export_batch_size, Config.default(:postgres_export_batch_size))
+
+            if not (is_integer(batch_size) and batch_size > 0) do
+                raise(ArgumentError, "postgres_export_batch_size inválido: se espera un entero positivo. Valor: #{inspect(batch_size)}")
+            end
+
+            if Pool.Postgres.status(pool) != {:ok, :running} do
+                raise("El pool de Postgres #{inspect(pool)} no está iniciado")
+            end
+
+            if PostgresPool.table_exists?(pool, PostgresHelpers.sanitize_identifier(temp_table)) != {:ok, true} do
+                raise("La tabla temporal #{temp_table} no existe en Postgres (pool #{inspect(pool)})")
+            end
+
+            File.mkdir_p!(Map.get(config, :files_path, Config.default(:files_path)))
+            Gcs.configure(credentials_path)
+            GcsToBigQuery.configure(credentials_path)
+        end
+
+        :ok
     end
 
 
