@@ -61,6 +61,7 @@ defmodule Genserver.ForcedLoad do
     require Logger
     alias Genserver.Monitor
     alias ForcedLoad.Handler, as: ForcedLoadHandler
+    alias ForcedLoad.Helpers, as: ForcedLoadHelpers
     alias Connection.Http
 
 
@@ -103,16 +104,28 @@ defmodule Genserver.ForcedLoad do
     end
 
 
+    #
+    # Validates the configuration of the direct load to BigQuery before anything else. If it is invalid, it notifies the error and returns `:ignore`: the forced load does not run and the supervisor continues without this process.
+    #
     @impl true
     def init(%{business: business, config: config} = state) do
-        Monitor.register(self(), to_string(__MODULE__) <> "." <> to_string(business))
-
         Logger.info("#{to_string(__MODULE__)}. CARGA FORZADA: Inicializando. Negocio: ---#{to_string(business)}---")
 
-        notify_webhook(get_webhook_url(config), business, "started", "Proceso de carga forzada inicializado")
+        try do
+            if config, do: ForcedLoadHelpers.validate_direct_load!(config)
 
-        :erlang.send_after(10_000, self(), :update)
-        {:ok, state}
+            Monitor.register(self(), to_string(__MODULE__) <> "." <> to_string(business))
+            notify_webhook(get_webhook_url(config), business, "started", "Proceso de carga forzada inicializado")
+
+            :erlang.send_after(10_000, self(), :update)
+            {:ok, state}
+        rescue
+            error ->
+                message = "CARGA FORZADA. Configuración inválida de la carga directa a BigQuery: #{Exception.message(error)}"
+                ForcedLoadHelpers.notify(config, message, :error)
+                notify_webhook(get_webhook_url(config), business, "error", message)
+                :ignore
+        end
     end
 
 
