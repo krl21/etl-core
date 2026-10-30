@@ -6,54 +6,118 @@ Este documento describe las versiones de `etl-core`, sus características princi
 
 ## Tabla de Contenidos
 
-0. [Rama `development` (pendiente de versión) — Fix `Time.WorkingTime`](#rama-development-pendiente-de-versión--fix-timeworkingtime)
-1. [Versión 2.7 (Actual)](#versión-27-actual)
-2. [Versión 2.6.1](#versión-261)
-3. [Versión 2.6.0](#versión-260)
-4. [Versión 2.5.1](#versión-251)
-5. [Versión 2.5](#versión-25)
-6. [Versión 2.4](#versión-24)
-7. [Versión 2.3](#versión-23)
-8. [Versión 2.2](#versión-22)
-9. [Versión 2.1](#versión-21)
-10. [Versión 1.2.0](#versión-120)
-11. [Versiones Anteriores](#versiones-anteriores)
+1. [Versión 2.8 (Actual)](#versión-28-actual)
+2. [Versión 2.7](#versión-27)
+3. [Versión 2.6.1](#versión-261)
+4. [Versión 2.6.0](#versión-260)
+5. [Versión 2.5.1](#versión-251)
+6. [Versión 2.5](#versión-25)
+7. [Versión 2.4](#versión-24)
+8. [Versión 2.3](#versión-23)
+9. [Versión 2.2](#versión-22)
+10. [Versión 2.1](#versión-21)
+11. [Versión 1.2.0](#versión-120)
+12. [Versiones Anteriores](#versiones-anteriores)
 
 ---
 
-## Rama `development` (pendiente de versión) — Fix `Time.WorkingTime`
-
-> **Nota:** esta sección documenta cambios que viven hoy en la rama `development` de `etl-core` y **todavía no están asociados a un número de versión formal**. Debe actualizarse en cuanto este arreglo se propague o se mergee a las ramas de versión vigentes.
+## Versión 2.8 (Actual)
 
 ### Características Principales
 
-- **Cálculo correcto del tiempo laboral transcurrido en casos límite**: se corrige `Time.WorkingTime.elapsed_time/5` para que el tiempo no laboral se descuente de forma correcta cuando el extremo final del intervalo cae fuera del horario de atención de su propio día, en vez de desplazarlo artificialmente a otro día.
+- **Google Cloud Storage**: nuevo módulo `Connection.Gcs` para trabajar con buckets (subir, descargar, listar y eliminar archivos y carpetas), autenticado con una cuenta de servicio
+- **Subidas grandes y en paralelo**: los archivos de más de 8 MiB se suben de forma resumable (por bloques de 8 MiB) y varios archivos se pueden subir en paralelo
+- **Carga de GCS a BigQuery**: nuevo módulo `Connection.GcsToBigQuery`, que carga archivos de GCS en tablas de BigQuery con `LOAD DATA` a través de ODBC, usando el esquema de la tabla destino
+- **Carga directa a BigQuery en la carga forzada**: al terminar la carga a RabbitMQ, la carga forzada puede exportar los registros pendientes de la tabla temporal de Postgres a archivos JSONL, subirlos a GCS y cargarlos en BigQuery
+- **`ForcedLoad.Handler` dividido en submódulos**: el handler conserva solo la API pública (`run/3` y `run_record_load/2`)
 
 ### Nuevo en esta Versión
 
-#### `Time.WorkingTime.elapsed_time/5`
+#### `Connection.Gcs` (nuevo)
 
-- **Arreglo**: cuando `end_date` caía en un día laboral pero en una hora **posterior al cierre**, la implementación anterior empujaba `end_date` al horario de apertura del **próximo día hábil**. Esto asumía horario uniforme entre días y podía calcular mal el tiempo transcurrido en negocios con horarios variables (feriados, cierres de fin de mes con horario extendido, etc.)
-- Ahora, si `start_date` y `end_date` caen en el **mismo día calendario original** (antes de cualquier conversión a horario de negocio), se devuelve la diferencia cruda entre ambas fechas directamente, sin aplicar ningún redondeo de horario laboral. Esto cubre de forma consistente los casos donde el inicio, el fin, o ambos, caen fuera de horario (antes de la apertura o después del cierre) dentro del mismo día.
-- Cuando el intervalo sí abarca más de un día calendario y `end_date` cae después del cierre en su propio día, ese sobrante ahora se **cuenta como tiempo transcurrido** (ya no se descuenta ni se reubica en otro día).
+- `configure/1`: recibe una vez las credenciales de la cuenta de servicio (ruta al JSON, contenido o mapa). El token se obtiene con Goth y se guarda en caché hasta 5 minutos antes de vencer
+- Subida: `upload_file/4`, `upload_binary/4`, `upload_to_folder/4`, `upload_files/4` (en paralelo, 4 por defecto) y `upload_directory/4`. Devuelven la URI `gs://bucket/objeto`
+- Descarga y lectura: `read_object/2`, `download_file/3` (si la ruta termina en `/`, usa el nombre del objeto) y `download_folder/3`
+- Consulta: `list_objects/2`, `exists?/2`, `folder_exists?/2`, `gcs_uri/2`
+- Carpetas y borrado: `create_folder/2`, `delete_object/2`, `delete_folder/2`
+- Reintentos con backoff exponencial y jitter ante errores 408, 429, 5xx y de red
+- `Connection.Gcs.Helpers`: funciones de apoyo (petición HTTP con Tesla y hackney, subida media y resumable, token, reintentos)
+- `Connection.Gcs.ContentType`: tipo MIME según la extensión del archivo (82 extensiones; por defecto `application/octet-stream`)
 
-#### `Time.WorkingTime.convert_to_business_datetime/4`
+#### `Connection.GcsToBigQuery` (nuevo)
 
-- Pasa a ser `/5`: nuevo parámetro opcional `boundary` (`:start | :end`, default `:start`). La aridad-4 existente sigue funcionando exactamente igual.
-- `boundary: :start` (comportamiento histórico, sin cambios): si la fecha cae en día no laboral o fuera de horario, se redondea hacia adelante al próximo momento laboral válido.
-- `boundary: :end` (nuevo): si la fecha cae en un día laboral después del cierre, se respeta tal cual — ya no se desplaza al próximo día hábil.
+- `configure/2`: guarda la configuración ODBC para que el driver Simba se autentique con la cuenta de servicio de las credenciales (la misma de `Connection.Gcs`). La valida abriendo y cerrando una conexión
+- `load/3` y `load/4`: ejecutan `LOAD DATA` dentro de `BEGIN ... END;` (como sentencia suelta, el driver le asigna una tabla de destino y BigQuery la rechaza). `load/4` acepta un pid, un pool o una configuración ODBC
+- Antes de cargar, leen las columnas de la tabla en `INFORMATION_SCHEMA.COLUMNS` y las indican en `LOAD DATA`, para que BigQuery no detecte el esquema desde los archivos (p. ej. un `STRING` con fechas cargado como `DATE`). La tabla debe existir
+- Devuelven `:ok` o `{:error, mensaje}`; el mensaje de un error de carga incluye las URIs
+- `export_records/5` y `export_records/6`: convierten registros a NDJSON, los suben a GCS, los cargan y borran el archivo
+- Formatos: CSV, NDJSON, Parquet, Avro y ORC. Modos: `:append` (por defecto) y `:overwrite`
+
+#### `Connection.Odbc`
+
+- `execute/2` (nuevo): ejecuta cualquier sentencia (p. ej. `LOAD DATA` o un script `BEGIN ... END;`) sin reintentos. Si falla, lanza una excepción con el mensaje del driver como texto
+- Logs: se distingue la aplicación ODBC (`start/0`, `stop/0`) de las conexiones (`connect/1`, `disconnect/1`), y se incluye el pid en la apertura y el cierre
+
+#### Carga forzada (`ForcedLoad`)
+
+- `ForcedLoad.Config`: nuevos callbacks opcionales para la carga directa a BigQuery:
+
+| Campo | Por defecto | Descripción |
+|---|---|---|
+| `bigquery_direct_load` | `false` | Activa la carga directa |
+| `bigquery_tables_by_type` | `[]` | Lista de `{tipo, tabla}` |
+| `postgres_pool` | `:postgres_pool` | Pool de `Pool.Postgres` |
+| `postgres_temp_table` | `nil` | Tabla temporal con los registros (obligatoria) |
+| `postgres_export_batch_size` | `10_000` | Registros por lote al exportar y borrar |
+| `files_path` | `"./tmp"` | Directorio local de los archivos |
+| `gcs_bucket` | `nil` | Bucket (obligatorio) |
+| `gcs_folder` | `nil` | Carpeta del bucket; con `nil` o `""`, la raíz |
+| `gcs_credentials_path` | `nil` | Credenciales de la cuenta de servicio (obligatorio) |
+
+- `ForcedLoad.Config.default/1`: valores por defecto de `postgres_pool`, `postgres_export_batch_size` y `files_path`
+- `ForcedLoad.Helpers.validate_direct_load!/1`: valida los campos, que el pool esté iniciado y que exista la tabla temporal; crea el directorio y configura `Connection.Gcs` y `Connection.GcsToBigQuery`
+- `ForcedLoad.Handler.DirectLoad.run/4` (nuevo), al terminar la carga a RabbitMQ:
+  1. Espera a que se vacíen las colas usadas (cada 10 s, hasta 5 minutos; 5 s más al vaciarse). Si no se vacían, continúa; si falla la consulta, notifica y termina
+  2. Por cada tipo, exporta los registros `sin_analizar` a `<business_name>_<tipo>-<yyyyMMddHHmmssSSS>.jsonl` (una línea por columna `informacion`) y los borra de Postgres, por lotes y en una transacción por tipo. Si falla, se revierte
+  3. Sube los archivos a GCS con hasta 3 reintentos cada 5 s, y borra del directorio local los subidos
+  4. Carga cada archivo en su tabla y borra de GCS los cargados
+  5. Notifica un resumen de éxitos y fallos. Los archivos no subidos quedan en `files_path` y los no cargados, en GCS
+- `ForcedLoad.Handler`: la conexión ODBC a BigQuery se cierra al terminar los intervalos, antes de la carga directa. El código interno pasa a `ForcedLoad.Handler.Loader` (intervalos, expedientes y tareas) y `ForcedLoad.Handler.Ids` (obtención de IDs)
+- `Genserver.ForcedLoad.init/1`: valida la configuración de la carga directa. Si es inválida, notifica el error y devuelve `:ignore` (la carga forzada no se ejecuta, pero la aplicación sigue en pie)
+
+#### Dependencias (`mix.exs`)
+
+- Nuevas: `goth ~> 1.4` (token OAuth de Google) y `tesla ~> 1.22` (cliente HTTP de GCS, con adaptador hackney)
+- Fijadas por compatibilidad con Elixir 1.14: `finch ~> 0.21.0`, `mint 1.9.1` y `hpax 1.0.3` (las versiones posteriores requieren Elixir 1.15)
+- `compile.sh` (nuevo): desbloquea y limpia `hpax` y `mint` y las dependencias sin uso, y recompila
 
 ### Módulos Afectados
 
-- `Time.WorkingTime`: `elapsed_time/5` (lógica interna `elapsed_timep/5`), `convert_to_business_datetime/4` → `/5`, funciones privadas `get_non_working_time/4-5`
+- Nuevos: `Connection.Gcs`, `Connection.Gcs.Helpers`, `Connection.Gcs.ContentType`, `Connection.GcsToBigQuery`, `ForcedLoad.Handler.DirectLoad`, `ForcedLoad.Handler.Loader`, `ForcedLoad.Handler.Ids`
+- `Connection.Odbc`: `execute/2` (nuevo), logs de `start/0`, `stop/0`, `connect/1`, `disconnect/1`
+- `ForcedLoad.Config`, `ForcedLoad.Helpers`, `ForcedLoad.Handler`, `Genserver.ForcedLoad`
 
-### Migración
+### Migración desde v2.7
 
-- Si algún llamador dependía del comportamiento anterior (incorrecto) de empujar `end_date` fuera de su día real después del cierre, debe revisar los valores que consume, ya que el resultado numérico de `elapsed_time/5` cambia en esos casos puntuales
+1. **Actualizar dependencias en `mix.exs`**:
+```elixir
+{:etl_core, git: "https://github.com/krl21/etl-core.git", branch: "v2.8"}
+```
+Si el proyecto fija `finch`, `mint` o `hpax` en versiones que requieren Elixir 1.15, debe alinearlas con las de `etl-core`.
+
+2. **Sin cambios obligatorios de código**: la carga directa está desactivada por defecto y la API pública de `ForcedLoad.Handler` no cambia.
+
+3. **Para activar la carga directa** (opcional):
+   - Definir en la configuración `bigquery_direct_load`, `bigquery_tables_by_type`, `postgres_temp_table`, `gcs_bucket` y `gcs_credentials_path` (y, si aplica, `gcs_folder`, `postgres_pool`, `postgres_export_batch_size` y `files_path`)
+   - La cuenta de servicio debe tener acceso al bucket y a BigQuery: el driver ODBC se autentica con ella, no con la cuenta del DSN
+   - El pool de Postgres debe iniciarse antes que `Genserver.ForcedLoad` en el árbol de supervisión
+   - Las tablas de BigQuery deben existir
+
+4. **Uso directo de funciones privadas de `ForcedLoad.Handler`**: si algún ETL dependía de ellas (no deberían), ahora están en `ForcedLoad.Handler.Loader` e `Ids`.
 
 ---
 
-## Versión 2.7 (Actual)
+## Versión 2.7
 
 ### Características Principales
 
@@ -728,6 +792,8 @@ children = [
 
 ### Dependencias Principales
 
+- `goth` - Token OAuth de Google (GCS)
+- `tesla` - Cliente HTTP para la API de GCS
 - `timex` - Manejo de fechas
 - `jason` / `poison` - Procesamiento JSON
 - `postgrex` - Cliente PostgreSQL
