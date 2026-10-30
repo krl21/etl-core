@@ -50,6 +50,25 @@ defmodule ForcedLoad.Config do
         # Optional: Webhook URL path for status notifications
         @impl true
         def webhook_url_path, do: [:notification, :slack_webhook, :url, :forced_load]
+
+        # Optional: Direct load to BigQuery via GCS after the forced load
+        @impl true
+        def bigquery_direct_load, do: true
+
+        @impl true
+        def bigquery_tables_by_type, do: [{"expediente", "proyecto.dataset.expediente"}, {"tarea", "proyecto.dataset.tarea"}]
+
+        @impl true
+        def postgres_temp_table, do: "tmp_registros"
+
+        @impl true
+        def gcs_bucket, do: "mi_bucket"
+
+        @impl true
+        def gcs_folder, do: "carga_forzada"
+
+        @impl true
+        def gcs_credentials_path, do: "/ruta/credentials.json"
     end
     ```
 
@@ -149,6 +168,38 @@ defmodule ForcedLoad.Config do
 
     @doc "Returns custom notification function, or nil for default"
     @callback notification_fn() :: (String.t(), atom() -> :ok) | nil
+
+
+    # ============================================
+    # OPTIONAL CALLBACKS - DIRECT LOAD TO BIGQUERY
+    # ============================================
+
+    @doc "Returns whether to load the records of the temporary Postgres table into BigQuery via GCS after the forced load (default: false)"
+    @callback bigquery_direct_load() :: boolean()
+
+    @doc "Returns the record types and their BigQuery tables, as `[{type, table}]` (e.g. `[{\"expediente\", \"project.dataset.table\"}]`) (default: [])"
+    @callback bigquery_tables_by_type() :: [{String.t(), String.t()}]
+
+    @doc "Returns the name of the Postgres pool (default: :postgres_pool)"
+    @callback postgres_pool() :: atom()
+
+    @doc "Returns the temporary Postgres table where the records are stored (default: nil)"
+    @callback postgres_temp_table() :: String.t() | nil
+
+    @doc "Returns the number of records read, written to the file and deleted from Postgres per batch (default: 10000)"
+    @callback postgres_export_batch_size() :: pos_integer()
+
+    @doc "Returns the local directory where the record files are written (default: \"./tmp\")"
+    @callback files_path() :: String.t()
+
+    @doc "Returns the GCS bucket where the record files are uploaded (default: nil)"
+    @callback gcs_bucket() :: String.t() | nil
+
+    @doc "Returns the folder of the bucket where the record files are uploaded. With nil or an empty string, they are uploaded to the root of the bucket (default: nil)"
+    @callback gcs_folder() :: String.t() | nil
+
+    @doc "Returns the path of the service account JSON credentials for GCS and BigQuery (default: nil)"
+    @callback gcs_credentials_path() :: String.t() | nil
 
 
     # ============================================
@@ -264,6 +315,15 @@ defmodule ForcedLoad.Config do
         skip_elasticsearch: 0,
         skip_bigquery: 0,
         notification_fn: 0,
+        bigquery_direct_load: 0,
+        bigquery_tables_by_type: 0,
+        postgres_pool: 0,
+        postgres_temp_table: 0,
+        postgres_export_batch_size: 0,
+        files_path: 0,
+        gcs_bucket: 0,
+        gcs_folder: 0,
+        gcs_credentials_path: 0,
         webhook_url_path: 0,
         bigquery_config_path: 0,
         elasticsearch_url_path: 0,
@@ -283,6 +343,27 @@ defmodule ForcedLoad.Config do
     ]
 
 
+    # Defaults of the direct load fields, shared by `use ForcedLoad.Config` and by the modules that receive the configuration as a map
+    @direct_load_defaults %{
+        postgres_pool: :postgres_pool,
+        postgres_export_batch_size: 10_000,
+        files_path: "./tmp"
+    }
+
+
+    @doc """
+    Returns the default value of a direct load field. It is used by the default callbacks of `use ForcedLoad.Config` and by the modules that read the configuration map, when the field is missing.
+
+    ### Parameters
+        - key: Atom. `:postgres_pool`, `:postgres_export_batch_size` or `:files_path`
+
+    ### Returns
+        - t() | Exception. Default value. Raises `KeyError` if the field has no default
+    """
+    def default(key), do:
+        Map.fetch!(@direct_load_defaults, key)
+
+
     defmacro __using__(_opts) do
         quote do
             @behaviour ForcedLoad.Config
@@ -299,6 +380,15 @@ defmodule ForcedLoad.Config do
             def skip_elasticsearch, do: false
             def skip_bigquery, do: false
             def notification_fn, do: nil
+            def bigquery_direct_load, do: false
+            def bigquery_tables_by_type, do: []
+            def postgres_pool, do: ForcedLoad.Config.default(:postgres_pool)
+            def postgres_temp_table, do: nil
+            def postgres_export_batch_size, do: ForcedLoad.Config.default(:postgres_export_batch_size)
+            def files_path, do: ForcedLoad.Config.default(:files_path)
+            def gcs_bucket, do: nil
+            def gcs_folder, do: nil
+            def gcs_credentials_path, do: nil
             def webhook_url_path, do: nil
             def bigquery_config_path, do: [:bigquery, :configuration]
             def elasticsearch_url_path, do: [:elasticsearch, :url]
@@ -328,6 +418,15 @@ defmodule ForcedLoad.Config do
                 skip_elasticsearch: 0,
                 skip_bigquery: 0,
                 notification_fn: 0,
+                bigquery_direct_load: 0,
+                bigquery_tables_by_type: 0,
+                postgres_pool: 0,
+                postgres_temp_table: 0,
+                postgres_export_batch_size: 0,
+                files_path: 0,
+                gcs_bucket: 0,
+                gcs_folder: 0,
+                gcs_credentials_path: 0,
                 webhook_url_path: 0,
                 bigquery_config_path: 0,
                 elasticsearch_url_path: 0,
@@ -394,7 +493,17 @@ defmodule ForcedLoad.Config do
                     batch_size: batch_size(),
                     batch_delay: batch_delay(),
                     includes_record: includes_record(),
-                    includes_task: includes_task()
+                    includes_task: includes_task(),
+                    # Direct load to BigQuery via GCS
+                    bigquery_direct_load: bigquery_direct_load(),
+                    bigquery_tables_by_type: bigquery_tables_by_type(),
+                    postgres_pool: postgres_pool(),
+                    postgres_temp_table: postgres_temp_table(),
+                    postgres_export_batch_size: postgres_export_batch_size(),
+                    files_path: files_path(),
+                    gcs_bucket: gcs_bucket(),
+                    gcs_folder: gcs_folder(),
+                    gcs_credentials_path: gcs_credentials_path()
                 }
 
                 # Add optional configs if they return non-nil
