@@ -81,13 +81,14 @@ defmodule ForcedLoad.Handler do
         - `:notification_fn` - Function. `(message, level) -> :ok`. Custom notification function
 
     ### Optional - Direct load to BigQuery via GCS
-        When the forced load ends, it loads into BigQuery the records of the temporary Postgres table, through files uploaded to GCS: waits for the used queues to be empty (up to 5 minutes), writes the pending records of each type to a JSONL file in `:files_path` and marks them as `analizado_en_bq` in Postgres, uploads the files to GCS and loads them into their BigQuery tables.
+        When the forced load ends, it loads into BigQuery the records of the temporary Postgres table, through files uploaded to GCS: waits for the used queues to be empty while they decrease, writes the pending records of each type to a JSONL file in `:files_path` and marks them as `analizado_en_bq` in Postgres, uploads the files to GCS and loads them into their BigQuery tables. If the queues stop decreasing for `:queue_stall_timeout`, nothing is loaded and a message asks to run `run_direct_load/1` once they are empty.
         - `:bigquery_direct_load` - Boolean. Enables the direct load (default: false)
         - `:bigquery_tables_by_type` - List of `{type, table}`. BigQuery table of each record type (default: [])
         - `:postgres_pool` - Atom. Name of the `Pool.Postgres` pool (default: :postgres_pool)
         - `:postgres_temp_table` - String. Temporary Postgres table with the records. Required if the direct load is enabled
         - `:postgres_export_batch_size` - Integer. Records read, written to the file and marked in Postgres per batch (default: 10000)
         - `:files_path` - String. Local directory where the record files are written (default: "./tmp")
+        - `:queue_stall_timeout` - Integer. Milliseconds that the queues may go without decreasing before the direct load gives up (default: 300000)
         - `:gcs_bucket` - String. Bucket where the files are uploaded. Required if the direct load is enabled
         - `:gcs_folder` - String | nil. Folder of the bucket. With nil or "", the files are uploaded to the root of the bucket
         - `:gcs_credentials` - Map | String. Service account JSON credentials for GCS and BigQuery, as a decoded map or as a string. Required if the direct load is enabled
@@ -252,6 +253,23 @@ defmodule ForcedLoad.Handler do
             # Close AMQP connection
             if connection, do: AMQP.Connection.close(connection)
         end
+    end
+
+
+    @doc """
+    Runs the direct load to BigQuery on its own, without the forced load and without checking the queues: validates the configuration and loads the pending records of the temporary Postgres table into BigQuery via GCS (see `ForcedLoad.Handler.DirectLoad.load/1`). It is meant to finish a direct load that was not run because the queues did not empty.
+
+    ### Parameters
+        - config: Map. Configuration options (see module docs). The direct load is run even if `:bigquery_direct_load` is not `true`
+
+    ### Returns
+        - :ok | Exception. Raises an exception if the configuration is invalid
+    """
+    def run_direct_load(config) do
+        config = Map.put(config, :bigquery_direct_load, true)
+
+        Helpers.validate_direct_load!(config)
+        DirectLoad.load(config)
     end
 
 
