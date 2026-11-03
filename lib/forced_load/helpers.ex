@@ -52,7 +52,7 @@ defmodule ForcedLoad.Helpers do
         - :ok | Exception. Raises an exception if:
             - `:bigquery_tables_by_type` is not a non-empty list of `{type, table}` strings
             - `:gcs_bucket`, `:gcs_credentials` or `:postgres_temp_table` is missing or empty
-            - `:postgres_export_batch_size` is not a positive integer
+            - `:postgres_export_batch_size` or `:queue_stall_timeout` is not a positive integer
             - the Postgres pool is not running or the temporary table does not exist
             - the credentials are invalid for GCS or BigQuery
     """
@@ -77,6 +77,12 @@ defmodule ForcedLoad.Helpers do
 
             if not (is_integer(batch_size) and batch_size > 0) do
                 raise(ArgumentError, "postgres_export_batch_size inválido: se espera un entero positivo. Valor: #{inspect(batch_size)}")
+            end
+
+            stall_timeout = Map.get(config, :queue_stall_timeout, Config.default(:queue_stall_timeout))
+
+            if not (is_integer(stall_timeout) and stall_timeout > 0) do
+                raise(ArgumentError, "queue_stall_timeout inválido: se espera un entero positivo (milisegundos). Valor: #{inspect(stall_timeout)}")
             end
 
             if Pool.Postgres.status(pool) != {:ok, :running} do
