@@ -192,6 +192,9 @@ defmodule ForcedLoad.Config do
     @doc "Returns the local directory where the record files are written (default: \"./tmp\")"
     @callback files_path() :: String.t()
 
+    @doc "Returns the milliseconds that the queues may go without decreasing before the direct load gives up waiting for them (default: 300000)"
+    @callback queue_stall_timeout() :: pos_integer()
+
     @doc "Returns the GCS bucket where the record files are uploaded (default: nil)"
     @callback gcs_bucket() :: String.t() | nil
 
@@ -321,6 +324,7 @@ defmodule ForcedLoad.Config do
         postgres_temp_table: 0,
         postgres_export_batch_size: 0,
         files_path: 0,
+        queue_stall_timeout: 0,
         gcs_bucket: 0,
         gcs_folder: 0,
         gcs_credentials: 0,
@@ -347,7 +351,8 @@ defmodule ForcedLoad.Config do
     @direct_load_defaults %{
         postgres_pool: :postgres_pool,
         postgres_export_batch_size: 10_000,
-        files_path: "./tmp"
+        files_path: "./tmp",
+        queue_stall_timeout: 5 * 60_000
     }
 
 
@@ -355,7 +360,7 @@ defmodule ForcedLoad.Config do
     Returns the default value of a direct load field. It is used by the default callbacks of `use ForcedLoad.Config` and by the modules that read the configuration map, when the field is missing.
 
     ### Parameters
-        - key: Atom. `:postgres_pool`, `:postgres_export_batch_size` or `:files_path`
+        - key: Atom. `:postgres_pool`, `:postgres_export_batch_size`, `:files_path` or `:queue_stall_timeout`
 
     ### Returns
         - t() | Exception. Default value. Raises `KeyError` if the field has no default
@@ -386,6 +391,7 @@ defmodule ForcedLoad.Config do
             def postgres_temp_table, do: nil
             def postgres_export_batch_size, do: ForcedLoad.Config.default(:postgres_export_batch_size)
             def files_path, do: ForcedLoad.Config.default(:files_path)
+            def queue_stall_timeout, do: ForcedLoad.Config.default(:queue_stall_timeout)
             def gcs_bucket, do: nil
             def gcs_folder, do: nil
             def gcs_credentials, do: nil
@@ -424,6 +430,7 @@ defmodule ForcedLoad.Config do
                 postgres_temp_table: 0,
                 postgres_export_batch_size: 0,
                 files_path: 0,
+                queue_stall_timeout: 0,
                 gcs_bucket: 0,
                 gcs_folder: 0,
                 gcs_credentials: 0,
@@ -501,6 +508,7 @@ defmodule ForcedLoad.Config do
                     postgres_temp_table: postgres_temp_table(),
                     postgres_export_batch_size: postgres_export_batch_size(),
                     files_path: files_path(),
+                    queue_stall_timeout: queue_stall_timeout(),
                     gcs_bucket: gcs_bucket(),
                     gcs_folder: gcs_folder(),
                     gcs_credentials: gcs_credentials()
