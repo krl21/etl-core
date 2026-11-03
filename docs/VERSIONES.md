@@ -70,20 +70,26 @@ Este documento describe las versiones de `etl-core`, sus características princi
 | `postgres_temp_table` | `nil` | Tabla temporal con los registros (obligatoria) |
 | `postgres_export_batch_size` | `10_000` | Registros por lote al exportar y marcar |
 | `files_path` | `"./tmp"` | Directorio local de los archivos |
+| `queue_stall_timeout` | `300_000` | Milisegundos que las colas pueden estar sin bajar antes de abandonar la espera |
 | `gcs_bucket` | `nil` | Bucket (obligatorio) |
 | `gcs_folder` | `nil` | Carpeta del bucket; con `nil` o `""`, la raíz |
 | `gcs_credentials` | `nil` | JSON de credenciales de la cuenta de servicio, como mapa o string (obligatorio) |
 
-- `ForcedLoad.Config.default/1`: valores por defecto de `postgres_pool`, `postgres_export_batch_size` y `files_path`
+- `ForcedLoad.Config.default/1`: valores por defecto de `postgres_pool`, `postgres_export_batch_size`, `files_path` y `queue_stall_timeout`
 - `ForcedLoad.Helpers.validate_direct_load!/1`: valida los campos, que el pool esté iniciado y que exista la tabla temporal; crea el directorio y configura `Connection.Gcs` y `Connection.GcsToBigQuery`
-- `ForcedLoad.Handler.DirectLoad.run/4` (nuevo), al terminar la carga a RabbitMQ:
-  1. Espera a que se vacíen las colas usadas (cada 10 s, hasta 5 minutos; 5 s más al vaciarse). Si no se vacían, continúa; si falla la consulta, notifica y termina
-  2. Por cada tipo, exporta los registros `sin_analizar` a `<business_name>_<tipo>-<yyyyMMddHHmmssSSS>.jsonl` (una línea por columna `informacion`) y los marca como `analizado_en_bq` en Postgres, por lotes y en una transacción por tipo. Si falla, se revierte
-  3. Sube los archivos a GCS con hasta 3 reintentos cada 5 s, y borra del directorio local los subidos
-  4. Carga cada archivo en su tabla y borra de GCS los cargados
-  5. Notifica un resumen de éxitos y fallos. Los archivos no subidos quedan en `files_path` y los no cargados, en GCS
+- `ForcedLoad.Handler.DirectLoad.run/4` (nuevo), al terminar la carga a RabbitMQ, espera a que se vacíen las colas usadas: las consulta cada 10 s mientras el número de mensajes baje, y espera 5 s más al vaciarse. Si las colas no bajan durante `queue_stall_timeout`, no exporta nada y notifica los mensajes pendientes y cómo ejecutar la carga directa independiente; si falla la consulta, notifica y termina. Con las colas vacías, llama a `load/1`
+- `ForcedLoad.Handler.DirectLoad.load/1` (nuevo), sin consultar las colas:
+  1. Por cada tipo, exporta los registros `sin_analizar` a `<business_name>_<tipo>-<yyyyMMddHHmmssSSS>.jsonl` (una línea por columna `informacion`) y los marca como `analizado_en_bq` en Postgres, por lotes y en una transacción por tipo. Si falla, se revierte
+  2. Sube los archivos a GCS con hasta 3 reintentos cada 5 s, y borra del directorio local los subidos
+  3. Carga cada archivo en su tabla y borra de GCS los cargados
+  4. Notifica un resumen de éxitos y fallos. Los archivos no subidos quedan en `files_path` y los no cargados, en GCS
 - `ForcedLoad.Handler`: la conexión ODBC a BigQuery se cierra al terminar los intervalos, antes de la carga directa. El código interno pasa a `ForcedLoad.Handler.Loader` (intervalos, expedientes y tareas) y `ForcedLoad.Handler.Ids` (obtención de IDs)
+- `ForcedLoad.Handler.run_direct_load/1` (nuevo): carga directa independiente, sin carga forzada ni consulta de colas. Valida la configuración y llama a `DirectLoad.load/1`
 - `Genserver.ForcedLoad.init/1`: valida la configuración de la carga directa. Si es inválida, notifica el error y devuelve `:ignore` (la carga forzada no se ejecuta, pero la aplicación sigue en pie)
+- `Genserver.ForcedLoad`:
+  - Nombre del proceso con el negocio y el `business_name` de la configuración (`process_name/1`), también como `id` del child spec: se pueden ejecutar a la vez cargas forzadas con configuraciones distintas
+  - `{business, params, [config, ...]}`: ejecuta las cargas forzadas en secuencia, validando cada configuración antes de su carga. Si una falla, notifica el error (log y Slack) y sigue con la siguiente; al final, notifica un resumen
+  - `{:direct_load, config}`: ejecuta en segundo plano la carga directa independiente
 
 #### Dependencias (`mix.exs`)
 
