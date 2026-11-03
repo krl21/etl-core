@@ -1,7 +1,7 @@
 
 defmodule ForcedLoad.Handler.DirectLoad do
     @moduledoc """
-    Direct load to BigQuery of `ForcedLoad.Handler`: when the forced load ends, it loads the records of the temporary Postgres table into BigQuery, through files uploaded to GCS. See `run/4`.
+    Direct load to BigQuery of `ForcedLoad.Handler`: when the forced load ends, it loads the records of the temporary Postgres table into BigQuery, through files uploaded to GCS. See `run/4` (after the forced load) and `load/1` (standalone).
     """
 
     alias Connection.Gcs
@@ -13,7 +13,6 @@ defmodule ForcedLoad.Handler.DirectLoad do
 
     @unanalyzed_state "sin_analizar"
     @analyzed_in_bq_state "analizado_en_bq"
-    @queue_wait_timeout 5 * 60_000
     @queue_check_interval 10_000
     @queue_empty_delay 5_000
     @upload_retries 3
@@ -21,18 +20,63 @@ defmodule ForcedLoad.Handler.DirectLoad do
 
 
     @doc """
-    Loads the pending records of the temporary Postgres table into BigQuery via GCS: waits for the queues, exports each type to a JSONL file, uploads it and loads it into its table. Requires `ForcedLoad.Helpers.validate_direct_load!/1`.
+    Runs the direct load after the forced load: waits for the used queues to be empty and then calls `load/1`. The wait goes on while the number of messages decreases; if it does not decrease for `:queue_stall_timeout` milliseconds, the direct load is not run and a message asks to run it standalone (`ForcedLoad.Handler.run_direct_load/1`) once the queues are empty.
 
     ### Parameters
         - channel: AMQP.Channel. Channel used to check the queues
         - includes_record: boolean. Whether records were loaded (checks `:record_queue`)
         - includes_task: boolean. Whether tasks were loaded (checks `:task_queue`)
-        - config: map. Must contain :postgres_temp_table and :gcs_bucket
+        - config: map. Configuration options (see `load/1`)
 
     ### Returns
-        - :ok | Exception. Raises an exception if the queues cannot be checked.
+        - :ok if the direct load was run
+        - :stalled if the queues stopped decreasing and the direct load was not run
+        - Exception if the queues cannot be checked
     """
     def run(channel, includes_record, includes_task, config) do
+        business_name = Map.get(config, :business_name, "UNKNOWN")
+        stall_timeout = Map.get(config, :queue_stall_timeout, Config.default(:queue_stall_timeout))
+
+        queues =
+            [{includes_record, Map.get(config, :record_queue)}, {includes_task, Map.get(config, :task_queue)}]
+            |> Enum.filter(fn {included, _queue} -> included end)
+            |> Enum.map(fn {_included, queue} -> queue end)
+
+        Helpers.notify(config, "CARGA DIRECTA A BIGQUERY. #{business_name}. Esperando a que se vacíen las colas: #{Enum.join(queues, ", ")}", :info)
+
+        case wait_for_empty_queues(channel, queues, nil, System.monotonic_time(:millisecond), stall_timeout, config) do
+            :ok ->
+                load(config)
+
+            {:stalled, pending} ->
+                Helpers.notify(config,
+                    """
+                    *-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*
+                    CARGA DIRECTA A BIGQUERY. #{business_name}. PENDIENTE
+                    Las colas no bajaron en #{div(stall_timeout, 60_000)} minutos. Mensajes pendientes: #{Enum.map_join(pending, ", ", fn {queue, count} -> "#{queue} (#{count})" end)}
+                    No se exportó ni se subió nada: los registros siguen en Postgres como #{@unanalyzed_state}.
+                    Cuando se vacíen las colas, ejecutar la carga directa independiente con la misma configuración:
+                    \tForcedLoad.Handler.run_direct_load(config)
+                    \to en segundo plano: Genserver.ForcedLoad.start_link({:direct_load, config})
+                    *-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*
+                    """,
+                    :warning
+                )
+                :stalled
+        end
+    end
+
+
+    @doc """
+    Loads the pending records of the temporary Postgres table into BigQuery via GCS, without checking the queues: exports each type to a JSONL file, uploads it and loads it into its table. Requires `ForcedLoad.Helpers.validate_direct_load!/1`.
+
+    ### Parameters
+        - config: map. Must contain :postgres_temp_table, :gcs_bucket and :bigquery_tables_by_type
+
+    ### Returns
+        - :ok. The failures are notified in the summary
+    """
+    def load(config) do
         business_name = Map.get(config, :business_name, "UNKNOWN")
         bucket = Map.fetch!(config, :gcs_bucket)
         folder = Map.get(config, :gcs_folder)
@@ -40,16 +84,7 @@ defmodule ForcedLoad.Handler.DirectLoad do
 
         Helpers.notify(config, "CARGA DIRECTA A BIGQUERY. #{business_name}. Inicio", :info)
 
-        # Step 1: wait for the queues
-        queues =
-            [{includes_record, Map.get(config, :record_queue)}, {includes_task, Map.get(config, :task_queue)}]
-            |> Enum.filter(fn {included, _queue} -> included end)
-            |> Enum.map(fn {_included, queue} -> queue end)
-
-        Helpers.notify(config, "Esperando a que se vacíen las colas: #{Enum.join(queues, ", ")}", :info)
-        wait_for_empty_queues(channel, queues, System.monotonic_time(:millisecond) + @queue_wait_timeout, config)
-
-        # Steps 2 and 3: one file per type, with its table
+        # Export: one file per type, with its table
         exports =
             config
             |> Map.get(:bigquery_tables_by_type, [])
@@ -58,7 +93,7 @@ defmodule ForcedLoad.Handler.DirectLoad do
         files = for {_type, table, {:ok, path}} <- exports, do: {path, table}
         not_exported = for {type, _table, {:error, message}} <- exports, do: {type, message}
 
-        # Step 4: upload to GCS
+        # Upload to GCS
         Helpers.notify(config, "Subiendo #{length(files)} archivos a GCS (bucket #{bucket})", :info)
 
         uploads =
@@ -72,7 +107,7 @@ defmodule ForcedLoad.Handler.DirectLoad do
 
         Enum.each(uploaded, fn {path, _table, _object, _uri} -> File.rm(path) end)
 
-        # Steps 5 and 6: load into BigQuery and delete the loaded files from GCS
+        # Load into BigQuery and delete the loaded files from GCS
         Helpers.notify(config, "Cargando #{length(uploaded)} archivos en BigQuery", :info)
 
         loads =
@@ -91,7 +126,7 @@ defmodule ForcedLoad.Handler.DirectLoad do
             end
         end)
 
-        # Step 7: summary
+        # Summary
         failures = not_exported ++ not_uploaded ++ not_loaded
 
         Helpers.notify(config,
@@ -116,23 +151,25 @@ defmodule ForcedLoad.Handler.DirectLoad do
 
 
     #
-    # Waits until the queues are empty (no ready messages), checking every `@queue_check_interval` milliseconds until the deadline. When they are empty, it waits `@queue_empty_delay` milliseconds more before returning.
+    # Waits until the queues are empty (no ready messages), checking them every `@queue_check_interval` milliseconds. It keeps waiting while the total number of messages decreases; if it does not decrease for `stall_timeout` milliseconds, it gives up. When the queues are empty, it waits `@queue_empty_delay` milliseconds more, so the consumers finish the last messages.
     #
     # ### Parameters
     #     - channel: AMQP.Channel. Channel used to check the queues
     #     - queues: list of String. Queues to check
-    #     - deadline: integer. Monotonic time, in milliseconds, when the wait ends
+    #     - last_total: integer | nil. Total of messages of the previous check (nil in the first one)
+    #     - last_progress: integer. Monotonic time, in milliseconds, of the last decrease
+    #     - stall_timeout: integer. Milliseconds without decreasing before giving up
     #     - config: map. Configuration options
     #
     # ### Returns
     #     - :ok if the queues are empty
-    #     - :timeout if they are not empty at the deadline
+    #     - {:stalled, [{queue, count}]} if the queues did not decrease in time, with the pending messages of each queue
     #     - Exception if a queue cannot be checked (it is notified first)
     #
-    defp wait_for_empty_queues(channel, queues, deadline, config) do
-        pending =
+    defp wait_for_empty_queues(channel, queues, last_total, last_progress, stall_timeout, config) do
+        counts =
             try do
-                Enum.reject(queues, fn queue -> AMQP.Queue.message_count(channel, queue) == 0 end)
+                Enum.map(queues, fn queue -> {queue, AMQP.Queue.message_count(channel, queue)} end)
             rescue
                 error ->
                     Helpers.notify(config, "Error al consultar las colas #{Enum.join(queues, ", ")}: #{Exception.message(error)}. Se termina la carga directa", :error)
@@ -143,19 +180,22 @@ defmodule ForcedLoad.Handler.DirectLoad do
                     exit(reason)
             end
 
+        total = Enum.reduce(counts, 0, fn {_queue, count}, acc -> acc + count end)
+        now = System.monotonic_time(:millisecond)
+        last_progress = if last_total != nil and total < last_total, do: now, else: last_progress
+
         cond do
-            pending == [] ->
+            total == 0 ->
                 Helpers.notify(config, "Colas vacías. Se continúa en #{div(@queue_empty_delay, 1000)} s", :info)
                 Process.sleep(@queue_empty_delay)
                 :ok
 
-            System.monotonic_time(:millisecond) >= deadline ->
-                Helpers.notify(config, "Las colas #{Enum.join(pending, ", ")} no se vaciaron en #{div(@queue_wait_timeout, 60_000)} minutos. Se continúa con la carga directa", :warning)
-                :timeout
+            now - last_progress >= stall_timeout ->
+                {:stalled, Enum.reject(counts, fn {_queue, count} -> count == 0 end)}
 
             true ->
                 Process.sleep(@queue_check_interval)
-                wait_for_empty_queues(channel, pending, deadline, config)
+                wait_for_empty_queues(channel, queues, total, last_progress, stall_timeout, config)
         end
     end
 
