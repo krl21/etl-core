@@ -7,4 +7,4 @@ dev:
     command: ["bash"]
     autocreate: true
     forward:
-        - 8097:8096
+        - 8101:8100
