@@ -234,6 +234,7 @@ defmodule DataModel.RecordPg.Macro do
             @doc """
             Returns the complete list of attributes (own + subentities).
             """
+            @impl DataModel.Behaviour
             def attr_list() do
                 own_attrs = @own_attributes || []
                 subentities = @subentities || []
