@@ -5,7 +5,6 @@ defmodule Common.Table do
     """
 
     import Type.Type, only: [convert: 2]
-    import Connection.Odbc, only: [select: 2]
 
 
     @doc"""
@@ -51,7 +50,7 @@ defmodule Common.Table do
 
     """
     def get_stored_values_in_bigquery(pid, attr_list, ids, statement) do
-        select(pid, statement)
+        EtlCore.Deps.odbc().select(pid, statement)
         |> Enum.reduce(%{}, fn list, acc ->
             typed_list =
                 list
