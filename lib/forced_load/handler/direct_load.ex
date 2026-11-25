@@ -169,7 +169,7 @@ defmodule ForcedLoad.Handler.DirectLoad do
     defp wait_for_empty_queues(channel, queues, last_total, last_progress, stall_timeout, config) do
         counts =
             try do
-                Enum.map(queues, fn queue -> {queue, AMQP.Queue.message_count(channel, queue)} end)
+                Enum.map(queues, fn queue -> {queue, EtlCore.Deps.amqp().queue_message_count(channel, queue)} end)
             rescue
                 error ->
                     Helpers.notify(config, "Error al consultar las colas #{Enum.join(queues, ", ")}: #{Exception.message(error)}. Se termina la carga directa", :error)
