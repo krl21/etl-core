@@ -85,7 +85,6 @@ defmodule Genserver.ForcedLoad do
     alias ForcedLoad.Handler, as: ForcedLoadHandler
     alias ForcedLoad.Handler.DirectLoad
     alias ForcedLoad.Helpers, as: ForcedLoadHelpers
-    alias Connection.Http
 
 
     @doc """
@@ -336,7 +335,7 @@ defmodule Genserver.ForcedLoad do
         Task.start(fn ->
             case Poison.encode(payload) do
                 {:ok, body} ->
-                    case Http.post(body, webhook_url, [{"Content-Type", "application/json"}]) do
+                    case EtlCore.Deps.http().post(body, webhook_url, [{"Content-Type", "application/json"}]) do
                         {:ok, _response} ->
                             Logger.debug("#{__MODULE__}. Notificación webhook enviada: #{status}")
                         {:error, error} ->
