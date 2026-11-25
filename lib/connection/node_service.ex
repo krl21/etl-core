@@ -5,7 +5,6 @@ defmodule Connection.NodeService do
     """
 
     alias Connection.Ticket
-    alias Connection.Http
 
     #todo: obtener los detalles usando llamados a los genservers de node_service
 
@@ -52,7 +51,7 @@ defmodule Connection.NodeService do
                 url
                 |> String.replace("<unique_id>", node)
                 |> String.replace("<ticket>", ticket)
-                |> Http.get(headers)
+                |> EtlCore.Deps.http().get(headers)
                 |> case do
                     {:error, error} ->
                         {:error, error}
@@ -80,7 +79,7 @@ defmodule Connection.NodeService do
             url
             |> String.replace("<unique_id>", node)
             |> String.replace("<ticket>", ticket)
-            |> Http.get(headers)
+            |> EtlCore.Deps.http().get(headers)
             |> case do
                 {:error, error} ->
                     {:error, error}
