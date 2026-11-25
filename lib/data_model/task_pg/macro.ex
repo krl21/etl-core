@@ -473,10 +473,10 @@ defmodule DataModel.TaskPg.Macro do
                 require Logger
 
                 try do
-                    case Connection.Postgres.connect(pg_config) do
+                    case EtlCore.Deps.postgres().connect(pg_config) do
                         {:ok, pg_conn} ->
                             try do
-                                result = Connection.Postgres.insert_many(pg_conn, table_name(), records)
+                                result = EtlCore.Deps.postgres().insert_many(pg_conn, table_name(), records)
 
                                 case result do
                                     {:ok, count} ->
@@ -490,7 +490,7 @@ defmodule DataModel.TaskPg.Macro do
                                         error
                                 end
                             after
-                                Connection.Postgres.disconnect(pg_conn)
+                                EtlCore.Deps.postgres().disconnect(pg_conn)
                             end
 
                         {:error, reason} = error ->
@@ -537,10 +537,10 @@ defmodule DataModel.TaskPg.Macro do
                 require Logger
 
                 try do
-                    case Connection.Postgres.connect(pg_config) do
+                    case EtlCore.Deps.postgres().connect(pg_config) do
                         {:ok, pg_conn} ->
                             try do
-                                case Connection.Postgres.insert_many(pg_conn, table_name(), records) do
+                                case EtlCore.Deps.postgres().insert_many(pg_conn, table_name(), records) do
                                     {:ok, count} ->
                                         {:ok, count}
 
@@ -555,7 +555,7 @@ defmodule DataModel.TaskPg.Macro do
 
                                     {:error, _reason} ->
                                         # Close connection before splitting
-                                        Connection.Postgres.disconnect(pg_conn)
+                                        EtlCore.Deps.postgres().disconnect(pg_conn)
 
                                         # Split and retry
                                         Logger.info("#{__MODULE__}. Inserción de lote TaskPg fallida, dividiendo datos a la mitad y reintentando...")
@@ -575,7 +575,7 @@ defmodule DataModel.TaskPg.Macro do
                             after
                                 # Only disconnect if we haven't already (in the split case)
                                 if Process.alive?(pg_conn) do
-                                    Connection.Postgres.disconnect(pg_conn)
+                                    EtlCore.Deps.postgres().disconnect(pg_conn)
                                 end
                             end
 
@@ -621,7 +621,7 @@ defmodule DataModel.TaskPg.Macro do
                 require Logger
 
                 try do
-                    result = Connection.PostgresPool.insert_many(pg_pool_name, table_name(), records)
+                    result = EtlCore.Deps.postgres_pool().insert_many(pg_pool_name, table_name(), records)
 
                     case result do
                         {:ok, count} ->
@@ -668,7 +668,7 @@ defmodule DataModel.TaskPg.Macro do
                 require Logger
 
                 try do
-                    case Connection.PostgresPool.insert_many(pg_pool_name, table_name(), records) do
+                    case EtlCore.Deps.postgres_pool().insert_many(pg_pool_name, table_name(), records) do
                         {:ok, count} ->
                             {:ok, count}
 
