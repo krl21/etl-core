@@ -25,6 +25,8 @@ defmodule Connection.Postgres do
     - **Dual**: use `write_hostname` + `read_hostname` for read replica setup
     """
 
+    @behaviour Connection.Postgres.Behaviour
+
     @unanalyzed_state "sin_analizar"
     @state_analyzed_in_bq "analizado_en_bq"
     @state_with_problems "con_problemas"
