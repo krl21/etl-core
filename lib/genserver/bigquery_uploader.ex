@@ -44,8 +44,6 @@ defmodule Genserver.BigqueryUploader do
     require Logger
     alias Genserver.Monitor
     alias Genserver.Handlers.Bigquery
-    alias Connection.Postgres
-    alias Connection.Odbc
     import Time.Timem, only: [notification_frequency: 1]
     import Stuff, only: [random_string_generate: 1]
 
@@ -288,10 +286,10 @@ defmodule Genserver.BigqueryUploader do
 
         Logger.info("#{to_string(__MODULE__)}. Iniciando ciclo de carga a BigQuery para negocio: #{to_string(business)}")
 
-        {:ok, pg_conn} = Postgres.connect(pg_config)
+        {:ok, pg_conn} = EtlCore.Deps.postgres().connect(pg_config)
         Logger.debug("#{to_string(__MODULE__)}. Conexión a PostgreSQL establecida para ciclo de negocio")
 
-        bq_conn = Odbc.connect(data_source)
+        bq_conn = EtlCore.Deps.odbc().connect(data_source)
         Logger.debug("#{to_string(__MODULE__)}. Conexión ODBC a BigQuery establecida para ciclo de negocio")
 
         try do
@@ -307,10 +305,10 @@ defmodule Genserver.BigqueryUploader do
 
             Logger.info("#{to_string(__MODULE__)}. Ciclo de carga a BigQuery finalizado para negocio: #{to_string(business)}")
         after
-            Postgres.disconnect(pg_conn)
+            EtlCore.Deps.postgres().disconnect(pg_conn)
             Logger.debug("#{to_string(__MODULE__)}. Conexión a PostgreSQL cerrada para ciclo de negocio: #{to_string(business)}")
 
-            Odbc.disconnect(bq_conn)
+            EtlCore.Deps.odbc().disconnect(bq_conn)
             Logger.debug("#{to_string(__MODULE__)}. Conexión ODBC a BigQuery cerrada para ciclo de negocio: #{to_string(business)}")
         end
 
