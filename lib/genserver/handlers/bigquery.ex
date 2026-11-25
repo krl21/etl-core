@@ -42,10 +42,7 @@ defmodule Genserver.Handlers.Bigquery do
     """
 
     require Logger
-    alias Connection.Postgres
-    alias Connection.PostgresPool
     alias Statement.Sql
-    alias Connection.Odbc
     alias Notification.Notify
     alias Genserver.Protocols.PBigqueryPostProcess
 
@@ -70,7 +67,7 @@ defmodule Genserver.Handlers.Bigquery do
     def run(business, bq_conn, pg_conn, pg_table, bq_table, tipo, batch_id, batch_size, webhook_url, pending_limit \\ nil) do
         pending_opts = if pending_limit, do: [limit: pending_limit], else: []
 
-        Postgres.get_pending_bq(pg_conn, pg_table, tipo, pending_opts)
+        EtlCore.Deps.postgres().get_pending_bq(pg_conn, pg_table, tipo, pending_opts)
         |> case do
             {:ok, records} when records == [] ->
                 {:ok, 0}
@@ -90,12 +87,12 @@ defmodule Genserver.Handlers.Bigquery do
                     )
 
                 if not Enum.empty?(successful_id_nodos) do
-                    Postgres.mark_as_sent_to_bq_by_id_nodos(pg_conn, pg_table, successful_id_nodos, tipo)
+                    EtlCore.Deps.postgres().mark_as_sent_to_bq_by_id_nodos(pg_conn, pg_table, successful_id_nodos, tipo)
                 end
 
                 # Marca como con problemas los registros fallidos que se analizaron antes de los exitosos
                 if not Enum.empty?(failed_ids) do
-                    Postgres.mark_as_with_problems(pg_conn, pg_table, failed_ids)
+                    EtlCore.Deps.postgres().mark_as_with_problems(pg_conn, pg_table, failed_ids)
                 end
 
                 run_post_process(business, tipo, %{
@@ -136,11 +133,9 @@ defmodule Genserver.Handlers.Bigquery do
         - `{:error, reason}` - Error de carga
     """
     def run_with_pool(business, bq_conn, pg_pool_name, pg_table, bq_table, tipo, batch_id, batch_size, webhook_url, pending_limit \\ nil) do
-        alias Connection.PostgresPool
-
         pending_opts = if pending_limit, do: [limit: pending_limit], else: []
 
-        PostgresPool.get_pending_bq(pg_pool_name, pg_table, tipo, pending_opts)
+        EtlCore.Deps.postgres_pool().get_pending_bq(pg_pool_name, pg_table, tipo, pending_opts)
         |> case do
             {:ok, records} when records == [] ->
                 {:ok, 0}
@@ -159,12 +154,12 @@ defmodule Genserver.Handlers.Bigquery do
                     )
 
                 if not Enum.empty?(successful_id_nodos) do
-                    PostgresPool.mark_as_sent_to_bq_by_id_nodos(pg_pool_name, pg_table, successful_id_nodos, tipo)
+                    EtlCore.Deps.postgres_pool().mark_as_sent_to_bq_by_id_nodos(pg_pool_name, pg_table, successful_id_nodos, tipo)
                 end
 
                 # Marca como con problemas los registros fallidos
                 if not Enum.empty?(failed_ids) do
-                    PostgresPool.mark_as_with_problems(pg_pool_name, pg_table, failed_ids)
+                    EtlCore.Deps.postgres_pool().mark_as_with_problems(pg_pool_name, pg_table, failed_ids)
                 end
 
                 run_post_process(business, tipo, %{
@@ -457,7 +452,7 @@ defmodule Genserver.Handlers.Bigquery do
     defp execute_insert(insert_tuples, bq_conn) do
         Enum.map(insert_tuples, fn {id_nodos, ids, records, query} ->
             try do
-                Odbc.insert(bq_conn, query)
+                EtlCore.Deps.odbc().insert(bq_conn, query)
                 {:ok, ids}
             rescue
                 error ->
