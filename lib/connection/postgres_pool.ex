@@ -4,6 +4,8 @@ defmodule Connection.PostgresPool do
     PostgreSQL operations using a named connection pool.
     """
 
+    @behaviour Connection.PostgresPool.Behaviour
+
     require Logger
     alias Connection.PostgresHelpers
 
