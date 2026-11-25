@@ -397,7 +397,7 @@ defmodule DataModel.RecordPg.Macro do
                 require Logger
 
                 try do
-                    case Connection.Postgres.connect(pg_config) do
+                    case EtlCore.Deps.postgres().connect(pg_config) do
                         {:ok, pg_conn} ->
                             try do
                                 records
@@ -405,7 +405,7 @@ defmodule DataModel.RecordPg.Macro do
                                 |> Enum.reduce({:ok, 0}, fn chunk, acc ->
                                     case acc do
                                         {:ok, total} ->
-                                            Connection.Postgres.insert_many(pg_conn, table_name(), chunk)
+                                            EtlCore.Deps.postgres().insert_many(pg_conn, table_name(), chunk)
                                             |> case do
                                                 {:ok, count} ->
                                                     {:ok, total + count}
@@ -423,7 +423,7 @@ defmodule DataModel.RecordPg.Macro do
                                     end
                                 end)
                             after
-                                Connection.Postgres.disconnect(pg_conn)
+                                EtlCore.Deps.postgres().disconnect(pg_conn)
                             end
 
                         {:error, reason} = error ->
@@ -473,7 +473,7 @@ defmodule DataModel.RecordPg.Macro do
                     |> Enum.reduce({:ok, 0}, fn chunk, acc ->
                         case acc do
                             {:ok, total} ->
-                                Connection.PostgresPool.insert_many(pg_pool_name, table_name(), chunk)
+                                EtlCore.Deps.postgres_pool().insert_many(pg_pool_name, table_name(), chunk)
                                 |> case do
                                     {:ok, count} ->
                                         {:ok, total + count}
@@ -521,10 +521,10 @@ defmodule DataModel.RecordPg.Macro do
                 require Logger
 
                 try do
-                    case Connection.Postgres.connect(pg_config) do
+                    case EtlCore.Deps.postgres().connect(pg_config) do
                         {:ok, pg_conn} ->
                             try do
-                                case Connection.Postgres.insert_many(pg_conn, table_name(), records) do
+                                case EtlCore.Deps.postgres().insert_many(pg_conn, table_name(), records) do
                                     {:ok, count} ->
                                         {:ok, count}
 
@@ -539,7 +539,7 @@ defmodule DataModel.RecordPg.Macro do
 
                                     {:error, _reason} ->
                                         # Close connection before splitting
-                                        Connection.Postgres.disconnect(pg_conn)
+                                        EtlCore.Deps.postgres().disconnect(pg_conn)
 
                                         # Split and retry
                                         Logger.info("#{__MODULE__}. Inserción de lote fallida, dividiendo datos a la mitad y reintentando...")
@@ -559,7 +559,7 @@ defmodule DataModel.RecordPg.Macro do
                             after
                                 # Only disconnect if we haven't already (in the split case)
                                 if Process.alive?(pg_conn) do
-                                    Connection.Postgres.disconnect(pg_conn)
+                                    EtlCore.Deps.postgres().disconnect(pg_conn)
                                 end
                             end
 
@@ -605,7 +605,7 @@ defmodule DataModel.RecordPg.Macro do
                 require Logger
 
                 try do
-                    case Connection.PostgresPool.insert_many(pg_pool_name, table_name(), records) do
+                    case EtlCore.Deps.postgres_pool().insert_many(pg_pool_name, table_name(), records) do
                         {:ok, count} ->
                             {:ok, count}
 
