@@ -9,7 +9,6 @@ defmodule ForcedLoad.Helpers do
     alias Connection.Gcs
     alias Connection.GcsToBigQuery
     alias Connection.PostgresHelpers
-    alias Connection.PostgresPool
     alias ForcedLoad.Config
 
 
@@ -89,7 +88,7 @@ defmodule ForcedLoad.Helpers do
                 raise("El pool de Postgres #{inspect(pool)} no está iniciado")
             end
 
-            if PostgresPool.table_exists?(pool, PostgresHelpers.sanitize_identifier(temp_table)) != {:ok, true} do
+            if EtlCore.Deps.postgres_pool().table_exists?(pool, PostgresHelpers.sanitize_identifier(temp_table)) != {:ok, true} do
                 raise("La tabla temporal #{temp_table} no existe en Postgres (pool #{inspect(pool)})")
             end
 
