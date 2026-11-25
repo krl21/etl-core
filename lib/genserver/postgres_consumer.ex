@@ -8,7 +8,6 @@ defmodule Genserver.PostgresConsumer do
 
     require Logger
     import Genserver.Protocols.PPostgresDb
-    import Connection.Odbc, only: [connect: 1]
     import Stuff, only: [random_string_generate: 1]
     alias Genserver.Monitor
 
@@ -23,7 +22,7 @@ defmodule Genserver.PostgresConsumer do
         Logger.info("#{inspect __MODULE__}. Inicializando ConsumerFromPostgres. Nombre de tabla: ---#{inspect table_name}---. Negocio: ---#{inspect business}---")
 
         Logger.info("#{inspect __MODULE__}. Proceso creado para comunicarse con ODBC-BigQuery")
-        pid_odbc = connect(data_source)
+        pid_odbc = EtlCore.Deps.odbc().connect(data_source)
 
         variable_wait(:start, milliseconds_timeout)
 
