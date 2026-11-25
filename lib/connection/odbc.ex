@@ -4,6 +4,8 @@ defmodule Connection.Odbc do
     Module for working with the ODBC library. It frees you from having to know how Erlang's :odbc library works.
     """
 
+    @behaviour Connection.Odbc.Behaviour
+
     require Logger
     import Type.Type, only: [convert: 2]
     use Decoratorm
