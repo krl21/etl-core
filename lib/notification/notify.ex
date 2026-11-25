@@ -32,7 +32,7 @@ defmodule Notification.Notify do
 
                 %{"text" => text}
                 |> Poison.encode!()
-                |> Connection.Http.post(url, headers)
+                |> EtlCore.Deps.http().post(url, headers)
             end)
     end
 
@@ -80,7 +80,7 @@ defmodule Notification.Notify do
                 "Message: #{inspect(msg, limit: :infinity)} \n"
             }
             |> Poison.encode!()
-            |> Connection.Http.post(
+            |> EtlCore.Deps.http().post(
                 url,
                 headers
             )
@@ -97,7 +97,7 @@ defmodule Notification.Notify do
                 "Records current: #{inspect(records_current, limit: :infinity)} \n"
             }
             |> Poison.encode!()
-            |> Connection.Http.post(
+            |> EtlCore.Deps.http().post(
                 url,
                 headers
             )
@@ -106,7 +106,7 @@ defmodule Notification.Notify do
             #     "Message: #{inspect(msg, limit: :infinity)} \n"
             # }
             # |> Poison.encode!()
-            # |> Connection.Http.post(
+            # |> EtlCore.Deps.http().post(
             #     url,
             #     headers
             # )
