@@ -4,7 +4,6 @@ defmodule Connection.ElasticSearch do
     Module oriented to the creation of queries to ElasticSearch
     """
 
-    alias Connection.Http
     alias Connection.Ticket
     alias Statement.Elastic
 
@@ -52,7 +51,7 @@ defmodule Connection.ElasticSearch do
 
         body = Elastic.build_query(1)
 
-        Http.post(
+        EtlCore.Deps.http().post(
             body,
             url,
             headers
@@ -128,7 +127,7 @@ defmodule Connection.ElasticSearch do
                 |> String.replace("<mode>", mode)
             body = Elastic.build_query(index_to_return, index_for_range, init_date, end_date)
 
-            Http.post(
+            EtlCore.Deps.http().post(
                 body,
                 url,
                 headers
@@ -181,7 +180,7 @@ defmodule Connection.ElasticSearch do
         size = 25
         body = Elastic.build_query(index_to_return, index_for_range, init_date, end_date, from, size)
 
-        Http.post(
+        EtlCore.Deps.http().post(
             body,
             url,
             headers
@@ -318,7 +317,7 @@ defmodule Connection.ElasticSearch do
     #
     #
     defp get_data_url(url, headers, body) do
-        Http.post(
+        EtlCore.Deps.http().post(
             body,
             url,
             headers
