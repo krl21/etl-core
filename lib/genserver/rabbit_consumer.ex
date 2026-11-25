@@ -35,7 +35,6 @@ defmodule Genserver.RabbitConsumer do
     import Stuff, only: [random_string_generate: 1]
     alias Genserver.Monitor
     alias Notification.Notify
-    alias Connection.Postgres
 
     @doc """
     Starts the RabbitMQ consumer GenServer.
@@ -69,16 +68,16 @@ defmodule Genserver.RabbitConsumer do
 
         Logger.info("#{to_string(__MODULE__)}. Inicializando. Cola asociada: ---#{to_string(queue)}---")
 
-        {:ok, connection} = configuration_amqp |> AMQP.Connection.open()
-        {:ok, channel} = AMQP.Channel.open(connection)
+        {:ok, connection} = configuration_amqp |> EtlCore.Deps.amqp().connection_open()
+        {:ok, channel} = EtlCore.Deps.amqp().channel_open(connection)
         Process.link(channel.pid)
 
         setup_queue(channel, queue_info)
 
         prefetch_count = Map.get(queue_info, :prefetch_count, 50)
-        :ok = AMQP.Basic.qos(channel, prefetch_count: prefetch_count)
+        :ok = EtlCore.Deps.amqp().basic_qos(channel, prefetch_count: prefetch_count)
 
-        {:ok, _consumer_tag} = AMQP.Basic.consume(channel, queue)
+        {:ok, _consumer_tag} = EtlCore.Deps.amqp().basic_consume(channel, queue)
 
         info_with_conn = setup_postgres_connection(info, queue)
 
@@ -163,7 +162,7 @@ defmodule Genserver.RabbitConsumer do
                         info
                     )
 
-                    AMQP.Basic.ack(channel, delivery_tag)
+                    EtlCore.Deps.amqp().basic_ack(channel, delivery_tag)
 
                 {:error, reason} ->
                     message =
@@ -171,7 +170,7 @@ defmodule Genserver.RabbitConsumer do
 
                     Logger.error(message)
                     notify_error(info, message)
-                    AMQP.Basic.reject(channel, delivery_tag, requeue: false)
+                    EtlCore.Deps.amqp().basic_reject(channel, delivery_tag, requeue: false)
             end
         rescue
             e ->
@@ -182,7 +181,7 @@ defmodule Genserver.RabbitConsumer do
 
                 Logger.error(message)
                 Logger.error(Exception.format(:error, e, stacktrace))
-                AMQP.Basic.reject(channel, delivery_tag, requeue: false)
+                EtlCore.Deps.amqp().basic_reject(channel, delivery_tag, requeue: false)
                 notify_error(info, message)
 
         end
@@ -204,17 +203,17 @@ defmodule Genserver.RabbitConsumer do
     defp setup_queue(channel, %{queue: queue, exchange: exchange, queue_error: queue_error, queue_arguments: queue_arguments, listen: listen}) do
         Logger.info("#{to_string(__MODULE__)}. Configurando la cola ---#{to_string(queue)}---")
 
-        {:ok, _} = AMQP.Queue.declare(channel, queue_error, durable: true)
-        {:ok, info} = AMQP.Queue.declare(channel, queue, durable: true, arguments: queue_arguments)
+        {:ok, _} = EtlCore.Deps.amqp().queue_declare(channel, queue_error, durable: true)
+        {:ok, info} = EtlCore.Deps.amqp().queue_declare(channel, queue, durable: true, arguments: queue_arguments)
 
         Logger.debug("#{to_string(__MODULE__)}. Estado: #{inspect(info)}")
 
-        :ok = AMQP.Exchange.fanout(channel, exchange, durable: true)
-        :ok = AMQP.Queue.bind(channel, queue, exchange)
+        :ok = EtlCore.Deps.amqp().exchange_fanout(channel, exchange, durable: true)
+        :ok = EtlCore.Deps.amqp().queue_bind(channel, queue, exchange)
 
         Enum.each(listen, fn exchange_to_hear ->
-            :ok = AMQP.Exchange.fanout(channel, exchange_to_hear, durable: true)
-            :ok = AMQP.Exchange.bind(channel, exchange, exchange_to_hear)
+            :ok = EtlCore.Deps.amqp().exchange_fanout(channel, exchange_to_hear, durable: true)
+            :ok = EtlCore.Deps.amqp().exchange_bind(channel, exchange, exchange_to_hear)
         end)
     end
 
@@ -261,7 +260,7 @@ defmodule Genserver.RabbitConsumer do
     defp open_postgres_connection(pg_config, queue) do
         Logger.debug("#{to_string(__MODULE__)}. Abriendo conexión a PostgreSQL para la cola: #{queue}")
 
-        case Postgres.connect(pg_config) do
+        case EtlCore.Deps.postgres().connect(pg_config) do
             {:ok, conn} ->
                 Logger.info("#{to_string(__MODULE__)}. Conexión a PostgreSQL establecida para la cola: #{queue}")
                 conn
@@ -313,7 +312,7 @@ defmodule Genserver.RabbitConsumer do
 
         if info[:pg_mode] == :legacy and info[:pg_conn] do
             Logger.debug("#{to_string(__MODULE__)}. Cerrando conexión a PostgreSQL")
-            Postgres.disconnect(info[:pg_conn])
+            EtlCore.Deps.postgres().disconnect(info[:pg_conn])
         end
 
         :ok
@@ -325,7 +324,7 @@ defmodule Genserver.RabbitConsumer do
     defp close_channel_safely(%AMQP.Channel{pid: pid} = channel) when is_pid(pid) do
         if Process.alive?(pid) do
             try do
-                AMQP.Channel.close(channel)
+                EtlCore.Deps.amqp().channel_close(channel)
             catch
                 _, _ ->
                     :ok
@@ -344,7 +343,7 @@ defmodule Genserver.RabbitConsumer do
     defp close_amqp_safely(%AMQP.Connection{pid: pid} = connection) when is_pid(pid) do
         if Process.alive?(pid) do
             try do
-                AMQP.Connection.close(connection)
+                EtlCore.Deps.amqp().connection_close(connection)
             catch
                 _, _ ->
                     :ok
