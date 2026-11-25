@@ -4,7 +4,6 @@ defmodule Connection.Ticket do
     Module for working with access tickets
     """
 
-    import Connection.Http, only: [get: 2]
     import File.FileManager, only: [load: 1, save: 2]
 
     @doc"""
@@ -34,7 +33,7 @@ defmodule Connection.Ticket do
             url
             |> String.replace("<username>", username)
             |> String.replace("<password>", password)
-            |> get(headers)
+            |> EtlCore.Deps.http().get(headers)
             |> case do
                 {:error, error} ->
                     {:error, error}
@@ -82,7 +81,7 @@ defmodule Connection.Ticket do
         url
         |> String.replace("<username>", username)
         |> String.replace("<password>", password)
-        |> get(headers)
+        |> EtlCore.Deps.http().get(headers)
         |> case do
             {:error, error} ->
                 {:error, error}
