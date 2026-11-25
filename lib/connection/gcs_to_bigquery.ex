@@ -8,7 +8,6 @@ defmodule Connection.GcsToBigQuery do
 
     alias Connection.Gcs
     alias Connection.Gcs.Helpers, as: GcsHelpers
-    alias Connection.Odbc
 
     @formats %{
         csv: "CSV",
@@ -116,7 +115,7 @@ defmodule Connection.GcsToBigQuery do
                     Logger.debug("Cargando en BigQuery: #{statement}")
 
                     try do
-                        Odbc.execute(pid, statement)
+                        EtlCore.Deps.odbc().execute(pid, statement)
                     rescue
                         error -> {:error, "#{Exception.message(error)}. URIs: #{Enum.join(List.wrap(uris), ", ")}"}
                     end
@@ -300,14 +299,14 @@ defmodule Connection.GcsToBigQuery do
         Pool.BigQuery.with_connection(pool, fun, opts)
 
     defp with_odbc([{key, _} | _] = data_source, _opts, fun) when is_atom(key) do
-        Odbc.start()
-        pid = Odbc.connect(data_source)
+        EtlCore.Deps.odbc().start()
+        pid = EtlCore.Deps.odbc().connect(data_source)
 
         try do
             fun.(pid)
         after
             try do
-                Odbc.disconnect(pid)
+                EtlCore.Deps.odbc().disconnect(pid)
             rescue
                 error -> Logger.warning("No se pudo cerrar la conexión ODBC: #{Exception.message(error)}")
             end
@@ -364,7 +363,7 @@ defmodule Connection.GcsToBigQuery do
             "SELECT column_name, data_type FROM `#{Enum.join(dataset, ".")}.INFORMATION_SCHEMA.COLUMNS` " <>
             "WHERE table_name = '#{name}' AND is_hidden = 'NO' ORDER BY ordinal_position"
 
-        Odbc.select(pid, query)
+        EtlCore.Deps.odbc().select(pid, query)
         |> case do
             [] -> {:error, "La tabla no existe: #{table}"}
             rows -> {:ok, Enum.map(rows, &{&1[:column_name], &1[:data_type]})}
