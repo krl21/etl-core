@@ -171,7 +171,7 @@ defmodule ForcedLoad.Handler.Loader do
                             builder_fn -> builder_fn.(payload)
                         end
 
-                        AMQP.Basic.publish(channel, record_queue, "", Poison.encode!(msg))
+                        EtlCore.Deps.amqp().basic_publish(channel, record_queue, "", Poison.encode!(msg))
 
                         if callback = Map.get(config, :on_record_success) do
                             callback.(unique_id, payload)
@@ -266,7 +266,7 @@ defmodule ForcedLoad.Handler.Loader do
                             builder_fn -> builder_fn.(task)
                         end
 
-                        AMQP.Basic.publish(channel, task_queue, "", Poison.encode!(msg))
+                        EtlCore.Deps.amqp().basic_publish(channel, task_queue, "", Poison.encode!(msg))
                     end)
 
                     if callback = Map.get(config, :on_task_success) do
