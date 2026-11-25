@@ -4,9 +4,6 @@ defmodule Connection.WorkflowService do
     Work with Workflow Service
     """
 
-    import Connection.Http, only: [get: 2]
-
-
     @doc"""
     Returns the tasks associated with a record
 
@@ -36,7 +33,7 @@ defmodule Connection.WorkflowService do
             |> String.replace("<type_documentary>", type_documentary)
             |> String.replace("<contentref>", contentref)
             |> String.replace("<ticket>", ticket)
-            |> get(headers)
+            |> EtlCore.Deps.http().get(headers)
             |> case do
                 {:error, _error} = error ->
                     error
