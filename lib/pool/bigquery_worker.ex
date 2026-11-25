@@ -6,7 +6,6 @@ defmodule Pool.BigQuery.Worker do
 
     use GenServer
     require Logger
-    alias Connection.Odbc
 
     @doc false
     def start_link(data_source) do
@@ -34,7 +33,7 @@ defmodule Pool.BigQuery.Worker do
         Logger.debug("#{__MODULE__}. Inicializando worker ODBC")
 
         # Asegurar que ODBC esté iniciado
-        Odbc.start()
+        EtlCore.Deps.odbc().start()
 
         case create_connection(data_source) do
         {:ok, conn} ->
@@ -66,7 +65,7 @@ defmodule Pool.BigQuery.Worker do
         Logger.debug("#{__MODULE__}. Terminando worker: #{inspect(reason)}")
 
         try do
-            Odbc.disconnect(conn)
+            EtlCore.Deps.odbc().disconnect(conn)
         rescue
             _ -> :ok
         catch
@@ -78,7 +77,7 @@ defmodule Pool.BigQuery.Worker do
 
     defp create_connection(data_source) do
         try do
-            conn = Odbc.connect(data_source)
+            conn = EtlCore.Deps.odbc().connect(data_source)
             {:ok, conn}
         rescue
             error ->
