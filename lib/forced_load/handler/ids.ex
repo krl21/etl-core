@@ -5,7 +5,6 @@ defmodule ForcedLoad.Handler.Ids do
     """
 
     alias Connection.ElasticSearch
-    alias Connection.Odbc
     alias Statement.Sql
     alias ForcedLoad.Helpers
 
@@ -122,7 +121,7 @@ defmodule ForcedLoad.Handler.Ids do
         )
 
         try do
-            Odbc.select(bq_pid, statement)
+            EtlCore.Deps.odbc().select(bq_pid, statement)
             |> Enum.map(fn [{_, id}] -> id end)
         rescue
             error ->
