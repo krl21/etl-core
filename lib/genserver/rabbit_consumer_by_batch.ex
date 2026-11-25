@@ -21,8 +21,8 @@ defmodule Genserver.RabbitConsumerByBatch do
 
         Logger.info("#{to_string(__MODULE__)}. Initializing. Associated queue: ---#{to_string(queue)}---. Batch size: #{to_string(batch_size)}")
 
-        {:ok, connection} = configuration_amqp |> AMQP.Connection.open()
-        {:ok, channel} = AMQP.Channel.open(connection)
+        {:ok, connection} = configuration_amqp |> EtlCore.Deps.amqp().connection_open()
+        {:ok, channel} = EtlCore.Deps.amqp().channel_open(connection)
 
         setup_queue(channel, queue_info)
         variable_wait(channel, queue, milliseconds_timeout)
@@ -55,17 +55,17 @@ defmodule Genserver.RabbitConsumerByBatch do
     defp setup_queue(channel, %{queue: queue, exchange: exchange, queue_error: queue_error, queue_arguments: queue_arguments, listen: listen}) do
         Logger.info("#{to_string(__MODULE__)}. Configuring the queue ---#{to_string(queue)}---")
 
-        {:ok, _} = AMQP.Queue.declare(channel, queue_error, durable: true)
-        {:ok, info} = AMQP.Queue.declare(channel, queue, durable: true, arguments: queue_arguments)
+        {:ok, _} = EtlCore.Deps.amqp().queue_declare(channel, queue_error, durable: true)
+        {:ok, info} = EtlCore.Deps.amqp().queue_declare(channel, queue, durable: true, arguments: queue_arguments)
 
         Logger.debug("#{to_string(__MODULE__)}. State: #{inspect(info)}")
 
-        :ok = AMQP.Exchange.fanout(channel, exchange, durable: true)
-        :ok = AMQP.Queue.bind(channel, queue, exchange)
+        :ok = EtlCore.Deps.amqp().exchange_fanout(channel, exchange, durable: true)
+        :ok = EtlCore.Deps.amqp().queue_bind(channel, queue, exchange)
 
         Enum.each(listen, fn exchange_to_hear ->
-            :ok = AMQP.Exchange.fanout(channel, exchange_to_hear, durable: true)
-            :ok = AMQP.Exchange.bind(channel, exchange, exchange_to_hear)
+            :ok = EtlCore.Deps.amqp().exchange_fanout(channel, exchange_to_hear, durable: true)
+            :ok = EtlCore.Deps.amqp().exchange_bind(channel, exchange, exchange_to_hear)
         end)
     end
 
@@ -82,7 +82,7 @@ defmodule Genserver.RabbitConsumerByBatch do
     #
     defp variable_wait(channel, queue, milliseconds_timeout) do
         milliseconds =
-            AMQP.Queue.message_count(channel, queue)
+            EtlCore.Deps.amqp().queue_message_count(channel, queue)
             |> Kernel.>(0)
             |> if do
                 0
@@ -117,7 +117,7 @@ defmodule Genserver.RabbitConsumerByBatch do
     end
 
     defp get_messages(channel, queue, count, acc) do
-        AMQP.Basic.get(channel, queue)
+        EtlCore.Deps.amqp().basic_get(channel, queue)
         |> case do
             {:ok, msg, %{delivery_tag: delivery_tag}} ->
                 payload =
@@ -125,11 +125,11 @@ defmodule Genserver.RabbitConsumerByBatch do
                     |> Poison.decode()
                     |> case do
                         {:ok, msg_decode} ->
-                            AMQP.Basic.ack(channel, delivery_tag)
+                            EtlCore.Deps.amqp().basic_ack(channel, delivery_tag)
                             [msg_decode]
 
                         {:error, _} ->
-                            AMQP.Basic.reject(channel, delivery_tag, requeue: false)
+                            EtlCore.Deps.amqp().basic_reject(channel, delivery_tag, requeue: false)
                             []
                     end
 
