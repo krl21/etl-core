@@ -6,9 +6,7 @@ defmodule Cleaning.Cleaner do
     """
 
     require Logger
-    import Connection.Odbc, only: [select: 2, update: 2]
     alias Statement.Sql
-    alias Connection.PostgresPool
     alias Type.Type
     alias Notification.Notify
     alias Pool.BigQuery
@@ -106,7 +104,7 @@ defmodule Cleaning.Cleaner do
 
         result = BigQuery.with_connection_safe(bq_pool_name, fn conn ->
             cleanup_query = build_cleanup_query(bq_config)
-            update(conn, cleanup_query)
+            EtlCore.Deps.odbc().update(conn, cleanup_query)
         end)
 
         case result do
@@ -229,7 +227,7 @@ defmodule Cleaning.Cleaner do
 
         delete_opts = if register_type, do: [register_type: register_type], else: []
 
-        PostgresPool.delete_analyzed_records(pg_pool_name, table_name, delete_opts)
+        EtlCore.Deps.postgres_pool().delete_analyzed_records(pg_pool_name, table_name, delete_opts)
         |> case do
             {:ok, count} ->
                 Logger.info("Limpieza de PostgreSQL para #{inspect(business_key)}: #{count} registros eliminados de #{table_name}")
