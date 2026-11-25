@@ -4,6 +4,8 @@ defmodule Connection.Http do
     Module for working with the HTTP protocol
     """
 
+    @behaviour Connection.Http.Behaviour
+
 
     @doc"""
     POST request
