@@ -440,9 +440,9 @@ defmodule DataModel.Task.Macro do
                 try do
                     pid =
                         Application.get_env(application_name(), :bigquery)[:configuration]
-                        |> Connection.Odbc.connect()
+                        |> EtlCore.Deps.odbc().connect()
 
-                    Connection.Odbc.insert(pid, query)
+                    EtlCore.Deps.odbc().insert(pid, query)
                     Process.exit(pid, :kill)
                     :ok
                 rescue
