@@ -126,7 +126,6 @@ defmodule ForcedLoad.Handler do
     """
 
     require Logger
-    alias Connection.Odbc
     alias ForcedLoad.Helpers
     alias ForcedLoad.Handler.DirectLoad
     alias ForcedLoad.Handler.Loader
@@ -203,13 +202,13 @@ defmodule ForcedLoad.Handler do
 
         # Open AMQP connection
         amqp_config = Helpers.get_amqp_config(config)
-        {:ok, connection} = AMQP.Connection.open(amqp_config)
-        {:ok, channel} = AMQP.Channel.open(connection)
+        {:ok, connection} = EtlCore.Deps.amqp().connection_open(amqp_config)
+        {:ok, channel} = EtlCore.Deps.amqp().channel_open(connection)
 
         bq_pid = unless Map.get(config, :skip_bigquery, false) do
             bq_config = Helpers.get_bigquery_config(config)
             Helpers.notify(config, "Abriendo conexión a BigQuery...", :info)
-            Odbc.connect(bq_config)
+            EtlCore.Deps.odbc().connect(bq_config)
         end
 
         try do
@@ -230,7 +229,7 @@ defmodule ForcedLoad.Handler do
             after
                 if bq_pid do
                     Helpers.notify(config, "Cerrando conexión a BigQuery...", :info)
-                    Odbc.disconnect(bq_pid)
+                    EtlCore.Deps.odbc().disconnect(bq_pid)
                 end
             end
 
@@ -251,7 +250,7 @@ defmodule ForcedLoad.Handler do
             :ok
         after
             # Close AMQP connection
-            if connection, do: AMQP.Connection.close(connection)
+            if connection, do: EtlCore.Deps.amqp().connection_close(connection)
         end
     end
 
