@@ -69,7 +69,7 @@ defimpl Type.PTypeOf, for: Tuple do
     def type_of(_data), do: :tuple
 end
 
-defimpl Type.PTypeOf, for: Pid do
+defimpl Type.PTypeOf, for: PID do
     def type_of(_data), do: :pid
 end
 
