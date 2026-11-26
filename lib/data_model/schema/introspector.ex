@@ -10,26 +10,20 @@ defmodule DataModel.Schema.Introspector do
     only ever deal with the resulting column maps, never with `InfoAttr` itself.
     """
 
-    require Logger
     alias Struct.InfoAttr
     alias DataModel.Schema.TypeMapping
 
     @type column :: %{name: String.t(), type: String.t(), mode: String.t(), description: String.t() | nil}
 
     @doc """
-    Computes the desired BigQuery schema for an entity module.
+    Computes the desired BigQuery schema for an entity module, always honouring
+    each `InfoAttr`'s `:constraint` as written — whether `:required` can
+    actually take effect against BigQuery (only at table creation) is a
+    migration-time concern, decided by `DataModel.Schema.Generator.generate/2`
+    once it knows the entity's previous schema, not here.
 
     ### Parameters:
         - module: Atom. A module implementing `Cleaning.CleanableTable` and `DataModel.Behaviour` (`attr_list/0`).
-        - opts: Keyword list.
-            - `:allow_required` (boolean, default `true`). When `false`, any `InfoAttr`
-              with `constraint: :required` is resolved to a `"NULLABLE"` column mode
-              instead and a warning is logged. Used by `DataModel.Schema.Generator.generate/2`
-              to enforce that `:required` only has an effect when the entity's BigQuery
-              table does not exist yet (its first, `:create_table` migration) — BigQuery
-              only allows a `REQUIRED` column at table creation, never via `ALTER TABLE`
-              on an existing one. `DataModel.Schema.Generator.bootstrap/2` always passes
-              `false`, since it is only used for tables that already exist.
 
     ### Returns:
         - [column()]. One entry per attribute returned by `module.attr_list()`.
@@ -39,10 +33,10 @@ defmodule DataModel.Schema.Introspector do
           definitions (type/mode/description) — this points at a composition bug
           across subentities.
     """
-    @spec desired_schema(module(), keyword()) :: [column()]
-    def desired_schema(module, opts \\ []) when is_atom(module) do
+    @spec desired_schema(module()) :: [column()]
+    def desired_schema(module) when is_atom(module) do
         module.attr_list()
-        |> Enum.map(&to_bigquery_column(&1, opts))
+        |> Enum.map(&to_bigquery_column/1)
         |> deduplicate_by_name()
     end
 
@@ -51,19 +45,16 @@ defmodule DataModel.Schema.Introspector do
 
     ### Parameters:
         - info_attr: Struct.InfoAttr.
-        - opts: Keyword list. See `desired_schema/2`.
 
     ### Returns:
         - column().
     """
-    @spec to_bigquery_column(InfoAttr.t(), keyword()) :: column()
-    def to_bigquery_column(%InfoAttr{} = info_attr, opts \\ []) do
-        allow_required? = Keyword.get(opts, :allow_required, true)
-
+    @spec to_bigquery_column(InfoAttr.t()) :: column()
+    def to_bigquery_column(%InfoAttr{} = info_attr) do
         %{
             name: to_string(info_attr.id),
             type: TypeMapping.resolve(info_attr.type),
-            mode: mode_for(info_attr, allow_required?),
+            mode: mode_for(info_attr),
             description: info_attr.description
         }
     end
@@ -99,25 +90,16 @@ defmodule DataModel.Schema.Introspector do
     ################
 
     #
-    # Resolves the BigQuery column mode for an `InfoAttr`'s constraint. A
-    # `:required` constraint only resolves to `"REQUIRED"` when `allow_required?`
-    # is true — otherwise it logs a warning and resolves to `"NULLABLE"` instead,
-    # since BigQuery only allows a `REQUIRED` column at table creation.
+    # Resolves the BigQuery column mode for an `InfoAttr`'s constraint.
     #
     # ### Parameters:
     #     - info_attr: Struct.InfoAttr.
-    #     - allow_required?: Boolean.
     #
     # ### Returns:
     #     - String. `"NULLABLE"` or `"REQUIRED"`.
     #
-    defp mode_for(%InfoAttr{constraint: :nullable}, _allow_required?), do: "NULLABLE"
-    defp mode_for(%InfoAttr{constraint: :required}, true), do: "REQUIRED"
-
-    defp mode_for(%InfoAttr{constraint: :required, id: id}, false) do
-        Logger.warning("required ignorado en #{id}: solo se permite al crear la tabla")
-        "NULLABLE"
-    end
+    defp mode_for(%InfoAttr{constraint: :nullable}), do: "NULLABLE"
+    defp mode_for(%InfoAttr{constraint: :required}), do: "REQUIRED"
 
     #
     # Deduplicates by `name`, preserving the original (first-seen) order —

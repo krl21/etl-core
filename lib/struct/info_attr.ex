@@ -11,7 +11,7 @@ defmodule Struct.InfoAttr do
         - keys_to_search: List of String. Keys to search in each level of the map.
         - default_value: Default value.
         - description: String | nil. Human-readable description of the column, used as its BigQuery column description (`DataModel.Schema.Introspector`).
-        - constraint: `:nullable` | `:required`. Defaults to `:nullable`. `:required` resolves to a `REQUIRED` BigQuery column mode, but only when the entity's BigQuery table does not exist yet — its first, `:create_table` migration via `DataModel.Schema.Generator.generate/2`. BigQuery only allows a `REQUIRED` column at table creation, never via `ALTER TABLE` on an existing one, so `:required` is never honoured for a table that already exists, including one baselined via `DataModel.Schema.Generator.bootstrap/2`: `DataModel.Schema.Introspector` resolves it to `NULLABLE` in that case, logging a warning instead of failing.
+        - constraint: `:nullable` | `:required`. Defaults to `:nullable`. `:required` resolves to a `REQUIRED` BigQuery column mode, but only on an entity's very first `generate/2` call (its `:create_table` migration) — BigQuery only allows a `REQUIRED` column at table creation, never via `ALTER TABLE` on an existing one. Every later call, and `DataModel.Schema.Generator.bootstrap/2` (always, since it is only for tables that already exist), resolves `:required` to `NULLABLE` instead, logging a warning rather than attempting a change BigQuery would reject.
 
     """
 

@@ -4,6 +4,7 @@ defmodule DataModel.Schema.Generator do
     Generates migration files for an entity module.
     """
 
+    require Logger
     alias DataModel.Schema.{Introspector, Differ}
 
     @snapshot_filename "_schema.json"
@@ -13,6 +14,14 @@ defmodule DataModel.Schema.Generator do
     Generates a migration file for `module` if its schema changed since the
     last generation, and updates the schema snapshot either way nothing changed
     or something did.
+
+    `:required` only ever takes effect on an entity's very first `generate/2`
+    (the one that produces its `:create_table`) — BigQuery only allows a
+    `REQUIRED` column at table creation, never afterward, so every later call
+    forces every column to `NULLABLE` first, regardless of what it was before
+    (a column already `REQUIRED` in BigQuery is simply relaxed, via `DROP NOT
+    NULL`, which BigQuery does support — see `DataModel.Schema.DdlBuilder`).
+    Logs a warning for each `:required` column downgraded this way.
 
     ### Parameters:
         - module: Atom. A module implementing `Cleaning.CleanableTable` and `DataModel.Behaviour`.
@@ -31,8 +40,7 @@ defmodule DataModel.Schema.Generator do
         dir = schema_dir(priv_dir, business_key)
 
         previous = read_schema_snapshot(dir)
-        is_first? = previous == []
-        desired = Introspector.desired_schema(module, allow_required: is_first?)
+        desired = module |> Introspector.desired_schema() |> enforce_required_only_at_creation(previous)
         operations = Differ.diff(previous, desired)
 
         case operations do
@@ -72,9 +80,14 @@ defmodule DataModel.Schema.Generator do
     brand-new entities (no table yet) don't need it — their first `generate/2`
     naturally produces a `:create_table` migration.
 
-    Always computes the schema with `allow_required: false`: a column can only be
-    made `REQUIRED` when the table is created, which is never the case here —
-    this function is only for tables that already exist.
+    Always records every column as `NULLABLE`, even one defined as `:required`
+    in code: this function never touches BigQuery, so it has no way to know
+    whether the pre-existing table's real column actually is `REQUIRED` — and a
+    column can only be made `REQUIRED` when a table is created, never on one
+    that already exists, which is the only case this function is for. Recording
+    `NULLABLE` is the conservative choice: at worst, the next `generate/2`
+    proposes (and `generate/2` itself then rejects, with a warning) turning it
+    `REQUIRED` — never an attempt against BigQuery that would just fail anyway.
 
     ### Parameters:
         - module: Atom. A module implementing `Cleaning.CleanableTable` and `DataModel.Behaviour`.
@@ -90,7 +103,7 @@ defmodule DataModel.Schema.Generator do
         dir = schema_dir(priv_dir, business_key)
 
         File.mkdir_p!(dir)
-        desired = Introspector.desired_schema(module, allow_required: false)
+        desired = module |> Introspector.desired_schema() |> Enum.map(&%{&1 | mode: "NULLABLE"})
         write_schema_snapshot(dir, desired)
         {:bootstrapped, business_key}
     end
@@ -140,6 +153,31 @@ defmodule DataModel.Schema.Generator do
     #     - String.t().
     #
     defp schema_dir(priv_dir, business_key), do: Path.join(priv_dir, to_string(business_key))
+
+    #
+    # Forces every column to `NULLABLE`, unless this is the entity's very first
+    # schema (`previous == []`, about to become a `:create_table`) — BigQuery
+    # only allows a `REQUIRED` column at table creation.
+    #
+    # ### Parameters:
+    #     - desired: [DataModel.Schema.Introspector.column()].
+    #     - previous: [DataModel.Schema.Introspector.column()]. `[]` for a brand-new entity.
+    #
+    # ### Returns:
+    #     - [DataModel.Schema.Introspector.column()].
+    #
+    defp enforce_required_only_at_creation(desired, []), do: desired
+
+    defp enforce_required_only_at_creation(desired, _previous) do
+        Enum.map(desired, fn
+            %{mode: "REQUIRED", name: name} = column ->
+                Logger.warning("required ignorado en #{name}: solo se permite al crear la tabla")
+                %{column | mode: "NULLABLE"}
+
+            column ->
+                column
+        end)
+    end
 
     #
     # Reads and decodes `_schema.json` from an entity's migrations directory.
