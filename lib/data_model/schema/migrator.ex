@@ -33,14 +33,15 @@ defmodule DataModel.Schema.Migrator do
         - module: Atom. A module implementing `Cleaning.CleanableTable` and `DataModel.Behaviour`.
         - priv_dir: String. Path to the consuming project's `priv/schema_migrations` directory.
         - control_table: String. Fully-qualified control table name (`dataset.table`).
+        - opts: Keyword list. Passed through to `DataModel.Schema.DdlBuilder.build/3` (e.g. `:batch_size`).
 
     ### Returns:
         - `{:ok, [pos_integer()]}`. Versions applied, in order (possibly empty).
         - `{:error, pos_integer(), String.t()}`. The first version that failed, and BigQuery's error message.
     """
-    @spec migrate(pid(), module(), String.t(), String.t()) ::
+    @spec migrate(pid(), module(), String.t(), String.t(), keyword()) ::
         {:ok, [pos_integer()]} | {:error, pos_integer(), String.t()}
-    def migrate(pid, module, priv_dir, control_table) when is_pid(pid) and is_atom(module) do
+    def migrate(pid, module, priv_dir, control_table, opts \\ []) when is_pid(pid) and is_atom(module) do
         ControlTable.ensure_exists!(pid, control_table)
 
         business_key = Introspector.business_key(module)
@@ -51,7 +52,7 @@ defmodule DataModel.Schema.Migrator do
         dir
         |> pending_migrations(applied_version)
         |> Enum.reduce_while({:ok, []}, fn {version, path}, {:ok, applied_so_far} ->
-            case apply_migration(pid, control_table, business_key, entity_table, version, path) do
+            case apply_migration(pid, control_table, business_key, entity_table, version, path, opts) do
                 :ok -> {:cont, {:ok, [version | applied_so_far]}}
                 {:error, reason} -> {:halt, {:error, version, reason}}
             end
@@ -63,26 +64,27 @@ defmodule DataModel.Schema.Migrator do
     end
 
     @doc """
-    Runs `migrate/4` for every module in `modules`, stopping at the first
+    Runs `migrate/5` for every module in `modules`, stopping at the first
     entity whose migration fails (fail-fast, so a CI pipeline step reliably
     blocks the deploy).
 
     ### Parameters:
         - pid: Process. ODBC connection to BigQuery.
         - modules: [module()].
-        - priv_dir: String. See `migrate/4`.
-        - control_table: String. See `migrate/4`.
+        - priv_dir: String. See `migrate/5`.
+        - control_table: String. See `migrate/5`.
+        - opts: Keyword list. See `migrate/5`.
 
     ### Returns:
         - `{:ok, [{module(), [pos_integer()]}]}`. Versions applied per entity.
         - `{:error, module(), pos_integer(), String.t()}`. The entity, version and error that stopped the run.
     """
-    @spec migrate_all(pid(), [module()], String.t(), String.t()) ::
+    @spec migrate_all(pid(), [module()], String.t(), String.t(), keyword()) ::
         {:ok, [{module(), [pos_integer()]}]} | {:error, module(), pos_integer(), String.t()}
-    def migrate_all(pid, modules, priv_dir, control_table) when is_pid(pid) and is_list(modules) do
+    def migrate_all(pid, modules, priv_dir, control_table, opts \\ []) when is_pid(pid) and is_list(modules) do
         modules
         |> Enum.reduce_while({:ok, []}, fn module, {:ok, results} ->
-            case migrate(pid, module, priv_dir, control_table) do
+            case migrate(pid, module, priv_dir, control_table, opts) do
                 {:ok, applied} -> {:cont, {:ok, [{module, applied} | results]}}
                 {:error, version, reason} -> {:halt, {:error, module, version, reason}}
             end
@@ -151,14 +153,15 @@ defmodule DataModel.Schema.Migrator do
     #     - entity_table: String.t(). The entity's own BigQuery table name.
     #     - version: pos_integer().
     #     - path: String.t(). Full path to the migration file.
+    #     - opts: Keyword list. See `migrate/5`.
     #
     # ### Returns:
     #     - :ok.
     #     - {:error, String.t()}. BigQuery's (or `DdlBuilder`'s) error message.
     #
-    defp apply_migration(pid, control_table, business_key, entity_table, version, path) do
+    defp apply_migration(pid, control_table, business_key, entity_table, version, path, opts) do
         {migration, _bindings} = Code.eval_file(path)
-        statements = DdlBuilder.build(entity_table, migration.operations)
+        statements = DdlBuilder.build(entity_table, migration.operations, opts)
 
         Enum.each(statements, &EtlCore.Deps.odbc().execute(pid, &1))
         ControlTable.record_applied(pid, control_table, business_key, version, entity_table, length(statements))

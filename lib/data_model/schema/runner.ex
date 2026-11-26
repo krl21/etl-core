@@ -22,7 +22,7 @@ defmodule DataModel.Schema.Runner do
     @type connection :: pid() | atom()
 
     @doc """
-    Runs `generate/2` followed by `migrate/4` for a single entity module.
+    Runs `generate/2` followed by `migrate/5` for a single entity module.
 
     ### Parameters:
         - connection: `t:connection/0`. An open ODBC connection (`pid()`), or the
@@ -30,7 +30,8 @@ defmodule DataModel.Schema.Runner do
         - module: Atom. A module implementing `Cleaning.CleanableTable` and `DataModel.Behaviour`.
         - priv_dir: String. Path to the consuming project's `priv/schema_migrations` directory.
         - control_table: String. Fully-qualified control table name (`dataset.table`).
-        - opts: Keyword. Passed through to `Generator.generate/2` (e.g. `:name`).
+        - opts: Keyword. Passed through to `Generator.generate/2` (e.g. `:name`) and to
+          `Migrator.migrate/5` / `DataModel.Schema.DdlBuilder.build/3` (e.g. `:batch_size`).
 
     ### Returns:
         - `:ok`. The entity's schema was generated (or had no changes) and every pending migration was applied.
@@ -51,7 +52,7 @@ defmodule DataModel.Schema.Runner do
 
         Logger.info("[#{inspect(module)}] aplicando migraciones pendientes contra BigQuery...")
 
-        case migrate(connection, module, priv_dir, control_table) do
+        case migrate(connection, module, priv_dir, control_table, opts) do
             {:ok, []} ->
                 Logger.info("[#{inspect(module)}] no había migraciones pendientes por aplicar")
                 :ok
@@ -98,7 +99,7 @@ defmodule DataModel.Schema.Runner do
     ################
 
     #
-    # Dispatches `Migrator.migrate/4` on an already-open connection directly,
+    # Dispatches `Migrator.migrate/5` on an already-open connection directly,
     # or on one borrowed from (and returned to) a `Pool.BigQuery` pool.
     #
     # ### Parameters:
@@ -106,16 +107,17 @@ defmodule DataModel.Schema.Runner do
     #     - module: Atom.
     #     - priv_dir: String.t().
     #     - control_table: String.t().
+    #     - opts: Keyword. See `run/5`.
     #
     # ### Returns:
-    #     - See `DataModel.Schema.Migrator.migrate/4`.
+    #     - See `DataModel.Schema.Migrator.migrate/5`.
     #
-    defp migrate(pid, module, priv_dir, control_table) when is_pid(pid) do
-        Migrator.migrate(pid, module, priv_dir, control_table)
+    defp migrate(pid, module, priv_dir, control_table, opts) when is_pid(pid) do
+        Migrator.migrate(pid, module, priv_dir, control_table, opts)
     end
 
-    defp migrate(pool_name, module, priv_dir, control_table) when is_atom(pool_name) and not is_nil(pool_name) do
-        BigQuery.with_connection(pool_name, fn pid -> Migrator.migrate(pid, module, priv_dir, control_table) end)
+    defp migrate(pool_name, module, priv_dir, control_table, opts) when is_atom(pool_name) and not is_nil(pool_name) do
+        BigQuery.with_connection(pool_name, fn pid -> Migrator.migrate(pid, module, priv_dir, control_table, opts) end)
     end
 
 
