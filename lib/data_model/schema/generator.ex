@@ -72,6 +72,10 @@ defmodule DataModel.Schema.Generator do
     brand-new entities (no table yet) don't need it — their first `generate/2`
     naturally produces a `:create_table` migration.
 
+    Always computes the schema with `allow_unique: false`: a field can never be
+    made `:unique` on a table that already exists, which is the only case this
+    function is for.
+
     ### Parameters:
         - module: Atom. A module implementing `Cleaning.CleanableTable` and `DataModel.Behaviour`.
         - opts: Keyword list. `:priv_dir` (required), see `generate/2`.
@@ -86,7 +90,7 @@ defmodule DataModel.Schema.Generator do
         dir = schema_dir(priv_dir, business_key)
 
         File.mkdir_p!(dir)
-        desired = Introspector.desired_schema(module, allow_unique: true)
+        desired = Introspector.desired_schema(module, allow_unique: false)
         write_schema_snapshot(dir, desired)
         {:bootstrapped, business_key}
     end

@@ -25,8 +25,11 @@ defmodule DataModel.Schema.Introspector do
             - `:allow_unique` (boolean, default `true`). When `false`, any `InfoAttr`
               with `constraint: :unique` is treated as a plain `:required` column for
               description purposes (see `to_bigquery_column/2`) and a warning is logged.
-              Used by `DataModel.Schema.Generator` to enforce that `:unique` only has
-              an effect on an entity's very first (`create_table`) migration.
+              Used by `DataModel.Schema.Generator.generate/2` to enforce that `:unique`
+              only has an effect when the entity's BigQuery table does not exist yet
+              (its first, `:create_table` migration). `DataModel.Schema.Generator.bootstrap/2`
+              always passes `false`, since it is only used for tables that already exist —
+              a field can never be made `:unique` on those.
 
     ### Returns:
         - [column()]. One entry per attribute returned by `module.attr_list()`.
