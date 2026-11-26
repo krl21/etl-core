@@ -161,16 +161,40 @@ defmodule DataModel.Schema.Migrator do
     #
     defp apply_migration(pid, control_table, business_key, entity_table, version, path, opts) do
         {migration, _bindings} = Code.eval_file(path)
+        run_migration(pid, control_table, business_key, entity_table, version, migration, opts)
+    end
+
+    #
+    # Builds and runs a migration's DDL statements, recording the outcome
+    # (applied or failed) in the control table. Split out from `apply_migration/7`
+    # so `migration` — needed either way, to record it for audit — is a function
+    # parameter and therefore visible from `rescue` too (a variable bound inside
+    # a `rescue`-guarded body is not).
+    #
+    # ### Parameters:
+    #     - pid: Process. ODBC connection to BigQuery.
+    #     - control_table: String.t(). Fully-qualified control table name (`dataset.table`).
+    #     - business_key: Atom.
+    #     - entity_table: String.t(). The entity's own BigQuery table name.
+    #     - version: pos_integer().
+    #     - migration: Map. The migration file's own content (`Code.eval_file/1`'s result).
+    #     - opts: Keyword list. See `migrate/5`.
+    #
+    # ### Returns:
+    #     - :ok.
+    #     - {:error, String.t()}. BigQuery's (or `DdlBuilder`'s) error message.
+    #
+    defp run_migration(pid, control_table, business_key, entity_table, version, migration, opts) do
         statements = DdlBuilder.build(entity_table, migration.operations, opts)
 
         Enum.each(statements, &EtlCore.Deps.odbc().execute(pid, &1))
-        ControlTable.record_applied(pid, control_table, business_key, version, entity_table, length(statements))
+        ControlTable.record_applied(pid, control_table, business_key, version, entity_table, length(statements), migration)
         :ok
     rescue
         error ->
             message = Exception.message(error)
             Logger.error("Migración #{version} de #{business_key} falló: #{message}")
-            ControlTable.record_failed(pid, control_table, business_key, version, entity_table, message)
+            ControlTable.record_failed(pid, control_table, business_key, version, entity_table, message, migration)
             {:error, message}
     end
 

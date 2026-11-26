@@ -29,6 +29,7 @@ defmodule DataModel.Schema.ControlTable do
             version INT64 NOT NULL,
             table_name STRING,
             operations_count INT64,
+            migration JSON,
             applied_at TIMESTAMP NOT NULL,
             status STRING NOT NULL,
             error_message STRING
@@ -78,17 +79,20 @@ defmodule DataModel.Schema.ControlTable do
         - version: pos_integer(). The applied migration's number.
         - entity_table: String. The entity's own BigQuery table name, for audit purposes.
         - operations_count: non_neg_integer(). How many DDL statements the migration ran.
+        - migration: Map. The exact content of the migration's `.exs` file (`version`,
+          `business_key`, `table`, `generated_at`, `operations`), stored as-is for audit.
 
     ### Returns:
         - :ok.
     """
-    @spec record_applied(pid(), String.t(), atom(), pos_integer(), String.t(), non_neg_integer()) :: :ok
-    def record_applied(pid, control_table, business_key, version, entity_table, operations_count) do
+    @spec record_applied(pid(), String.t(), atom(), pos_integer(), String.t(), non_neg_integer(), map()) :: :ok
+    def record_applied(pid, control_table, business_key, version, entity_table, operations_count, migration) do
         insert_row(pid, control_table, %{
             business_key: business_key,
             version: version,
             table_name: entity_table,
             operations_count: operations_count,
+            migration: migration,
             status: "applied",
             error_message: nil
         })
@@ -104,17 +108,20 @@ defmodule DataModel.Schema.ControlTable do
         - version: pos_integer(). The migration's number that failed.
         - entity_table: String. The entity's own BigQuery table name, for audit purposes.
         - error_message: String. BigQuery's own error message, verbatim.
+        - migration: Map. See `record_applied/7` — stored even on failure, so what was
+          attempted is never lost.
 
     ### Returns:
         - :ok.
     """
-    @spec record_failed(pid(), String.t(), atom(), pos_integer(), String.t(), String.t()) :: :ok
-    def record_failed(pid, control_table, business_key, version, entity_table, error_message) do
+    @spec record_failed(pid(), String.t(), atom(), pos_integer(), String.t(), String.t(), map()) :: :ok
+    def record_failed(pid, control_table, business_key, version, entity_table, error_message, migration) do
         insert_row(pid, control_table, %{
             business_key: business_key,
             version: version,
             table_name: entity_table,
             operations_count: nil,
+            migration: migration,
             status: "failed",
             error_message: error_message
         })
@@ -131,7 +138,8 @@ defmodule DataModel.Schema.ControlTable do
     # ### Parameters:
     #     - pid: Process. ODBC connection to BigQuery.
     #     - control_table: String.t(). Fully-qualified table name (`dataset.table`).
-    #     - fields: Map. `:business_key`, `:version`, `:table_name`, `:operations_count`, `:status`, `:error_message`.
+    #     - fields: Map. `:business_key`, `:version`, `:table_name`, `:operations_count`,
+    #       `:migration`, `:status`, `:error_message`.
     #
     # ### Returns:
     #     - :ok.
@@ -140,12 +148,13 @@ defmodule DataModel.Schema.ControlTable do
         validate_table_name!(control_table)
 
         statement = """
-        INSERT INTO #{control_table} (business_key, version, table_name, operations_count, applied_at, status, error_message)
+        INSERT INTO #{control_table} (business_key, version, table_name, operations_count, migration, applied_at, status, error_message)
         VALUES (
             #{quote_string(to_string(fields.business_key))},
             #{fields.version},
             #{sql_value(fields.table_name)},
             #{sql_value(fields.operations_count)},
+            #{json_value(fields.migration)},
             CURRENT_TIMESTAMP(),
             #{quote_string(fields.status)},
             #{sql_value(fields.error_message)}
@@ -186,6 +195,19 @@ defmodule DataModel.Schema.ControlTable do
     defp sql_value(nil), do: "NULL"
     defp sql_value(value) when is_integer(value), do: Integer.to_string(value)
     defp sql_value(value) when is_binary(value), do: quote_string(value)
+
+    #
+    # Renders a value as a BigQuery `JSON` literal, via `PARSE_JSON` on its
+    # JSON-encoded string form.
+    #
+    # ### Parameters:
+    #     - value: nil | map().
+    #
+    # ### Returns:
+    #     - String.t().
+    #
+    defp json_value(nil), do: "NULL"
+    defp json_value(value), do: "PARSE_JSON(#{quote_string(Jason.encode!(value))})"
 
     #
     # Wraps a value in a double-quoted BigQuery string literal, escaping
