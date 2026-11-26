@@ -16,12 +16,12 @@ defmodule DataModel.Schema.Generator do
     or something did.
 
     `:required` only ever takes effect on an entity's very first `generate/2`
-    (the one that produces its `:create_table`) — BigQuery only allows a
-    `REQUIRED` column at table creation, never afterward, so every later call
-    forces every column to `NULLABLE` first, regardless of what it was before
-    (a column already `REQUIRED` in BigQuery is simply relaxed, via `DROP NOT
-    NULL`, which BigQuery does support — see `DataModel.Schema.DdlBuilder`).
-    Logs a warning for each `:required` column downgraded this way.
+    (the one that produces its `:create_table`) or on a column that was already
+    `REQUIRED` in the last snapshot — BigQuery only allows a `REQUIRED` column at
+    table creation, never afterward, so a genuinely *new* required column, or an
+    existing *nullable* one that code now marks `:required`, is downgraded to
+    `NULLABLE` instead (logging a warning); a column that was already `REQUIRED`
+    and still is produces no operation at all, since nothing actually changed.
 
     ### Parameters:
         - module: Atom. A module implementing `Cleaning.CleanableTable` and `DataModel.Behaviour`.
@@ -40,7 +40,7 @@ defmodule DataModel.Schema.Generator do
         dir = schema_dir(priv_dir, business_key)
 
         previous = read_schema_snapshot(dir)
-        desired = module |> Introspector.desired_schema() |> enforce_required_only_at_creation(previous)
+        desired = previous |> enforce_required_only_at_creation(Introspector.desired_schema(module))
         operations = Differ.diff(previous, desired)
 
         case operations do
@@ -155,24 +155,34 @@ defmodule DataModel.Schema.Generator do
     defp schema_dir(priv_dir, business_key), do: Path.join(priv_dir, to_string(business_key))
 
     #
-    # Forces every column to `NULLABLE`, unless this is the entity's very first
-    # schema (`previous == []`, about to become a `:create_table`) — BigQuery
-    # only allows a `REQUIRED` column at table creation.
+    # Downgrades a `REQUIRED` column to `NULLABLE` unless this is the entity's
+    # very first schema (`previous == []`, about to become a `:create_table`,
+    # where `REQUIRED` is always fine) or the column was already `REQUIRED` in
+    # `previous` (nothing is actually changing for it) — BigQuery only allows a
+    # `REQUIRED` column at table creation, never afterward.
     #
     # ### Parameters:
-    #     - desired: [DataModel.Schema.Introspector.column()].
     #     - previous: [DataModel.Schema.Introspector.column()]. `[]` for a brand-new entity.
+    #     - desired: [DataModel.Schema.Introspector.column()].
     #
     # ### Returns:
     #     - [DataModel.Schema.Introspector.column()].
     #
-    defp enforce_required_only_at_creation(desired, []), do: desired
+    defp enforce_required_only_at_creation([], desired), do: desired
 
-    defp enforce_required_only_at_creation(desired, _previous) do
+    defp enforce_required_only_at_creation(previous, desired) do
+        previous_by_name = Map.new(previous, &{&1.name, &1})
+
         Enum.map(desired, fn
             %{mode: "REQUIRED", name: name} = column ->
-                Logger.warning("required ignorado en #{name}: solo se permite al crear la tabla")
-                %{column | mode: "NULLABLE"}
+                case Map.fetch(previous_by_name, name) do
+                    {:ok, %{mode: "REQUIRED"}} ->
+                        column
+
+                    _ ->
+                        Logger.warning("required ignorado en #{name}: solo se permite al crear la tabla")
+                        %{column | mode: "NULLABLE"}
+                end
 
             column ->
                 column
