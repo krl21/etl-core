@@ -37,7 +37,6 @@ defmodule DataModel.Schema.Migrator do
     ### Returns:
         - `{:ok, [pos_integer()]}`. Versions applied, in order (possibly empty).
         - `{:error, pos_integer(), String.t()}`. The first version that failed, and BigQuery's error message.
-
     """
     @spec migrate(pid(), module(), String.t(), String.t()) ::
         {:ok, [pos_integer()]} | {:error, pos_integer(), String.t()}
@@ -77,7 +76,6 @@ defmodule DataModel.Schema.Migrator do
     ### Returns:
         - `{:ok, [{module(), [pos_integer()]}]}`. Versions applied per entity.
         - `{:error, module(), pos_integer(), String.t()}`. The entity, version and error that stopped the run.
-
     """
     @spec migrate_all(pid(), [module()], String.t(), String.t()) ::
         {:ok, [{module(), [pos_integer()]}]} | {:error, module(), pos_integer(), String.t()}
@@ -172,4 +170,7 @@ defmodule DataModel.Schema.Migrator do
             ControlTable.record_failed(pid, control_table, business_key, version, entity_table, message)
             {:error, message}
     end
+
+
+
 end

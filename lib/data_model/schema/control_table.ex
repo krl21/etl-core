@@ -4,18 +4,6 @@ defmodule DataModel.Schema.ControlTable do
     Reads and writes the BigQuery table that tracks, per entity, which schema
     migrations have already been applied — the one table this subsystem fully
     owns and can create on its own.
-
-    The table's name is never hardcoded here: every function receives it as an
-    explicit `control_table` parameter (a fully-qualified `dataset.table`
-    string), resolved by the caller from the consuming app's own config (fed by
-    an app-specific environment variable, e.g. `SCHEMA_MIGRATIONS_TABLE` in
-    etl-mera) — exactly like every other BigQuery table in this codebase.
-
-    This table is a separate, complementary mechanism to the on-disk migration
-    state (`DataModel.Schema.Generator`'s `_schema.json` + numbered migration
-    files): disk is the source of truth for which migrations exist and in what
-    order; this table is the source of truth for which of them have been
-    applied. Neither replaces the other.
     """
 
     @table_regex ~r/^[A-Za-z0-9_\-]+(\.[A-Za-z0-9_\-]+){1,2}$/
@@ -30,7 +18,6 @@ defmodule DataModel.Schema.ControlTable do
 
     ### Returns:
         - :ok.
-
     """
     @spec ensure_exists!(pid(), String.t()) :: :ok
     def ensure_exists!(pid, control_table) when is_pid(pid) and is_binary(control_table) do
@@ -63,7 +50,6 @@ defmodule DataModel.Schema.ControlTable do
 
     ### Returns:
         - non_neg_integer() | nil. `nil` when no migration has been applied yet.
-
     """
     @spec last_applied_version(pid(), String.t(), atom()) :: non_neg_integer() | nil
     def last_applied_version(pid, control_table, business_key) when is_pid(pid) and is_binary(control_table) do
@@ -95,7 +81,6 @@ defmodule DataModel.Schema.ControlTable do
 
     ### Returns:
         - :ok.
-
     """
     @spec record_applied(pid(), String.t(), atom(), pos_integer(), String.t(), non_neg_integer()) :: :ok
     def record_applied(pid, control_table, business_key, version, entity_table, operations_count) do
@@ -122,7 +107,6 @@ defmodule DataModel.Schema.ControlTable do
 
     ### Returns:
         - :ok.
-
     """
     @spec record_failed(pid(), String.t(), atom(), pos_integer(), String.t(), String.t()) :: :ok
     def record_failed(pid, control_table, business_key, version, entity_table, error_message) do

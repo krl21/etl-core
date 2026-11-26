@@ -18,10 +18,9 @@ defmodule DataModel.Schema.TypeMapping do
         boolean:  "BOOL",
         timestamp: "TIMESTAMP",
         date:     "DATE",
+        time:     "TIME",
         datetime: "DATETIME",
         decimal:  "NUMERIC",
-        # Elixir types with no unambiguous BigQuery equivalent: defined
-        # manually here, adjust to the project's actual needs.
         map:      "JSON",
         list:     "STRING"
     }
@@ -38,7 +37,6 @@ defmodule DataModel.Schema.TypeMapping do
     ### Raises:
         - ArgumentError. If `type` has no entry in `@mapping` — add it here before
           using it on an `InfoAttr`.
-
     """
     def resolve(type) when is_atom(type) do
         Map.fetch(@mapping, type)
@@ -50,4 +48,8 @@ defmodule DataModel.Schema.TypeMapping do
                     "No hay mapeo BigQuery para el tipo #{inspect(type)}. Agrégalo en #{inspect(__MODULE__)}."
         end
     end
+
+
+
+
 end

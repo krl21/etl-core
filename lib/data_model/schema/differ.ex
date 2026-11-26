@@ -100,4 +100,6 @@ defmodule DataModel.Schema.Differ do
     #
     defp maybe_append(ops, false, _op), do: ops
     defp maybe_append(ops, true, op), do: ops ++ [op]
+
+
 end

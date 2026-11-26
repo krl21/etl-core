@@ -35,7 +35,6 @@ defmodule DataModel.Schema.Introspector do
         - ArgumentError. If two attributes share the same `id` with inconsistent
           definitions (type/mode/description) — this points at a composition bug
           across subentities.
-
     """
     @spec desired_schema(module(), keyword()) :: [column()]
     def desired_schema(module, opts \\ []) when is_atom(module) do
@@ -53,7 +52,6 @@ defmodule DataModel.Schema.Introspector do
 
     ### Returns:
         - column().
-
     """
     @spec to_bigquery_column(InfoAttr.t(), keyword()) :: column()
     def to_bigquery_column(%InfoAttr{} = info_attr, opts \\ []) do
@@ -75,7 +73,6 @@ defmodule DataModel.Schema.Introspector do
 
     ### Returns:
         - String.
-
     """
     @spec table_id(module()) :: String.t()
     def table_id(module) when is_atom(module), do: module.bigquery_config().table
@@ -89,7 +86,6 @@ defmodule DataModel.Schema.Introspector do
 
     ### Returns:
         - Atom.
-
     """
     @spec business_key(module()) :: atom()
     def business_key(module) when is_atom(module), do: module.business_key()
@@ -180,4 +176,8 @@ defmodule DataModel.Schema.Introspector do
 
         Enum.reverse(ordered)
     end
+
+
+
+
 end

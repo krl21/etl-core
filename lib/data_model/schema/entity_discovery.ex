@@ -28,7 +28,6 @@ defmodule DataModel.Schema.EntityDiscovery do
     ### Raises:
         - ArgumentError. If `:schema_migrations, :modules` is missing or empty —
           this is always a configuration mistake, never a legitimate empty state.
-
     """
     @spec modules(atom()) :: [module()]
     def modules(otp_app) when is_atom(otp_app) do
@@ -47,14 +46,13 @@ defmodule DataModel.Schema.EntityDiscovery do
     @doc """
     Delegates to `Cleaning.CleanableTableRegistry.all/0`.
 
-    Only meaningful when the full OTP application is already running (e.g. an
-    `iex` session attached to a live release) — a standalone `mix` task should
-    use `modules/1` instead.
-
     ### Returns:
         - [module()].
-
     """
     @spec modules_from_registry() :: [module()]
     def modules_from_registry, do: Cleaning.CleanableTableRegistry.all()
+
+
+
+
 end

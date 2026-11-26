@@ -30,7 +30,6 @@ defmodule DataModel.Schema.DdlBuilder do
           no valid statement to attempt. Everything else is sent to BigQuery as-is
           and left to BigQuery's own validation (e.g. adding a `REQUIRED` column or
           narrowing a type may fail on a table that already has rows).
-
     """
     @spec build(String.t(), [operation()]) :: [String.t()]
     def build(table_name, operations) when is_binary(table_name) and is_list(operations) do
@@ -148,4 +147,7 @@ defmodule DataModel.Schema.DdlBuilder do
 
         "\"#{escaped}\""
     end
+
+
+
 end

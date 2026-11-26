@@ -1,19 +1,7 @@
 
 defmodule DataModel.Schema.Generator do
     @moduledoc """
-    Generates migration files for an entity module, Alembic-style: diffs the
-    entity's current desired schema (`DataModel.Schema.Introspector`) against
-    the last schema snapshot written to disk (`DataModel.Schema.Differ`), and
-    either writes nothing (no changes) or writes a new, sequentially-numbered
-    migration file plus an updated snapshot.
-
-    All state lives under the *consuming* project's `priv/schema_migrations/`
-    (passed in as `:priv_dir`), never inside etl-core itself — each app has its
-    own entities and its own schema history.
-
-    Callable directly (e.g. from `iex -S mix` while editing an `InfoAttr`) or
-    through the `mix schema.generate` / `mix schema.bootstrap` tasks —
-    both paths run this exact code.
+    Generates migration files for an entity module.
     """
 
     alias DataModel.Schema.{Introspector, Differ}
@@ -35,7 +23,6 @@ defmodule DataModel.Schema.Generator do
     ### Returns:
         - `{:no_changes, business_key}` if the desired schema is identical to the last snapshot.
         - `{:generated, path}` if a migration file was written.
-
     """
     @spec generate(module(), keyword()) :: {:no_changes, atom()} | {:generated, String.t()}
     def generate(module, opts) when is_atom(module) and is_list(opts) do
@@ -70,7 +57,6 @@ defmodule DataModel.Schema.Generator do
 
     ### Returns:
         - [{module(), {:no_changes, atom()} | {:generated, String.t()}}].
-
     """
     @spec generate_all([module()], keyword()) :: [{module(), {:no_changes, atom()} | {:generated, String.t()}}]
     def generate_all(modules, opts) when is_list(modules) and is_list(opts) do
@@ -92,7 +78,6 @@ defmodule DataModel.Schema.Generator do
 
     ### Returns:
         - `{:bootstrapped, business_key}`.
-
     """
     @spec bootstrap(module(), keyword()) :: {:bootstrapped, atom()}
     def bootstrap(module, opts) when is_atom(module) and is_list(opts) do
@@ -246,4 +231,9 @@ defmodule DataModel.Schema.Generator do
         |> String.downcase()
         |> String.replace(~r/[^a-z0-9_]+/, "_")
     end
+
+
+
+
+
 end
