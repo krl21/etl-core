@@ -22,14 +22,14 @@ defmodule DataModel.Schema.Introspector do
     ### Parameters:
         - module: Atom. A module implementing `Cleaning.CleanableTable` and `DataModel.Behaviour` (`attr_list/0`).
         - opts: Keyword list.
-            - `:allow_unique` (boolean, default `true`). When `false`, any `InfoAttr`
-              with `constraint: :unique` is treated as a plain `:required` column for
-              description purposes (see `to_bigquery_column/2`) and a warning is logged.
-              Used by `DataModel.Schema.Generator.generate/2` to enforce that `:unique`
-              only has an effect when the entity's BigQuery table does not exist yet
-              (its first, `:create_table` migration). `DataModel.Schema.Generator.bootstrap/2`
-              always passes `false`, since it is only used for tables that already exist —
-              a field can never be made `:unique` on those.
+            - `:allow_required` (boolean, default `true`). When `false`, any `InfoAttr`
+              with `constraint: :required` is resolved to a `"NULLABLE"` column mode
+              instead and a warning is logged. Used by `DataModel.Schema.Generator.generate/2`
+              to enforce that `:required` only has an effect when the entity's BigQuery
+              table does not exist yet (its first, `:create_table` migration) — BigQuery
+              only allows a `REQUIRED` column at table creation, never via `ALTER TABLE`
+              on an existing one. `DataModel.Schema.Generator.bootstrap/2` always passes
+              `false`, since it is only used for tables that already exist.
 
     ### Returns:
         - [column()]. One entry per attribute returned by `module.attr_list()`.
@@ -58,13 +58,13 @@ defmodule DataModel.Schema.Introspector do
     """
     @spec to_bigquery_column(InfoAttr.t(), keyword()) :: column()
     def to_bigquery_column(%InfoAttr{} = info_attr, opts \\ []) do
-        allow_unique? = Keyword.get(opts, :allow_unique, true)
+        allow_required? = Keyword.get(opts, :allow_required, true)
 
         %{
             name: to_string(info_attr.id),
             type: TypeMapping.resolve(info_attr.type),
-            mode: mode_for(info_attr),
-            description: description_for(info_attr, allow_unique?)
+            mode: mode_for(info_attr, allow_required?),
+            description: info_attr.description
         }
     end
 
@@ -99,56 +99,25 @@ defmodule DataModel.Schema.Introspector do
     ################
 
     #
-    # Resolves the BigQuery column mode for an `InfoAttr`'s constraint.
+    # Resolves the BigQuery column mode for an `InfoAttr`'s constraint. A
+    # `:required` constraint only resolves to `"REQUIRED"` when `allow_required?`
+    # is true — otherwise it logs a warning and resolves to `"NULLABLE"` instead,
+    # since BigQuery only allows a `REQUIRED` column at table creation.
     #
     # ### Parameters:
     #     - info_attr: Struct.InfoAttr.
+    #     - allow_required?: Boolean.
     #
     # ### Returns:
-    #     - String. `"NULLABLE"` or `"REQUIRED"` — `:unique` also resolves to
-    #       `"REQUIRED"`, since uniqueness implies not-null; the uniqueness
-    #       itself is handled separately, as metadata, by `description_for/2`.
+    #     - String. `"NULLABLE"` or `"REQUIRED"`.
     #
-    defp mode_for(%InfoAttr{constraint: :nullable}), do: "NULLABLE"
-    defp mode_for(%InfoAttr{constraint: :required}), do: "REQUIRED"
-    defp mode_for(%InfoAttr{constraint: :unique}), do: "REQUIRED"
+    defp mode_for(%InfoAttr{constraint: :nullable}, _allow_required?), do: "NULLABLE"
+    defp mode_for(%InfoAttr{constraint: :required}, true), do: "REQUIRED"
 
-    #
-    # Builds the column description, applying the `" [unique]"` suffix only
-    # when `constraint: :unique` is actually honoured (`allow_unique? == true`).
-    # Otherwise logs a warning and returns the plain description, enforcing
-    # that `:unique` only has an effect on an entity's initial migration.
-    #
-    # ### Parameters:
-    #     - info_attr: Struct.InfoAttr.
-    #     - allow_unique?: Boolean.
-    #
-    # ### Returns:
-    #     - String.t() | nil.
-    #
-    defp description_for(%InfoAttr{constraint: :unique, description: description, id: id}, false) do
-        Logger.warning("unique ignorado en #{id}: solo se permite en la migración inicial")
-        description
+    defp mode_for(%InfoAttr{constraint: :required, id: id}, false) do
+        Logger.warning("required ignorado en #{id}: solo se permite al crear la tabla")
+        "NULLABLE"
     end
-
-    defp description_for(%InfoAttr{constraint: :unique, description: description}, true) do
-        append_suffix(description, " [unique]")
-    end
-
-    defp description_for(%InfoAttr{description: description}, _allow_unique?), do: description
-
-    #
-    # Appends `suffix` to a possibly-nil description.
-    #
-    # ### Parameters:
-    #     - description: String.t() | nil.
-    #     - suffix: String.t().
-    #
-    # ### Returns:
-    #     - String.t().
-    #
-    defp append_suffix(nil, suffix), do: String.trim_leading(suffix)
-    defp append_suffix(description, suffix), do: description <> suffix
 
     #
     # Deduplicates by `name`, preserving the original (first-seen) order —

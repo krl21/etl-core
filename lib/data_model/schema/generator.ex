@@ -32,7 +32,7 @@ defmodule DataModel.Schema.Generator do
 
         previous = read_schema_snapshot(dir)
         is_first? = previous == []
-        desired = Introspector.desired_schema(module, allow_unique: is_first?)
+        desired = Introspector.desired_schema(module, allow_required: is_first?)
         operations = Differ.diff(previous, desired)
 
         case operations do
@@ -72,9 +72,9 @@ defmodule DataModel.Schema.Generator do
     brand-new entities (no table yet) don't need it — their first `generate/2`
     naturally produces a `:create_table` migration.
 
-    Always computes the schema with `allow_unique: false`: a field can never be
-    made `:unique` on a table that already exists, which is the only case this
-    function is for.
+    Always computes the schema with `allow_required: false`: a column can only be
+    made `REQUIRED` when the table is created, which is never the case here —
+    this function is only for tables that already exist.
 
     ### Parameters:
         - module: Atom. A module implementing `Cleaning.CleanableTable` and `DataModel.Behaviour`.
@@ -90,7 +90,7 @@ defmodule DataModel.Schema.Generator do
         dir = schema_dir(priv_dir, business_key)
 
         File.mkdir_p!(dir)
-        desired = Introspector.desired_schema(module, allow_unique: false)
+        desired = Introspector.desired_schema(module, allow_required: false)
         write_schema_snapshot(dir, desired)
         {:bootstrapped, business_key}
     end
