@@ -8,7 +8,19 @@ defmodule EtlCore.MixProject do
       elixir: "~> 1.14.0-rc.0",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
-      package: package()
+      package: package(),
+      # `test/pool/*.exs` are standalone scripts invoked via `mix run` against a
+      # live Postgres/BigQuery connection (synced to Okteto) — they run
+      # top-level code on load and aren't meant for ExUnit's `mix test`.
+      # Scoped here so `mix test` only picks up the real (offline) test suite.
+      test_paths: ["test/etl_core"],
+      # Protocols with zero `defimpl`s in `lib/` (e.g. `Time.PWorkingTimeForBusiness`,
+      # only ever implemented by downstream consuming apps) get consolidated
+      # as "no implementations" before test files compile, so a test-only
+      # `defimpl` added for a fixture business has no effect. Consolidation is
+      # purely a production-build performance optimization, so it's safe to
+      # skip in :test.
+      consolidate_protocols: Mix.env() != :test
     ]
   end
 
@@ -49,7 +61,8 @@ defmodule EtlCore.MixProject do
       {:mint, "1.9.1"},
       {:hpax, "1.0.3"},
       # GCS client (Connection.Gcs), with the hackney adapter
-      {:tesla, "~> 1.22"}
+      {:tesla, "~> 1.22"},
+      {:mox, "~> 1.1", only: :test}
     ]
   end
 end
