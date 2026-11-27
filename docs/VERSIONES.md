@@ -6,22 +6,125 @@ Este documento describe las versiones de `etl-core`, sus características princi
 
 ## Tabla de Contenidos
 
-1. [Versión 2.8 (Actual)](#versión-28-actual)
-2. [Versión 2.7](#versión-27)
-3. [Versión 2.6.1](#versión-261)
-4. [Versión 2.6.0](#versión-260)
-5. [Versión 2.5.1](#versión-251)
-6. [Versión 2.5](#versión-25)
-7. [Versión 2.4](#versión-24)
-8. [Versión 2.3](#versión-23)
-9. [Versión 2.2](#versión-22)
-10. [Versión 2.1](#versión-21)
-11. [Versión 1.2.0](#versión-120)
-12. [Versiones Anteriores](#versiones-anteriores)
+1. [Versión 2.9 (Actual)](#versión-29-actual)
+2. [Versión 2.8](#versión-28)
+3. [Versión 2.7](#versión-27)
+4. [Versión 2.6.1](#versión-261)
+5. [Versión 2.6.0](#versión-260)
+6. [Versión 2.5.1](#versión-251)
+7. [Versión 2.5](#versión-25)
+8. [Versión 2.4](#versión-24)
+9. [Versión 2.3](#versión-23)
+10. [Versión 2.2](#versión-22)
+11. [Versión 2.1](#versión-21)
+12. [Versión 1.2.0](#versión-120)
+13. [Versiones Anteriores](#versiones-anteriores)
 
 ---
 
-## Versión 2.8 (Actual)
+## Versión 2.9 (Actual)
+
+### Características Principales
+
+- **Migraciones de esquema de BigQuery**: el esquema de la tabla de BigQuery de cada entidad se calcula a partir de su `attr_list()` y los cambios se versionan en archivos de migración (`priv/schema_migrations/<business_key>/`) que se aplican automáticamente en BigQuery. Cada migración aplicada o fallida queda registrada en una tabla de control
+- **`Struct.InfoAttr` con `description` y `constraint`**: cada atributo puede declarar la descripción de su columna y si es `:nullable` (por defecto) o `:required`
+- **Dependencias externas mockeables**: ODBC, Postgres, el pool de Postgres, HTTP y AMQP se resuelven a través de `EtlCore.Deps` y cada una tiene su `behaviour`, de modo que en los tests se pueden reemplazar por dobles de `Mox`. En producción se siguen usando los módulos reales
+
+> **Nota sobre las mix tasks:** `mix schema.bootstrap`, `mix schema.generate` y `mix schema.migrate` no funcionan correctamente cuando se ejecutan desde el proyecto consumidor, por problemas de referencias. Su corrección queda pendiente. Llamar directamente a `DataModel.Schema.Generator`, `DataModel.Schema.Migrator` y `DataModel.Schema.Runner` (por ejemplo, desde `iex` en el pod) funciona correctamente; mientras tanto, hay que usar esa vía.
+
+### Lógica de las migraciones de esquema
+
+El proceso tiene dos pasos: generar, que solo escribe archivos y no se conecta a BigQuery, y migrar, que aplica esos archivos en BigQuery. `DataModel.Schema.Runner` ejecuta uno detrás del otro.
+
+1. **Esquema deseado** (`Introspector.desired_schema/1`): convierte cada `InfoAttr` de `attr_list()` en una columna `%{name, type, mode, description}`. El tipo sale de `TypeMapping` y el modo de `constraint`. Si un mismo `id` aparece dos veces con definiciones distintas (p. ej. entre subentidades), lanza un error; si son iguales, lo deja una sola vez.
+2. **Snapshot**: en `priv/schema_migrations/<business_key>/_schema.json` se guarda el último esquema generado. Los cambios se calculan contra este archivo; no se consulta a BigQuery el esquema real de la tabla.
+3. **Diferencias** (`Differ.diff/2`): compara el snapshot con el esquema deseado.
+   - Sin snapshot (entidad nueva): una única operación `:create_table` con todas las columnas.
+   - Con snapshot: `:drop_column`, `:alter_column_type`, `:alter_column_mode`, `:alter_column_description` y `:add_column`, según lo que cambió.
+   - Sin diferencias: no se genera nada.
+4. **Regla de `required`** (`Generator.generate/2`): BigQuery solo admite columnas `REQUIRED` al crear la tabla. Por eso, fuera de la creación, una columna nueva marcada `:required` o una existente que pasa de nullable a `:required` se guarda como `NULLABLE` y se registra un warning. Si la columna ya era `REQUIRED` en el snapshot y lo sigue siendo, no se genera ningún cambio.
+5. **Archivo de migración**: si hay operaciones, se escribe `<n>_<slug>.exs` (número correlativo; el slug se toma de `--name`/`:name` o de la primera operación) con un mapa `%{version, business_key, table, generated_at, operations}`, y se actualiza `_schema.json`. Estos archivos se versionan en git junto al proyecto.
+6. **Sentencias DDL** (`DdlBuilder.build/3`): agrupa las operaciones del mismo tipo en un solo `ALTER TABLE` con varias cláusulas, hasta `:batch_size` columnas por sentencia (50 por defecto), para no superar el límite de BigQuery de sentencias DDL seguidas sobre la misma tabla.
+   Las sentencias salen en este orden: `CREATE TABLE IF NOT EXISTS` (con todas las columnas `REQUIRED` y las `NULLABLE` que quepan; el resto va en `ADD COLUMN` adicionales), luego drops, cambios de tipo, de modo, de descripción y, al final, adds. Se usa la sintaxis DDL de BigQuery (`NOT NULL`, `DROP NOT NULL`, `SET DATA TYPE`, `SET OPTIONS(description=...)`). Pasar una columna existente a `REQUIRED` lanza un error, porque no existe DDL para hacerlo.
+7. **Aplicación** (`Migrator.migrate/5`):
+   - Crea la tabla de control si no existe.
+   - Lee la última versión con `status = "applied"` de la entidad y busca los archivos con número mayor, en orden.
+   - Por cada archivo, construye y ejecuta las sentencias con `Connection.Odbc.execute/2` y registra el resultado en la tabla de control (`applied` o `failed` con el mensaje de BigQuery tal cual).
+   - Se detiene en la primera migración que falle (y `migrate_all/5`, en la primera entidad que falle). No hay aprobación manual ni reintentos: lo que BigQuery rechace (p. ej. reducir un tipo con datos) queda registrado como error.
+8. **Tablas ya existentes** (`Generator.bootstrap/2`): para una entidad cuya tabla se creó a mano, escribe el `_schema.json` inicial sin generar migración ni tocar BigQuery. Todas las columnas quedan como `NULLABLE`, ya que no se puede saber si la columna real es `REQUIRED` y en una tabla existente no se puede cambiar. Se ejecuta una vez antes del primer `generate`; las entidades nuevas no lo necesitan.
+
+### Nuevo en esta Versión
+
+#### Esquema de BigQuery (`DataModel.Schema.*`, nuevos)
+
+- `TypeMapping.resolve/1`: tipo de `InfoAttr` → tipo de BigQuery. `string → STRING`, `integer → INT64`, `float → FLOAT64`, `boolean → BOOL`, `timestamp → TIMESTAMP`, `date → DATE`, `time → TIME`, `datetime → DATETIME`, `decimal → NUMERIC`, `map → JSON`, `list → STRING`. Un tipo sin mapeo lanza error
+- `Introspector`: `desired_schema/1`, `to_bigquery_column/1`, `table_id/1` (tabla de `bigquery_config()`), `business_key/1`
+- `Differ.diff/2`: operaciones entre dos esquemas (puro, sin BigQuery)
+- `DdlBuilder.build/3`: operaciones → sentencias DDL agrupadas por lotes (solo construye strings)
+- `Generator`: `generate/2`, `generate_all/2`, `bootstrap/2`, `next_version/1`
+- `Migrator`: `migrate/5`, `migrate_all/5`
+- `ControlTable`: `ensure_exists!/2`, `last_applied_version/3`, `record_applied/7`, `record_failed/7`. Columnas de la tabla de control: `business_key`, `version`, `table_name`, `operations_count`, `migration` (JSON con el contenido completo del archivo de migración, también en los fallos), `applied_at`, `status`, `error_message`
+- `Runner`: `run/5` y `run_all/5` ejecutan `generate` y luego `migrate`, y dejan en el log cada paso. Aceptan un pid ODBC ya abierto o el nombre de un pool de `Pool.BigQuery` (p. ej. `:bigquery_pool`)
+- `EntityDiscovery`: `modules/1` lee la lista de entidades de `config :mi_app, :schema_migrations, modules: [...]`; `modules_from_registry/0` la toma de `Cleaning.CleanableTableRegistry`
+
+#### Mix tasks (nuevas; ver la nota sobre su estado)
+
+- `mix schema.bootstrap [--module M]`: línea base de entidades con tabla ya existente
+- `mix schema.generate [--module M] [--name slug]`: genera las migraciones pendientes (offline)
+- `mix schema.migrate [--module M]`: aplica las migraciones contra BigQuery; si falla, termina con código distinto de 0 (pensado como paso de CI)
+- `Mix.Tasks.SchemaHelpers`: resolución de módulos, directorio `priv/schema_migrations` (ruta del código fuente, no de `_build`) y nombre de la tabla de control desde `config :mi_app, :bigquery, table: [schema_migrations: "..."]`
+
+#### `Struct.InfoAttr`
+
+- Nuevos campos `description` (por defecto `nil`) y `constraint` (`:nullable` por defecto, o `:required`). Incluidos en `to_string/1`
+
+#### Dependencias mockeables (`EtlCore.Deps`)
+
+- `EtlCore.Deps` (nuevo): `odbc/0`, `postgres/0`, `postgres_pool/0`, `http/0` y `amqp/0` devuelven el módulo real salvo que se configure otro en `config :etl_core, :deps, ...` (solo en tests)
+- Contratos nuevos: `Connection.Odbc.Behaviour`, `Connection.Postgres.Behaviour`, `Connection.PostgresPool.Behaviour`, `Connection.Http.Behaviour` y `Genserver.Amqp.Behaviour`, con `Genserver.Amqp.Adapter` como implementación real de AMQP. Los módulos reales declaran `@behaviour`
+- Todos los módulos que llamaban directamente a esas dependencias pasan a usar `EtlCore.Deps` (macros `Record`, `RecordPg`, `Task`, `TaskPg`, consumidores RabbitMQ/Postgres, `BigqueryUploader`, handler de BigQuery, carga forzada, limpieza, conexiones HTTP, notificaciones, `Common.Table`, `Connection.GcsToBigQuery`, `Pool.BigQueryWorker`)
+
+#### Correcciones
+
+- `Type.PTypeOf`: la implementación para pids usaba `Pid` en lugar de `PID`
+
+### Módulos Afectados
+
+- Nuevos: `DataModel.Schema.TypeMapping`, `Introspector`, `Differ`, `DdlBuilder`, `Generator`, `Migrator`, `ControlTable`, `Runner`, `EntityDiscovery`; `Mix.Tasks.Schema.Bootstrap`, `Schema.Generate`, `Schema.Migrate`, `SchemaHelpers`; `EtlCore.Deps`; los `Behaviour` de ODBC, Postgres, pool de Postgres, HTTP y AMQP; `Genserver.Amqp.Adapter`
+- `Struct.InfoAttr`, `Type.PTypeOf`
+- Refactor a `EtlCore.Deps` (sin cambio de comportamiento) en los módulos listados arriba
+
+### Migración desde v2.8
+
+1. **Actualizar dependencias en `mix.exs`**:
+```elixir
+{:etl_core, git: "https://github.com/krl21/etl-core.git", branch: "v2.9"}
+```
+
+2. **Sin cambios obligatorios de código**: los nuevos campos de `InfoAttr` tienen valor por defecto y `EtlCore.Deps` usa los módulos reales si no se configura nada.
+
+3. **Para usar las migraciones de esquema** (opcional):
+   - Declarar las entidades: `config :mi_app, :schema_migrations, modules: [MiApp.Entity.Record, ...]`
+   - Declarar la tabla de control: `config :mi_app, :bigquery, table: [schema_migrations: "dataset.schema_migrations"]`
+   - Opcional: agregar `description` y `constraint` a los `InfoAttr`
+   - Para entidades cuya tabla ya existe en BigQuery, ejecutar primero el bootstrap
+   - Ejecutar desde el código (las mix tasks están pendientes de corrección):
+```elixir
+priv_dir = Path.join(File.cwd!(), "priv/schema_migrations")
+control_table = "dataset.schema_migrations"
+
+# Solo para tablas ya existentes, una vez por entidad
+DataModel.Schema.Generator.bootstrap(MiApp.Entity.Record, priv_dir: priv_dir)
+
+# Generar y aplicar (pid ODBC o nombre de pool de Pool.BigQuery)
+DataModel.Schema.Runner.run(:bigquery_pool, MiApp.Entity.Record, priv_dir, control_table)
+DataModel.Schema.Runner.run_all(:bigquery_pool, [MiApp.Entity.Record, MiApp.Entity.Task], priv_dir, control_table)
+```
+   - Hacer commit de los archivos de `priv/schema_migrations/`
+
+---
+
+## Versión 2.8
 
 ### Características Principales
 
